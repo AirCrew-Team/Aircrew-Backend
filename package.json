@@ -1,8 +1,27 @@
 {
-  "name": "aircrew-backend",
+  "name": "backend-vuelos",
   "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "services/*",
+    "shared"
+  ],
   "scripts": {
-    "start": "node server.js"
+    "start:flights": "npm run -w @vuelos/flights start",
+    "start:crew": "npm run -w @vuelos/crew start",
+    "start:recommendation": "npm run -w @vuelos/recommendation start",
+    "start:notification": "npm run -w @vuelos/notification start",
+    "start:admin": "npm run -w @vuelos/admin start",
+    "dev:flights": "npm run -w @vuelos/flights dev",
+    "dev:crew": "npm run -w @vuelos/crew dev",
+    "dev:recommendation": "npm run -w @vuelos/recommendation dev",
+    "dev:notification": "npm run -w @vuelos/notification dev",
+    "dev:admin": "npm run -w @vuelos/admin dev",
+    "start": "node server.js",
+    "start:gateway": "npm run -w @vuelos/gateway start",
+    "dev:gateway": "npm run -w @vuelos/gateway dev"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
   }
 }

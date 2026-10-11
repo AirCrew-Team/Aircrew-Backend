@@ -1,34 +1,27 @@
 # Backend Vuelos
 
-Backend de AirCrew con cinco servicios independientes en Node.js y Express. La estructura está lista para avanzar por servicios; la base de datos y RabbitMQ quedan para etapas posteriores.
+Backend mínimo de AirCrew organizado en workspaces de Node.js. Cada servicio arranca como proceso independiente y muestra su puerto; la lógica de negocio y el enrutamiento del gateway quedan para etapas posteriores.
 
-## Iniciar el backend mínimo
-
-Desde la raíz del proyecto:
-
-```bash
-npm start
-```
-
-Esto inicia el servidor Node.js de la raíz en el puerto `3000` (o en el puerto indicado por la variable `PORT`). El servidor responde para comprobar que el backend está activo. Este comando no inicia los servicios ni requiere PostgreSQL o RabbitMQ.
-
-## Servicios
+## Servicios y puertos
 
 | Servicio | Puerto predeterminado |
 | --- | ---: |
+| gateway | 3000 |
 | flights | 3001 |
 | crew | 3002 |
 | recommendation | 3003 |
 | notification | 3004 |
 | admin | 3005 |
 
-Cada servicio organiza su código en configuración, rutas, controladores, servicios y middlewares cuando aplica. `shared/` contiene componentes comunes; los servicios no se importan entre sí.
+## Instalar y arrancar
 
-Para instalar dependencias y arrancar un servicio desde la raíz:
+Desde la raíz del proyecto:
 
 ```bash
 npm install
-npm run start:flights
+npm run start:gateway
 ```
 
-Para iniciar otro servicio, usa `npm run start:crew`, `npm run start:recommendation`, `npm run start:notification` o `npm run start:admin`. En desarrollo están disponibles los comandos `npm run dev:<servicio>`.
+Para arrancar otro servicio, usa `npm run start:<servicio>`, por ejemplo `npm run start:crew`. En desarrollo están disponibles los comandos `npm run dev:<servicio>`.
+
+El gateway responde `gateway activo` en el puerto 3000 y todavía no reenvía solicitudes. No se requiere PostgreSQL mientras los servicios no se conecten a sus bases de datos.

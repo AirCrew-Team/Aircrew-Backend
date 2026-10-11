@@ -7,11 +7,13 @@
     "shared"
   ],
   "scripts": {
+    "start:gateway": "npm run -w @vuelos/gateway start",
     "start:flights": "npm run -w @vuelos/flights start",
     "start:crew": "npm run -w @vuelos/crew start",
     "start:recommendation": "npm run -w @vuelos/recommendation start",
     "start:notification": "npm run -w @vuelos/notification start",
     "start:admin": "npm run -w @vuelos/admin start",
+    "dev:gateway": "npm run -w @vuelos/gateway dev",
     "dev:flights": "npm run -w @vuelos/flights dev",
     "dev:crew": "npm run -w @vuelos/crew dev",
     "dev:recommendation": "npm run -w @vuelos/recommendation dev",

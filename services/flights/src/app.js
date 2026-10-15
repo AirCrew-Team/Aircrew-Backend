@@ -1,6 +1,6 @@
 const express = require('express');
 const { errorHandler } = require('@vuelos/shared');
-const rutas = require('./routes');
+const rutas = require('./adapters/inbound/http/routes');
 
 const app = express();
 

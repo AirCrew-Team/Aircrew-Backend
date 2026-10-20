@@ -1,12 +1,10 @@
 const express = require('express');
 const healthRoutes = require('./health.routes');
-const usuarioRoutes = require('./usuario.routes');
-const parametroRoutes = require('./parametro.routes');
+const usersRoutes = require('./users.routes');
 
 const router = express.Router();
 
 router.use('/', healthRoutes);
-router.use('/usuarios', usuarioRoutes);
-router.use('/parametros', parametroRoutes);
+router.use('/users', usersRoutes);
 
 module.exports = router;

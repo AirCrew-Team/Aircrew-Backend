@@ -1,5 +1,6 @@
 const express = require('express');
 const healthRoutes = require('./health.routes');
+const docsRoutes = require('./docs.routes');
 const vueloRoutes = require('./vuelo.routes');
 const aeronaveRoutes = require('./aeronave.routes');
 const aeropuertoRoutes = require('./aeropuerto.routes');
@@ -7,6 +8,7 @@ const aeropuertoRoutes = require('./aeropuerto.routes');
 const router = express.Router();
 
 router.use('/', healthRoutes);
+router.use('/docs', docsRoutes);
 router.use('/vuelos', vueloRoutes);
 router.use('/aeronaves', aeronaveRoutes);
 router.use('/aeropuertos', aeropuertoRoutes);

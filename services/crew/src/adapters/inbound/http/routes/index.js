@@ -1,16 +1,13 @@
 const express = require('express');
 const healthRoutes = require('./health.routes');
-const tripulanteRoutes = require('./tripulante.routes');
-const ausenciaRoutes = require('./ausencia.routes');
-const certificacionRoutes = require('./certificacion.routes');
-const asignacionRoutes = require('./asignacion.routes');
+const docsRoutes = require('./docs.routes');
+const crewMembersRoutes = require('./crewMember.routes');
+
 
 const router = express.Router();
 
 router.use('/', healthRoutes);
-router.use('/tripulantes', tripulanteRoutes);
-router.use('/ausencias', ausenciaRoutes);
-router.use('/certificaciones', certificacionRoutes);
-router.use('/asignaciones', asignacionRoutes);
+router.use('/docs', docsRoutes);
+router.use('/crew-members', crewMembersRoutes);
 
 module.exports = router;

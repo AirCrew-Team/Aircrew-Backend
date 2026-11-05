@@ -18,8 +18,7 @@
     "dev:crew": "npm run -w @vuelos/crew dev",
     "dev:recommendation": "npm run -w @vuelos/recommendation dev",
     "dev:notification": "npm run -w @vuelos/notification dev",
-    "dev:admin": "npm run -w @vuelos/admin dev",
-    "start": "node server.js"
+    "dev:admin": "npm run -w @vuelos/admin dev"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

@@ -1,0 +1,292 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Admin
+  version: 1.0.0
+  description: |
+    Autenticación, usuarios, roles e invitación de tripulantes.
+    Los JWT se firman con HS256 y el issuer `aircrew-admin`. Crew y Flights validan esos mismos tokens.
+servers:
+  - url: http://localhost:3005
+tags:
+  - name: Salud
+  - name: Autenticación
+  - name: Usuarios
+  - name: Interno
+    description: Endpoints para otros servicios, no para el frontend.
+
+paths:
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+  /auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Iniciar sesión con email y contraseña
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, example: supervisor@aircrew.com }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResult'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401':
+          description: Credenciales inválidas o cuenta sin activar
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/activate:
+    post:
+      tags: [Autenticación]
+      summary: Activar cuenta de tripulante y definir contraseña
+      description: El token llega por correo en el enlace de invitación. Es de un solo uso y vence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Entre 12 y 72 bytes UTF-8.
+      responses:
+        '200':
+          description: Cuenta activada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: Account activated. You can now log in. }
+                  user: { $ref: '#/components/schemas/UserSummary' }
+        '400':
+          description: Datos inválidos o token inválido/vencido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/bootstrap/super-admin:
+    post:
+      tags: [Autenticación]
+      summary: Crear el primer super_admin
+      description: Solo funciona si todavía no existe ningún super_admin.
+      security:
+        - bootstrapKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Entre 12 y 72 bytes UTF-8.
+      responses:
+        '201':
+          description: Super_admin creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResult'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Ya existe un super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users:
+    post:
+      tags: [Usuarios]
+      summary: Crear un usuario (solo super_admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/User'
+                  - type: object
+                    properties:
+                      token: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/DuplicateEmail' }
+
+  /users/{id}:
+    get:
+      tags: [Usuarios]
+      summary: Consultar un usuario
+      description: super_admin puede consultar cualquiera; crew solo su propio usuario.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Usuario encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Usuario no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users/crew-registration:
+    post:
+      tags: [Interno]
+      summary: Crear cuenta pendiente de tripulante y enviar invitación
+      description: |
+        Lo llama Crew al registrar un tripulante. Crea la cuenta con rol `crew`, sin contraseña,
+        y envía el correo de activación con Resend.
+      security:
+        - serviceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Cuenta pendiente creada y correo enviado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/DuplicateEmail' }
+        '502':
+          description: Resend no pudo enviar el correo (la cuenta pendiente queda creada)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    bootstrapKey:
+      type: apiKey
+      in: header
+      name: x-bootstrap-key
+    serviceKey:
+      type: apiKey
+      in: header
+      name: x-service-key
+
+  responses:
+    BadRequest:
+      description: Datos inválidos
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Falta autenticación o no es válida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: El rol no tiene permiso
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DuplicateEmail:
+      description: Ya existe un usuario con ese email
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Role:
+      type: string
+      enum: [crew, supervisor, super_admin]
+    Health:
+      type: object
+      properties:
+        servicio: { type: string, example: admin }
+        estado: { type: string, example: ok }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    UserSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+    User:
+      allOf:
+        - $ref: '#/components/schemas/UserSummary'
+        - type: object
+          properties:
+            is_active: { type: boolean }
+            created_at: { type: string, format: date-time }
+    AuthResult:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/UserSummary' }
+        token: { type: string, description: JWT }

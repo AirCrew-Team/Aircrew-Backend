@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Crew
+  version: 1.0.0
+  description: |
+    Tripulantes. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
+servers:
+  - url: http://localhost:3002
+tags:
+  - name: Salud
+  - name: Tripulantes
+
+paths:
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  servicio: { type: string, example: crew }
+                  estado: { type: string, example: ok }
+
+  /crew-members:
+    post:
+      tags: [Tripulantes]
+      summary: Registrar un tripulante (supervisor o super_admin)
+      description: |
+        Crea el perfil en Crew y le pide a Admin la cuenta pendiente con rol `crew`.
+        Admin envía al tripulante un correo para que defina su contraseña.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, employeeCode, position]
+              properties:
+                name: { type: string, example: Samuel Arredondo }
+                email: { type: string, format: email }
+                employeeCode: { type: string, example: EMP-001 }
+                position: { type: string, example: Auxiliar de vuelo }
+                currentLocation: { type: string, nullable: true, example: BOG }
+                status:
+                  $ref: '#/components/schemas/CrewStatus'
+                isActive: { type: boolean, default: true }
+      responses:
+        '201':
+          description: Tripulante registrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewMember' }
+        '400':
+          description: Datos inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Ya existe una cuenta con ese email en Admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Admin o Resend fallaron al crear la cuenta o enviar el correo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CrewStatus:
+      type: string
+      enum: [available, on_duty, in_flight, medical_leave]
+      default: available
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    CrewMember:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string }
+        position: { type: string }
+        current_location: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/CrewStatus' }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }

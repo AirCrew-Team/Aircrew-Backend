@@ -1,7 +1,14 @@
 function permitirRoles(...roles) {
   return (req, res, next) => {
-    // TODO: comprobar que req.usuario.rol está en roles
-    next();
+    if (!req.usuario) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+
+    if (!roles.includes(req.usuario.rol)) {
+      return res.status(403).json({ error: 'Insufficient permissions.' });
+    }
+
+    return next();
   };
 }
 

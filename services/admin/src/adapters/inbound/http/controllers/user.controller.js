@@ -1,24 +1,7 @@
 function createGetUserByIdController(getUserById) {
   return async function getById(req, res, next) {
     try {
-      if (!req.user) {
-        return res.status(401).json({ error: 'Authentication required.' });
-      }
-
-      const canReadUser =
-        req.user.role === 'super_admin' ||
-        (req.user.role === 'crew' && req.user.id === req.params.id);
-
-      if (!canReadUser) {
-        return res.status(403).json({ error: 'Insufficient permissions.' });
-      }
-
-      const user = await getUserById(req.params.id);
-
-      if (!user) {
-        return res.status(404).json({ error: 'Usuario no encontrado.' });
-      }
-
+      const user = await getUserById(req.user, req.params.id);
       return res.status(200).json(user);
     } catch (error) {
       return next(error);

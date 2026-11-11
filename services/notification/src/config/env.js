@@ -2,6 +2,6 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 module.exports = {
-  nombreServicio: 'notification',
-  puerto: Number(process.env.PORT) || 3004,
+  nameService: 'notification',
+  port: Number(process.env.PORT) || 3004,
 };

@@ -1,0 +1,69 @@
+const pool = require('../pool');
+
+const flightColumns = `id, flight_number, aircraft_id, origin, destination,
+       departure_at, arrival_at, status, created_at, updated_at`;
+
+async function createFlight({
+  flightNumber,
+  aircraftId,
+  origin,
+  destination,
+  departureAt,
+  arrivalAt,
+  status,
+}) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO public.flights
+         (flight_number, aircraft_id, origin, destination, departure_at,
+          arrival_at, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING ${flightColumns}`,
+      [
+        flightNumber,
+        aircraftId,
+        origin,
+        destination,
+        departureAt,
+        arrivalAt,
+        status,
+      ]
+    );
+
+    return rows[0];
+  } catch (cause) {
+    if (cause.code === '23505') {
+      const error = new Error('Ya existe un vuelo con ese flight_number.');
+      error.status = 409;
+      throw error;
+    }
+
+    throw cause;
+  }
+}
+
+async function findFlights({ from, to }) {
+  const { rows } = await pool.query(
+    `SELECT ${flightColumns}
+     FROM public.flights
+     WHERE ($1::timestamptz IS NULL OR departure_at >= $1)
+       AND ($2::timestamptz IS NULL OR departure_at < $2)
+     ORDER BY departure_at`,
+    [from, to]
+  );
+
+  return rows;
+}
+
+async function findFlightById(id) {
+  const { rows } = await pool.query(
+    `SELECT ${flightColumns}
+     FROM public.flights
+     WHERE id = $1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+module.exports = { createFlight, findFlights, findFlightById };

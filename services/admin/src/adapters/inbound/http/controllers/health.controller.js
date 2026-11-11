@@ -1,11 +1,11 @@
 const healthService = require('../../../../application/use-cases/health.service');
 
-function obtenerSalud(req, res, next) {
+function getHealth(req, res, next) {
   try {
-    res.json(healthService.consultarSalud());
+    res.json(healthService.getHealth());
   } catch (error) {
     next(error);
   }
 }
 
-module.exports = { obtenerSalud };
+module.exports = { getHealth };

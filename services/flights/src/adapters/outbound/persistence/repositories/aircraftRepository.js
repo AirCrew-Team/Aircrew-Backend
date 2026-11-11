@@ -15,7 +15,7 @@ async function createAircraft({
          (name, registration, capacity, minimum_crew, initial_destination,
           final_destination, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING name, registration, capacity, minimum_crew,
+       RETURNING id, name, registration, capacity, minimum_crew,
                  initial_destination, final_destination, status,
                  created_at, updated_at`,
       [
@@ -32,7 +32,7 @@ async function createAircraft({
     return rows[0];
   } catch (cause) {
     if (cause.code === '23505') {
-      const error = new Error('An aircraft with this registration already exists.');
+      const error = new Error('Ya existe una aeronave con esa matrícula.');
       error.status = 409;
       throw error;
     }
@@ -44,6 +44,7 @@ async function createAircraft({
 async function findOperatingAircraft() {
   const { rows } = await pool.query(
     `SELECT
+       id,
        name,
        registration,
        capacity,
@@ -63,15 +64,28 @@ async function getAircraftStatusSummary() {
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'operating')::int AS operating,
-       COUNT(*) FILTER (WHERE status = 'maintenance')::int AS maintenance
+       COUNT(*) FILTER (WHERE status = 'maintenance')::int AS maintenance,
+       COUNT(*) FILTER (WHERE status = 'inactive')::int AS inactive
      FROM public.aircraft`
   );
 
   return rows[0];
 }
 
+async function findAircraftById(id) {
+  const { rows } = await pool.query(
+    `SELECT id, name, registration, status
+     FROM public.aircraft
+     WHERE id = $1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
 module.exports = {
   createAircraft,
   findOperatingAircraft,
   getAircraftStatusSummary,
+  findAircraftById,
 };

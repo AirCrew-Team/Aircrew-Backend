@@ -9,7 +9,7 @@ const {
 
 function verifyJwt(req, res, next) {
   if (!jwtSecret) {
-    const error = new Error('JWT_SECRET is not configured.');
+    const error = new Error('JWT_SECRET no está configurado.');
     error.status = 500;
     return next(error);
   }
@@ -17,7 +17,7 @@ function verifyJwt(req, res, next) {
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Authentication required.' });
+    return res.status(401).json({ error: 'Se requiere autenticación.' });
   }
 
   const token = authorization.slice('Bearer '.length);
@@ -33,7 +33,7 @@ function verifyJwt(req, res, next) {
       typeof payload.sub !== 'string' ||
       typeof payload.role !== 'string'
     ) {
-      return res.status(401).json({ error: 'Invalid authentication token.' });
+      return res.status(401).json({ error: 'El token de autenticación no es válido.' });
     }
 
     req.user = {
@@ -47,7 +47,7 @@ function verifyJwt(req, res, next) {
       error.name === 'JsonWebTokenError' ||
       error.name === 'TokenExpiredError'
     ) {
-      return res.status(401).json({ error: 'Invalid or expired token.' });
+      return res.status(401).json({ error: 'El token no es válido o ya venció.' });
     }
 
     return next(error);
@@ -56,7 +56,7 @@ function verifyJwt(req, res, next) {
 
 function verifyConfiguredKey(req, res, next, configuredKey, headerName) {
   if (!configuredKey) {
-    const error = new Error(`${headerName} is not configured.`);
+    const error = new Error(`${headerName} no está configurado.`);
     error.status = 503;
     return next(error);
   }
@@ -64,7 +64,7 @@ function verifyConfiguredKey(req, res, next, configuredKey, headerName) {
   const providedKey = req.get(headerName);
 
   if (typeof providedKey !== 'string') {
-    return res.status(401).json({ error: 'Service authentication required.' });
+    return res.status(401).json({ error: 'Se requiere autenticación del servicio.' });
   }
 
   const expected = Buffer.from(configuredKey);
@@ -74,7 +74,7 @@ function verifyConfiguredKey(req, res, next, configuredKey, headerName) {
     expected.length !== provided.length ||
     !crypto.timingSafeEqual(expected, provided)
   ) {
-    return res.status(401).json({ error: 'Invalid service credentials.' });
+    return res.status(401).json({ error: 'Las credenciales del servicio no son válidas.' });
   }
 
   return next();

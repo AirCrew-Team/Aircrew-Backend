@@ -2,8 +2,8 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 module.exports = {
-  nombreServicio: 'flights',
-  puerto: Number(process.env.PORT) || 3001,
+  nameService: 'flights',
+  port: Number(process.env.PORT) || 3001,
   jwtSecret: process.env.JWT_SECRET,
   jwtIssuer: process.env.JWT_ISSUER || 'aircrew-admin',
   DataBase: {

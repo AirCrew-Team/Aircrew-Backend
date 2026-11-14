@@ -1,27 +1,17 @@
 const crypto = require('node:crypto');
 const { activationTokenExpiresMinutes } = require('../../config/env');
+const { createCrewInvitation } = require('../../domain/entities/user');
 
 function createInviteCrewUser({ userRepository, passwordHasher, emailClient }) {
   return async function inviteCrewUser(input) {
-    const { name, email } = input || {};
-
-    if (
-      typeof name !== 'string' ||
-      !name.trim() ||
-      typeof email !== 'string' ||
-      !email.trim()
-    ) {
-      const error = new Error('Name and email are required.');
-      error.status = 400;
-      throw error;
-    }
+    const invitation = createCrewInvitation(input || {});
 
     if (
       !Number.isInteger(activationTokenExpiresMinutes) ||
       activationTokenExpiresMinutes < 1
     ) {
       const error = new Error(
-        'ACTIVATION_TOKEN_EXPIRES_MINUTES must be a positive integer.'
+        'ACTIVATION_TOKEN_EXPIRES_MINUTES debe ser un entero positivo.'
       );
       error.status = 503;
       throw error;
@@ -34,8 +24,8 @@ function createInviteCrewUser({ userRepository, passwordHasher, emailClient }) {
     );
     const temporaryPassword = crypto.randomBytes(32).toString('hex');
     const user = await userRepository.createPendingCrewUser({
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
+      name: invitation.name,
+      email: invitation.email,
       passwordHash: await passwordHasher.hash(temporaryPassword),
       activationTokenHash: tokenHash,
       activationExpiresAt: expiresAt,

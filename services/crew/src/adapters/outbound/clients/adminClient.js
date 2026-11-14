@@ -2,7 +2,7 @@ const { adminServiceUrl, crewServiceKey } = require('../../../config/env');
 
 async function createUser({ name, email }) {
   if (!crewServiceKey) {
-    const error = new Error('CREW_SERVICE_KEY is not configured.');
+    const error = new Error('CREW_SERVICE_KEY no está configurado.');
     error.status = 500;
     throw error;
   }
@@ -27,7 +27,7 @@ async function createUser({ name, email }) {
     const message =
       typeof data.error === 'string'
         ? data.error
-        : 'Could not create user in admin service.';
+        : 'No se pudo crear el usuario en el servicio de Admin.';
 
     const error = new Error(message);
     error.status = response.status;

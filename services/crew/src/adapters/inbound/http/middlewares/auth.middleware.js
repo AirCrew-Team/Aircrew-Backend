@@ -5,7 +5,7 @@ const allowedRoles = new Set(['crew', 'supervisor', 'super_admin']);
 
 function verifyJwt(req, res, next) {
   if (!jwtSecret) {
-    const error = new Error('JWT_SECRET is not configured.');
+    const error = new Error('JWT_SECRET no está configurado.');
     error.status = 500;
     return next(error);
   }
@@ -13,7 +13,7 @@ function verifyJwt(req, res, next) {
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Authentication required.' });
+    return res.status(401).json({ error: 'Se requiere autenticación.' });
   }
 
   const token = authorization.slice('Bearer '.length);
@@ -30,7 +30,7 @@ function verifyJwt(req, res, next) {
       typeof payload.role !== 'string' ||
       !allowedRoles.has(payload.role)
     ) {
-      return res.status(401).json({ error: 'Invalid authentication token.' });
+      return res.status(401).json({ error: 'El token de autenticación no es válido.' });
     }
 
     req.user = {
@@ -45,7 +45,7 @@ function verifyJwt(req, res, next) {
       error.name === 'TokenExpiredError' ||
       error.name === 'NotBeforeError'
     ) {
-      return res.status(401).json({ error: 'Invalid or expired token.' });
+      return res.status(401).json({ error: 'El token no es válido o ya venció.' });
     }
 
     return next(error);

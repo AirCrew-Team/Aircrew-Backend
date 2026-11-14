@@ -22,7 +22,7 @@ function escapeHtml(value) {
 function getActivationUrl(token) {
   if (!resendApiKey || !resendFromEmail || !crewActivationUrl) {
     const error = new Error(
-      'RESEND_API_KEY, RESEND_FROM_EMAIL, and CREW_ACTIVATION_URL must be configured.'
+      'Deben configurarse RESEND_API_KEY, RESEND_FROM_EMAIL y CREW_ACTIVATION_URL.'
     );
     error.status = 503;
     throw error;
@@ -33,14 +33,14 @@ function getActivationUrl(token) {
   try {
     activationUrl = new URL(crewActivationUrl);
   } catch {
-    const error = new Error('CREW_ACTIVATION_URL must be a valid URL.');
+    const error = new Error('CREW_ACTIVATION_URL debe ser una URL válida.');
     error.status = 503;
     throw error;
   }
 
   if (!['http:', 'https:'].includes(activationUrl.protocol)) {
     const error = new Error(
-      'CREW_ACTIVATION_URL must use HTTP or HTTPS.'
+      'CREW_ACTIVATION_URL debe usar HTTP o HTTPS.'
     );
     error.status = 503;
     throw error;
@@ -73,14 +73,14 @@ async function sendCrewInvitation({ email, name, token }) {
       { signal: AbortSignal.timeout(10000) }
     );
   } catch (cause) {
-    const error = new Error('Could not connect to Resend.', { cause });
+    const error = new Error('No se pudo conectar con Resend.', { cause });
     error.status = 502;
     throw error;
   }
 
   if (result.error) {
     const error = new Error(
-      `Resend could not send the crew invitation: ${result.error.message}`
+      `Resend no pudo enviar la invitación al tripulante: ${result.error.message}`
     );
     error.status = 502;
     throw error;

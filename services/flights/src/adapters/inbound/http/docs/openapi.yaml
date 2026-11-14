@@ -3,13 +3,14 @@ info:
   title: AirCrew - Flights
   version: 1.0.0
   description: |
-    Aeronaves. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
-    Las rutas de vuelos y aeropuertos todavía no están implementadas.
+    Aeronaves y vuelos. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
+    Las rutas de aeropuertos todavía no están implementadas.
 servers:
   - url: http://localhost:3001
 tags:
   - name: Salud
   - name: Aeronaves
+  - name: Vuelos
 
 paths:
   /health:
@@ -24,10 +25,10 @@ paths:
               schema:
                 type: object
                 properties:
-                  servicio: { type: string, example: flights }
-                  estado: { type: string, example: ok }
+                  service: { type: string, example: flights }
+                  status: { type: string, example: ok }
 
-  /aeronaves:
+  /aircraft:
     post:
       tags: [Aeronaves]
       summary: Crear una aeronave (supervisor o super_admin)
@@ -69,7 +70,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /aeronaves/activas:
+  /aircraft/operating:
     get:
       tags: [Aeronaves]
       summary: Listar aeronaves en estado operating (supervisor o super_admin)
@@ -86,10 +87,10 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /aeronaves/resumen:
+  /aircraft/summary:
     get:
       tags: [Aeronaves]
-      summary: Contar aeronaves operativas y en mantenimiento (supervisor o super_admin)
+      summary: Contar aeronaves por estado (supervisor o super_admin)
       security:
         - bearerAuth: []
       responses:
@@ -102,8 +103,101 @@ paths:
                 properties:
                   operating: { type: integer, example: 5 }
                   maintenance: { type: integer, example: 2 }
+                  inactive: { type: integer, example: 1 }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights:
+    post:
+      tags: [Vuelos]
+      summary: Crear un vuelo (supervisor o super_admin)
+      description: La aeronave debe existir y estar en estado operating. Las fechas se guardan en UTC.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_number, aircraft_id, origin, destination, departure_at, arrival_at]
+              properties:
+                flight_number: { type: string, example: AC101, description: Se guarda en mayúsculas y debe ser único. }
+                aircraft_id: { type: string, format: uuid }
+                origin: { type: string, example: BOG }
+                destination: { type: string, example: MDE }
+                departure_at: { type: string, format: date-time, example: '2026-11-20T13:00:00Z', description: ISO-8601 con zona horaria (Z o ±hh:mm). }
+                arrival_at: { type: string, format: date-time, example: '2026-11-20T14:05:00Z', description: Debe ser posterior a departure_at. }
+                status: { $ref: '#/components/schemas/FlightStatus' }
+      responses:
+        '201':
+          description: Vuelo creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Flight' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: La aeronave no existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El número de vuelo ya existe o la aeronave no está operativa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Vuelos]
+      summary: Listar vuelos ordenados por salida (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Solo vuelos que salen desde esta fecha (incluida).
+          schema: { type: string, format: date-time, example: '2026-11-20T00:00:00Z' }
+        - name: to
+          in: query
+          description: Solo vuelos que salen antes de esta fecha.
+          schema: { type: string, format: date-time, example: '2026-11-21T00:00:00Z' }
+      responses:
+        '200':
+          description: Vuelos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Flight' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/{id}:
+    get:
+      tags: [Vuelos]
+      summary: Consultar un vuelo (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Flight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 components:
   securitySchemes:
@@ -134,6 +228,23 @@ components:
       type: string
       enum: [operating, maintenance, inactive]
       default: operating
+    FlightStatus:
+      type: string
+      enum: [scheduled, delayed, in_flight, completed, cancelled]
+      default: scheduled
+    Flight:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_number: { type: string }
+        aircraft_id: { type: string, format: uuid }
+        origin: { type: string }
+        destination: { type: string }
+        departure_at: { type: string, format: date-time }
+        arrival_at: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/FlightStatus' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -141,6 +252,7 @@ components:
     Aircraft:
       type: object
       properties:
+        id: { type: string, format: uuid }
         name: { type: string }
         registration: { type: string }
         capacity: { type: integer }

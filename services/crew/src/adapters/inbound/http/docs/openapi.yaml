@@ -23,8 +23,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  servicio: { type: string, example: crew }
-                  estado: { type: string, example: ok }
+                  service: { type: string, example: crew }
+                  status: { type: string, example: ok }
 
   /crew-members:
     post:

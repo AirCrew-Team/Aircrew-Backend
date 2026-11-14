@@ -25,7 +25,7 @@ function createActivateUserController(activateUser) {
     try {
       const user = await activateUser(req.body);
       return res.status(200).json({
-        message: 'Account activated. You can now log in.',
+        message: 'Cuenta activada. Ya puedes iniciar sesión.',
         user,
       });
     } catch (error) {

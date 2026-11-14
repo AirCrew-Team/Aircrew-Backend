@@ -1,22 +1,12 @@
 const crypto = require('node:crypto');
+const { validateActivation } = require('../../domain/entities/user');
+const { DomainError } = require('../../domain/errors');
 
 function createActivateUser({ userRepository, passwordHasher }) {
   return async function activateUser(input) {
     const { token, password } = input || {};
 
-    if (
-      typeof token !== 'string' ||
-      !token ||
-      typeof password !== 'string' ||
-      password.length < 12 ||
-      Buffer.byteLength(password, 'utf8') > 72
-    ) {
-      const error = new Error(
-        'An activation token and a password of 12-72 bytes are required.'
-      );
-      error.status = 400;
-      throw error;
-    }
+    validateActivation({ token, password });
 
     const activationTokenHash = crypto
       .createHash('sha256')
@@ -28,9 +18,7 @@ function createActivateUser({ userRepository, passwordHasher }) {
     });
 
     if (!user) {
-      const error = new Error('Invalid or expired activation token.');
-      error.status = 400;
-      throw error;
+      throw new DomainError('El token de activación no es válido o ya venció.');
     }
 
     return {

@@ -82,7 +82,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  message: { type: string, example: Account activated. You can now log in. }
+                  message: { type: string, example: Cuenta activada. Ya puedes iniciar sesión. }
                   user: { $ref: '#/components/schemas/UserSummary' }
         '400':
           description: Datos inválidos o token inválido/vencido
@@ -143,19 +143,18 @@ paths:
               properties:
                 name: { type: string }
                 email: { type: string, format: email }
-                password: { type: string, format: password }
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Entre 12 y 72 bytes UTF-8.
                 role: { $ref: '#/components/schemas/Role' }
       responses:
         '201':
-          description: Usuario creado
+          description: Usuario creado. No incluye token; el usuario obtiene el suyo con POST /auth/login.
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/User'
-                  - type: object
-                    properties:
-                      token: { type: string }
+              schema: { $ref: '#/components/schemas/User' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -165,7 +164,7 @@ paths:
     get:
       tags: [Usuarios]
       summary: Consultar un usuario
-      description: super_admin puede consultar cualquiera; crew solo su propio usuario.
+      description: super_admin puede consultar cualquier usuario; los demás roles, solo su propia cuenta.
       security:
         - bearerAuth: []
       parameters:
@@ -265,8 +264,8 @@ components:
     Health:
       type: object
       properties:
-        servicio: { type: string, example: admin }
-        estado: { type: string, example: ok }
+        service: { type: string, example: admin }
+        status: { type: string, example: ok }
     Error:
       type: object
       properties:

@@ -1,70 +1,30 @@
-const allowedStatuses = new Set([
-  'available',
-  'on_duty',
-  'in_flight',
-  'medical_leave',
-]);
+const { createCrewMember: buildCrewMember } = require('../../domain/entities/crewMember');
 
 function createCreateCrewMember({ createUser, saveCrewMember }) {
-  return async function createCrewMember({
-    name,
-    email,
-    employeeCode,
-    position,
-    currentLocation,
-    status = 'available',
-    isActive,
-  }) {
-    if (
-      typeof name !== 'string' ||
-      !name.trim() ||
-      typeof email !== 'string' ||
-      !email.trim() ||
-      typeof employeeCode !== 'string' ||
-      !employeeCode.trim() ||
-      typeof position !== 'string' ||
-      !position.trim()
-    ) {
-      const error = new Error(
-        'Name, email, employeeCode, and position are required.'
-      );
-      error.status = 400;
-      throw error;
-    }
+  return async function createCrewMember(input) {
+    const crewMember = buildCrewMember(input || {});
 
-    if (
-      (currentLocation !== undefined &&
-        currentLocation !== null &&
-        (typeof currentLocation !== 'string' || !currentLocation.trim())) ||
-      !allowedStatuses.has(status)
-    ) {
-      const error = new Error(
-        'Current location must be a non-empty string and status must be one of: available, on_duty, in_flight, medical_leave.'
-      );
-      error.status = 400;
-      throw error;
-    }
-
-    const user = await createUser({ name, email });
+    const user = await createUser({
+      name: crewMember.name,
+      email: crewMember.email,
+    });
 
     if (!user || !user.id) {
       const error = new Error(
-        'El servicio de admin no retorno el usuario ID.'
+        'El servicio de Admin no devolvió el id del usuario.'
       );
       error.status = 502;
       throw error;
     }
 
-    const crewMember = await saveCrewMember({
+    return saveCrewMember({
       userId: user.id,
-      employeeCode,
-      position,
-      currentLocation: currentLocation?.trim() || null,
-      status,
-      isActive,
+      employeeCode: crewMember.employeeCode,
+      position: crewMember.position,
+      currentLocation: crewMember.currentLocation,
+      status: crewMember.status,
+      isActive: crewMember.isActive,
     });
-
-    return crewMember;
   };
 }
 

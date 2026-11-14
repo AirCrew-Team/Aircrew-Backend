@@ -4,8 +4,7 @@ const {
   jwtExpiresIn,
   jwtIssuer,
 } = require('../../config/env');
-
-const allowedRoles = new Set(['crew', 'supervisor', 'super_admin']);
+const { canLogIn } = require('../../domain/entities/user');
 
 function createLogin({ userRepository, passwordHasher }) {
   return async function login(input) {
@@ -17,13 +16,13 @@ function createLogin({ userRepository, passwordHasher }) {
       typeof password !== 'string' ||
       !password
     ) {
-      const error = new Error('Email and password are required.');
+      const error = new Error('Se requieren email y password.');
       error.status = 400;
       throw error;
     }
 
     if (!jwtSecret) {
-      const error = new Error('JWT_SECRET is not configured.');
+      const error = new Error('JWT_SECRET no está configurado.');
       error.status = 500;
       throw error;
     }
@@ -31,12 +30,10 @@ function createLogin({ userRepository, passwordHasher }) {
     const user = await userRepository.findByEmail(email.trim());
 
     if (
-      !user ||
-      !user.is_active ||
-      !allowedRoles.has(user.role) ||
+      !canLogIn(user) ||
       !(await passwordHasher.compare(password, user.password_hash))
     ) {
-      const error = new Error('Invalid email or password.');
+      const error = new Error('Email o contraseña incorrectos.');
       error.status = 401;
       throw error;
     }

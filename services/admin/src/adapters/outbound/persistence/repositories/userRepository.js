@@ -14,7 +14,7 @@ async function findById(id) {
 
 function toDuplicateEmailError(cause) {
   if (cause.code === '23505') {
-    const error = new Error('A user with this email already exists.');
+    const error = new Error('Ya existe un usuario con ese email.');
     error.status = 409;
     return error;
   }
@@ -104,7 +104,7 @@ async function createFirstSuperAdmin({ name, email, passwordHash }) {
     );
 
     if (existingUsers.length > 0) {
-      const error = new Error('The initial super_admin already exists.');
+      const error = new Error('El super_admin inicial ya existe.');
       error.status = 409;
       throw error;
     }

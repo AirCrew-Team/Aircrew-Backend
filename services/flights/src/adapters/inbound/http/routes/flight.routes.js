@@ -7,12 +7,21 @@ const createCreateFlight = require('../../../../application/use-cases/createFlig
 const createGetFlights = require('../../../../application/use-cases/getFlights');
 const createGetFlightById = require('../../../../application/use-cases/getFlightById');
 const createFlightController = require('../controllers/flight.controller');
+const assignmentRepository = require('../../../outbound/persistence/repositories/assignmentRepository');
+const createAssignCrewMember = require('../../../../application/use-cases/assignCrewMember');
+const createAssignmentController = require('../controllers/assignment.controller');
 
 const router = express.Router();
 const controller = createFlightController({
   createFlight: createCreateFlight({ flightRepository, aircraftRepository }),
   getFlights: createGetFlights(flightRepository),
   getFlightById: createGetFlightById(flightRepository),
+});
+const assignmentController = createAssignmentController({
+  assignCrewMember: createAssignCrewMember({
+    flightRepository,
+    assignmentRepository,
+  }),
 });
 
 router.post(
@@ -32,6 +41,12 @@ router.get(
   verifyJwt,
   allowRoles('supervisor', 'super_admin'),
   controller.getById
+);
+router.post(
+  '/:id/assignments',
+  verifyJwt,
+  allowRoles('supervisor', 'super_admin'),
+  assignmentController.create
 );
 
 module.exports = router;

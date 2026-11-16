@@ -3,7 +3,7 @@ info:
   title: AirCrew - Flights
   version: 1.0.0
   description: |
-    Aeronaves y vuelos. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
+    Aeronaves, vuelos y asignaciones de tripulación. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
     Las rutas de aeropuertos todavía no están implementadas.
 servers:
   - url: http://localhost:3001
@@ -11,6 +11,7 @@ tags:
   - name: Salud
   - name: Aeronaves
   - name: Vuelos
+  - name: Asignaciones
 
 paths:
   /health:
@@ -199,6 +200,98 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /flights/{id}/assignments:
+    post:
+      tags: [Asignaciones]
+      summary: Asignar un tripulante a un vuelo (supervisor o super_admin)
+      description: |
+        El vuelo debe estar scheduled o delayed, y el tripulante no puede tener
+        otro vuelo activo que se cruce en horario.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, role]
+              properties:
+                crew_user_id: { type: string, format: uuid, description: Id del usuario del tripulante en Admin. }
+                role: { $ref: '#/components/schemas/CrewRole' }
+      responses:
+        '201':
+          description: Tripulante asignado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  flight_id: { type: string, format: uuid }
+                  crew_user_id: { type: string, format: uuid }
+                  role: { $ref: '#/components/schemas/CrewRole' }
+                  status: { $ref: '#/components/schemas/AssignmentStatus' }
+                  created_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Ya está asignado, el vuelo no admite asignaciones o se cruza con otro vuelo del tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /assignments/me:
+    get:
+      tags: [Asignaciones]
+      summary: Mis vuelos asignados (crew)
+      description: Vuelos del tripulante que inició sesión, ordenados por hora de salida.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Asignaciones con su vuelo y aeronave
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MyAssignment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /assignments/me/next:
+    get:
+      tags: [Asignaciones]
+      summary: Mi próximo vuelo (crew)
+      description: El próximo vuelo programado o demorado que todavía no ha salido.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Próximo vuelo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAssignment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No tiene vuelos próximos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -224,6 +317,35 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    CrewRole:
+      type: string
+      enum: [captain, first_officer, purser, flight_attendant]
+    AssignmentStatus:
+      type: string
+      enum: [assigned, replaced]
+    MyAssignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/CrewRole' }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        created_at: { type: string, format: date-time }
+        flight:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            flight_number: { type: string, example: AC101 }
+            origin: { type: string, example: BOG }
+            destination: { type: string, example: MDE }
+            departure_at: { type: string, format: date-time }
+            arrival_at: { type: string, format: date-time }
+            status: { $ref: '#/components/schemas/FlightStatus' }
+        aircraft:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string, example: Airbus A320 }
+            registration: { type: string, example: HK-5000 }
     AircraftStatus:
       type: string
       enum: [operating, maintenance, inactive]

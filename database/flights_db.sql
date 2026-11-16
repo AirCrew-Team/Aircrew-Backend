@@ -33,3 +33,20 @@ CREATE TABLE IF NOT EXISTS public.flights (
 );
 
 CREATE INDEX IF NOT EXISTS flights_departure_at_idx ON public.flights (departure_at);
+
+-- Tripulantes asignados a cada vuelo. crew_user_id es el id del usuario en
+-- admin_db (el "sub" del token); no hay llave foránea porque es otra base.
+CREATE TABLE IF NOT EXISTS public.flight_assignments (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  flight_id    UUID        NOT NULL REFERENCES public.flights (id),
+  crew_user_id UUID        NOT NULL,
+  role         TEXT        NOT NULL
+    CHECK (role IN ('captain', 'first_officer', 'purser', 'flight_attendant')),
+  status       TEXT        NOT NULL DEFAULT 'assigned'
+    CHECK (status IN ('assigned', 'replaced')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (flight_id, crew_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS flight_assignments_crew_user_id_idx
+  ON public.flight_assignments (crew_user_id);

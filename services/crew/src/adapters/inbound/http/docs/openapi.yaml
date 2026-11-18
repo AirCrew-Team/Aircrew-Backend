@@ -109,6 +109,35 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /crew-members/me:
+    get:
+      tags: [Tripulantes]
+      summary: Mi perfil de tripulante (crew)
+      description: Base, cargo y estado del tripulante que inició sesión.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewMember' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El usuario no tiene perfil de tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences:
     post:
       tags: [Ausencias]
@@ -167,10 +196,17 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
     get:
       tags: [Ausencias]
-      summary: Listar ausencias reportadas (supervisor o super_admin)
-      description: Las más recientes primero, con el código y cargo del tripulante.
+      summary: Listar ausencias (supervisor o super_admin)
+      description: |
+        Las más recientes primero, con el código y cargo del tripulante.
+        Con `?status=reported` se obtiene la cola de ausencias que todavía necesitan reemplazo.
       security:
         - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/AbsenceStatus' }
       responses:
         '200':
           description: Ausencias
@@ -178,13 +214,12 @@ paths:
             application/json:
               schema:
                 type: array
-                items:
-                  allOf:
-                    - $ref: '#/components/schemas/Absence'
-                    - type: object
-                      properties:
-                        employee_code: { type: string, nullable: true, example: EMP-001 }
-                        position: { type: string, nullable: true, example: pilot }
+                items: { $ref: '#/components/schemas/AbsenceWithCrewMember' }
+        '400':
+          description: status inválido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: Falta autenticación o no es válida
           content:
@@ -192,6 +227,94 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
           description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/{id}:
+    get:
+      tags: [Ausencias]
+      summary: Consultar una ausencia (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Ausencia
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AbsenceWithCrewMember' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Ausencia no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/{id}/cover:
+    patch:
+      tags: [Ausencias]
+      summary: Marcar una ausencia como cubierta (supervisor o super_admin)
+      description: |
+        Guarda quién reemplaza al tripulante. Lo usa el motor de recomendación después
+        de hacer el reemplazo en Flights.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replacement_user_id]
+              properties:
+                replacement_user_id: { type: string, format: uuid, description: Id del usuario del tripulante que reemplaza. }
+      responses:
+        '200':
+          description: Ausencia cubierta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Absence' }
+        '400':
+          description: replacement_user_id inválido o igual al tripulante ausente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Ausencia no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La ausencia ya está cubierta
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -218,8 +341,23 @@ components:
         flight_departure_at: { type: string, format: date-time }
         reason: { $ref: '#/components/schemas/AbsenceReason' }
         notes: { type: string, nullable: true }
-        status: { type: string, enum: [reported, covered] }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+        replacement_user_id: { type: string, format: uuid, nullable: true, description: Quién cubrió la ausencia. }
+        covered_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
+    AbsenceStatus:
+      type: string
+      enum: [reported, covered]
+      description: reported (falta reemplazo), covered (ya tiene reemplazo)
+    AbsenceWithCrewMember:
+      allOf:
+        - $ref: '#/components/schemas/Absence'
+        - type: object
+          properties:
+            employee_code: { type: string, nullable: true, example: EMP-001 }
+            position: { type: string, nullable: true, example: pilot }
+            crew_name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). }
+            replacement_name: { type: string, nullable: true, description: Nombre del reemplazo. }
     CrewStatus:
       type: string
       enum: [available, on_duty, in_flight, medical_leave]
@@ -233,6 +371,7 @@ components:
       properties:
         id: { type: string }
         user_id: { type: string, format: uuid }
+        name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). Solo en las consultas GET. }
         employee_code: { type: string }
         position: { type: string }
         current_location: { type: string, nullable: true }

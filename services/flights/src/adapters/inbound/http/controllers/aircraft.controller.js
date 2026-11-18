@@ -1,5 +1,6 @@
 function createAircraftController({
   createAircraft,
+  getAircraft,
   getOperatingAircraft,
   getAircraftStatusSummary,
 }) {
@@ -7,6 +8,15 @@ function createAircraftController({
     try {
       const aircraft = await createAircraft(req.body);
       return res.status(201).json(aircraft);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function list(req, res, next) {
+    try {
+      const aircraft = await getAircraft({ status: req.query.status });
+      return res.status(200).json(aircraft);
     } catch (error) {
       return next(error);
     }
@@ -30,7 +40,7 @@ function createAircraftController({
     }
   }
 
-  return { create, listOperating, getSummary };
+  return { create, list, listOperating, getSummary };
 }
 
 module.exports = createAircraftController;

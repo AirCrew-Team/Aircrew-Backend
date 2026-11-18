@@ -55,6 +55,26 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /auth/me:
+    get:
+      tags: [Autenticación]
+      summary: Mi cuenta (cualquier rol)
+      description: La cuenta del usuario del token. Sirve para restaurar la sesión al recargar la página.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cuenta del usuario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: El usuario del token ya no existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /auth/activate:
     post:
       tags: [Autenticación]
@@ -128,6 +148,33 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
   /users:
+    get:
+      tags: [Usuarios]
+      summary: Listar usuarios (solo super_admin)
+      description: Ordenados por nombre. Sin paginación.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Busca en nombre o email, sin importar mayúsculas.
+          schema: { type: string, example: samuel }
+        - name: role
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/Role' }
+      responses:
+        '200':
+          description: Usuarios
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Usuarios]
       summary: Crear un supervisor o super_admin (solo super_admin)
@@ -186,6 +233,121 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+    patch:
+      tags: [Usuarios]
+      summary: Editar un usuario (solo super_admin)
+      description: |
+        Solo se aplican los campos enviados. El rol solo cambia entre supervisor y super_admin
+        (un tripulante sigue siendo crew). Un super_admin no puede quitarse su rol ni desactivarse.
+        Una cuenta pendiente de activación no se puede activar aquí.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                role: { type: string, enum: [supervisor, super_admin] }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Usuario no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Email duplicado, intento de quitarse el rol o desactivarse, o cuenta pendiente de activación
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Usuarios]
+      summary: Desactivar un usuario (solo super_admin)
+      description: |
+        No borra el registro (ausencias y asignaciones guardan su id): lo deja con
+        `is_active=false` y ya no puede iniciar sesión. Un token ya emitido sigue
+        siendo válido hasta que vence (1 h).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Usuario desactivado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Usuario no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Un super_admin no puede desactivarse a sí mismo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users/lookup:
+    post:
+      tags: [Interno]
+      summary: Nombres de varios usuarios
+      description: Lo usa Crew para mostrar nombres en sus listas.
+      security:
+        - serviceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Usuarios encontrados (los ids que no existen se omiten)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    is_active: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /users/crew-registration:
     post:
@@ -285,6 +447,7 @@ components:
           properties:
             is_active: { type: boolean }
             created_at: { type: string, format: date-time }
+            pending_activation: { type: boolean, description: Tripulante invitado que todavía no activa su cuenta. }
     AuthResult:
       type: object
       properties:

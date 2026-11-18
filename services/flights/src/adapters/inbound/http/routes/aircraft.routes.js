@@ -3,6 +3,7 @@ const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
 const aircraftRepository = require('../../../outbound/persistence/repositories/aircraftRepository');
 const createCreateAircraft = require('../../../../application/use-cases/createAircraft');
+const createGetAircraft = require('../../../../application/use-cases/getAircraft');
 const createGetOperatingAircraft = require('../../../../application/use-cases/getOperatingAircraft');
 const createGetAircraftStatusSummary = require('../../../../application/use-cases/getAircraftStatusSummary');
 const createAircraftController = require('../controllers/aircraft.controller');
@@ -10,6 +11,7 @@ const createAircraftController = require('../controllers/aircraft.controller');
 const router = express.Router();
 const controller = createAircraftController({
   createAircraft: createCreateAircraft(aircraftRepository),
+  getAircraft: createGetAircraft(aircraftRepository),
   getOperatingAircraft: createGetOperatingAircraft(aircraftRepository),
   getAircraftStatusSummary:
     createGetAircraftStatusSummary(aircraftRepository),
@@ -20,6 +22,12 @@ router.post(
   verifyJwt,
   allowRoles('supervisor', 'super_admin'),
   controller.create
+);
+router.get(
+  '/',
+  verifyJwt,
+  allowRoles('supervisor', 'super_admin'),
+  controller.list
 );
 router.get(
   '/operating',

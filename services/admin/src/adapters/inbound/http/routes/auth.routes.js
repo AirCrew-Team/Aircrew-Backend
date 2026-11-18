@@ -29,6 +29,13 @@ const bootstrapSuperAdminController = createBootstrapSuperAdminController(
   bootstrapSuperAdmin
 );
 
+const createManageUsers = require('../../../../application/use-cases/manageUsers');
+const { createManageUsersController } = require('../controllers/user.controller');
+const { verifyJwt } = require('../middlewares/auth.middleware');
+
+const manageUsers = createManageUsersController(createManageUsers(userRepository));
+
+router.get('/me', verifyJwt, manageUsers.me);
 router.post('/login', loginController);
 router.post('/activate', activateUserController);
 router.post(

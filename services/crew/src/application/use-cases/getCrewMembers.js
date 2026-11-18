@@ -1,6 +1,6 @@
-function createGetCrewMembers(findCrewMembers) {
-  return function getCrewMembers() {
-    return findCrewMembers();
+function createGetCrewMembers(findCrewMembers, attachUserNames) {
+  return async function getCrewMembers() {
+    return attachUserNames(await findCrewMembers(), { user_id: 'name' });
   };
 }
 

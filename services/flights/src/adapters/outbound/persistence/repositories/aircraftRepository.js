@@ -41,6 +41,20 @@ async function createAircraft({
   }
 }
 
+// Todas las aeronaves; `status` es opcional.
+async function findAircraft({ status = null } = {}) {
+  const { rows } = await pool.query(
+    `SELECT id, name, registration, capacity, minimum_crew,
+            initial_destination, final_destination, status
+     FROM public.aircraft
+     WHERE ($1::text IS NULL OR status = $1)
+     ORDER BY registration`,
+    [status]
+  );
+
+  return rows;
+}
+
 async function findOperatingAircraft() {
   const { rows } = await pool.query(
     `SELECT
@@ -84,6 +98,7 @@ async function findAircraftById(id) {
 }
 
 module.exports = {
+  findAircraft,
   createAircraft,
   findOperatingAircraft,
   getAircraftStatusSummary,

@@ -31,3 +31,7 @@ CREATE TABLE IF NOT EXISTS public.absences (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (crew_user_id, flight_id)
 );
+
+-- Quién cubrió la ausencia y cuándo. ALTER para bases creadas antes de estas columnas.
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS replacement_user_id UUID;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS covered_at TIMESTAMPTZ;

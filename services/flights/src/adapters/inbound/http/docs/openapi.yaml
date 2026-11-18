@@ -30,6 +30,28 @@ paths:
                   status: { type: string, example: ok }
 
   /aircraft:
+    get:
+      tags: [Aeronaves]
+      summary: Listar todas las aeronaves (supervisor o super_admin)
+      description: Ordenadas por matrícula; filtro opcional por estado.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/AircraftStatus' }
+      responses:
+        '200':
+          description: Aeronaves
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Aircraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Aeronaves]
       summary: Crear una aeronave (supervisor o super_admin)
@@ -253,6 +275,92 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /flights/{id}/assignments/replace:
+    post:
+      tags: [Asignaciones]
+      summary: Reemplazar a un tripulante en un vuelo (supervisor o super_admin)
+      description: |
+        En una sola transacción, la asignación del tripulante reemplazado pasa a `replaced`
+        y se crea la del reemplazo con el mismo rol a bordo. El vuelo debe estar scheduled
+        o delayed, y el reemplazo no puede tener otro vuelo activo que se cruce en horario.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replaced_crew_user_id, crew_user_id]
+              properties:
+                replaced_crew_user_id: { type: string, format: uuid, description: Tripulante que sale del vuelo. }
+                crew_user_id: { type: string, format: uuid, description: Tripulante que entra al vuelo. }
+      responses:
+        '200':
+          description: Reemplazo hecho
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  replaced: { $ref: '#/components/schemas/Assignment' }
+                  assignment: { $ref: '#/components/schemas/Assignment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado, o el reemplazado no tiene asignación activa en él
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El vuelo no admite cambios, el reemplazo ya está en el vuelo o se cruza con otro de sus vuelos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /assignments:
+    get:
+      tags: [Asignaciones]
+      summary: Asignaciones activas en un rango de fechas (supervisor o super_admin)
+      description: |
+        Asignaciones `assigned` de todos los tripulantes cuyos vuelos se cruzan con el rango
+        [from, to). Excluye vuelos completed y cancelled. El rango máximo es de 31 días.
+        Lo usa el motor de recomendación para la regla de descanso.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, example: '2026-11-24T00:00:00Z' }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, example: '2026-11-27T00:00:00Z' }
+      responses:
+        '200':
+          description: Asignaciones con su tripulante, vuelo y aeronave
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - type: object
+                      properties:
+                        crew_user_id: { type: string, format: uuid }
+                    - $ref: '#/components/schemas/MyAssignment'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /assignments/me:
     get:
       tags: [Asignaciones]
@@ -323,6 +431,15 @@ components:
     AssignmentStatus:
       type: string
       enum: [assigned, replaced]
+    Assignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_id: { type: string, format: uuid }
+        crew_user_id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/CrewRole' }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        created_at: { type: string, format: date-time }
     MyAssignment:
       type: object
       properties:

@@ -31,9 +31,36 @@ function createCrewUserController(inviteCrewUser) {
   };
 }
 
+// Envuelve un caso de uso: lo ejecuta y responde con el status indicado.
+function respond(status, run) {
+  return async function handle(req, res, next) {
+    try {
+      return res.status(status).json(await run(req));
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
+function createManageUsersController(manageUsers) {
+  return {
+    me: respond(200, (req) => manageUsers.getCurrentUser(req.user)),
+    list: respond(200, (req) =>
+      manageUsers.listUsers({ search: req.query.search, role: req.query.role })
+    ),
+    update: respond(200, (req) =>
+      manageUsers.updateUser(req.user, req.params.id, req.body)
+    ),
+    deactivate: respond(200, (req) =>
+      manageUsers.deactivateUser(req.user, req.params.id)
+    ),
+    lookup: respond(200, (req) => manageUsers.lookupUsers(req.body)),
+  };
+}
 
 module.exports = {
   createGetUserByIdController,
   createCreateUserController,
   createCrewUserController,
+  createManageUsersController,
 };

@@ -1,5 +1,7 @@
 function createAssignmentController({
   assignCrewMember,
+  replaceCrewMember,
+  getAssignments,
   getMyAssignments,
   getMyNextAssignment,
 }) {
@@ -7,6 +9,27 @@ function createAssignmentController({
     try {
       const assignment = await assignCrewMember(req.params.id, req.body);
       return res.status(201).json(assignment);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function replace(req, res, next) {
+    try {
+      const result = await replaceCrewMember(req.params.id, req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function list(req, res, next) {
+    try {
+      const assignments = await getAssignments({
+        from: req.query.from,
+        to: req.query.to,
+      });
+      return res.status(200).json(assignments);
     } catch (error) {
       return next(error);
     }
@@ -30,7 +53,7 @@ function createAssignmentController({
     }
   }
 
-  return { create, listMine, getMyNext };
+  return { create, replace, list, listMine, getMyNext };
 }
 
 module.exports = createAssignmentController;

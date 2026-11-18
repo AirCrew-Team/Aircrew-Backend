@@ -30,6 +30,28 @@ paths:
                   status: { type: string, example: ok }
 
   /aircraft:
+    get:
+      tags: [Aeronaves]
+      summary: Listar todas las aeronaves (supervisor o super_admin)
+      description: Ordenadas por matrícula; filtro opcional por estado.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/AircraftStatus' }
+      responses:
+        '200':
+          description: Aeronaves
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Aircraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Aeronaves]
       summary: Crear una aeronave (supervisor o super_admin)

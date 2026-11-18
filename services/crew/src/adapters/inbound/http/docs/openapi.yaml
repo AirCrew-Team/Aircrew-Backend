@@ -109,6 +109,35 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /crew-members/me:
+    get:
+      tags: [Tripulantes]
+      summary: Mi perfil de tripulante (crew)
+      description: Base, cargo y estado del tripulante que inició sesión.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewMember' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El usuario no tiene perfil de tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences:
     post:
       tags: [Ausencias]
@@ -327,6 +356,8 @@ components:
           properties:
             employee_code: { type: string, nullable: true, example: EMP-001 }
             position: { type: string, nullable: true, example: pilot }
+            crew_name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). }
+            replacement_name: { type: string, nullable: true, description: Nombre del reemplazo. }
     CrewStatus:
       type: string
       enum: [available, on_duty, in_flight, medical_leave]
@@ -340,6 +371,7 @@ components:
       properties:
         id: { type: string }
         user_id: { type: string, format: uuid }
+        name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). Solo en las consultas GET. }
         employee_code: { type: string }
         position: { type: string }
         current_location: { type: string, nullable: true }

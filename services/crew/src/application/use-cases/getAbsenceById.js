@@ -1,7 +1,8 @@
 const { isValidAbsenceId } = require('../../domain/entities/absence');
 const { DomainError } = require('../../domain/errors');
+const { NAME_FIELDS } = require('./getAbsences');
 
-function createGetAbsenceById(absenceRepository) {
+function createGetAbsenceById(absenceRepository, attachUserNames) {
   return async function getAbsenceById(id) {
     const absence = isValidAbsenceId(id)
       ? await absenceRepository.findAbsenceById(id)
@@ -11,7 +12,8 @@ function createGetAbsenceById(absenceRepository) {
       throw new DomainError('Ausencia no encontrada.', 404);
     }
 
-    return absence;
+    const [named] = await attachUserNames([absence], NAME_FIELDS);
+    return named;
   };
 }
 

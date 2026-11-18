@@ -46,6 +46,7 @@ function createGetCandidates({ loadReplacementContext }) {
       absence: {
         id: absence.id,
         crew_user_id: absence.crew_user_id,
+        crew_name: absence.crew_name || null,
         employee_code: absence.employee_code,
         reason: absence.reason,
         status: absence.status,

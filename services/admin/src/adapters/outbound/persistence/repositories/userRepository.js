@@ -1,8 +1,12 @@
 const pool = require('../pool');
 
+// pending_activation: tripulante invitado que todavía no define su contraseña.
+const userColumns = `id, name, email, role, is_active, created_at,
+       activation_token_hash IS NOT NULL AS pending_activation`;
+
 async function findById(id) {
   const { rows } = await pool.query(
-    `SELECT id, name, email, role, is_active, created_at
+    `SELECT ${userColumns}
      FROM public.users
      WHERE id = $1
      LIMIT 1`,
@@ -126,7 +130,55 @@ async function createFirstSuperAdmin({ name, email, passwordHash }) {
   }
 }
 
+// Busca por nombre o email (sin importar mayúsculas) y filtra por rol.
+async function findUsers({ search, role }) {
+  const { rows } = await pool.query(
+    `SELECT ${userColumns}
+     FROM public.users
+     WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
+       AND ($2::text IS NULL OR role = $2)
+     ORDER BY name`,
+    [search, role]
+  );
+
+  return rows;
+}
+
+async function findUsersByIds(ids) {
+  const { rows } = await pool.query(
+    `SELECT id, name, email, is_active
+     FROM public.users
+     WHERE id = ANY($1::uuid[])`,
+    [ids]
+  );
+
+  return rows;
+}
+
+// Actualiza solo los campos recibidos.
+async function updateUser(id, { name, email, role, isActive }) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE public.users
+       SET name = COALESCE($2, name),
+           email = COALESCE($3, email),
+           role = COALESCE($4, role),
+           is_active = COALESCE($5, is_active)
+       WHERE id = $1
+       RETURNING ${userColumns}`,
+      [id, name ?? null, email ?? null, role ?? null, isActive ?? null]
+    );
+
+    return rows[0] || null;
+  } catch (cause) {
+    throw toDuplicateEmailError(cause);
+  }
+}
+
 module.exports = {
+  findUsers,
+  findUsersByIds,
+  updateUser,
   findById,
   create,
   createPendingCrewUser,

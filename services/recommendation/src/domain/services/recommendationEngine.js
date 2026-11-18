@@ -22,6 +22,7 @@ function rankCandidates({ members, flight, role, absentUserId, assignments }) {
     const context = { member, flight, role, memberAssignments };
     const summary = {
       user_id: member.user_id,
+      name: member.name || null,
       employee_code: member.employee_code,
       position: member.position,
       current_location: member.current_location,

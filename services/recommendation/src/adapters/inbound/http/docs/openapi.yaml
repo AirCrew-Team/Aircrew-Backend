@@ -178,6 +178,7 @@ components:
       type: object
       properties:
         user_id: { type: string, format: uuid }
+        name: { type: string, nullable: true, example: Juan }
         employee_code: { type: string, example: EMP-003 }
         position: { type: string, example: pilot }
         current_location: { type: string, nullable: true, example: BOG }
@@ -208,6 +209,7 @@ components:
           properties:
             id: { type: string, format: uuid }
             crew_user_id: { type: string, format: uuid }
+            crew_name: { type: string, nullable: true }
             employee_code: { type: string, nullable: true }
             reason: { type: string, enum: [illness, fatigue, emergency, transfer] }
             status: { type: string, enum: [reported, covered] }

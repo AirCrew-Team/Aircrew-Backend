@@ -31,4 +31,16 @@ async function findCrewMembers() {
   return rows;
 }
 
-module.exports = { createCrewMember, findCrewMembers };
+async function findCrewMemberByUserId(userId) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, employee_code, position, current_location, status,
+            is_active, created_at
+     FROM public.crew_members
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
+module.exports = { createCrewMember, findCrewMembers, findCrewMemberByUserId };

@@ -8,6 +8,10 @@ function isValidAbsenceId(id) {
   return typeof id === 'string' && uuidPattern.test(id);
 }
 
+function isValidUserId(id) {
+  return typeof id === 'string' && uuidPattern.test(id);
+}
+
 // La solicitud sigue abierta si la ausencia no está cubierta y el vuelo
 // todavía no ha salido.
 function assertCanBeReplaced(absence, flight, now = new Date()) {
@@ -23,4 +27,4 @@ function assertCanBeReplaced(absence, flight, now = new Date()) {
   }
 }
 
-module.exports = { isValidAbsenceId, assertCanBeReplaced };
+module.exports = { isValidAbsenceId, isValidUserId, assertCanBeReplaced };

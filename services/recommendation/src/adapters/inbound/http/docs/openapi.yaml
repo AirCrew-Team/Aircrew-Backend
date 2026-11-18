@@ -73,6 +73,88 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /absences/{id}/confirm:
+    post:
+      tags: [Recomendación]
+      summary: Confirmar el reemplazo de una ausencia (supervisor o super_admin)
+      description: |
+        Vuelve a evaluar las reglas con datos frescos y, si el candidato sigue siendo válido,
+        Flights lo pone en el vuelo en lugar del ausente (con el mismo rol) y Crew marca la
+        ausencia como `covered`.
+
+        Si Flights hizo el cambio pero Crew falló, responde 502 y se puede reintentar:
+        el reemplazo ya hecho se detecta y solo se marca la ausencia.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id de la ausencia en Crew.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidate_user_id]
+              properties:
+                candidate_user_id: { type: string, format: uuid, description: 'user_id de un candidato de GET /absences/{id}/candidates.' }
+      responses:
+        '200':
+          description: Reemplazo confirmado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  absence:
+                    type: object
+                    description: La ausencia ya cubierta, con replacement_user_id y covered_at.
+                  flight:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      flight_number: { type: string }
+                      origin: { type: string }
+                      destination: { type: string }
+                      departure_at: { type: string, format: date-time }
+                      arrival_at: { type: string, format: date-time }
+                  replacement:
+                    type: object
+                    nullable: true
+                    description: La nueva asignación en Flights (null si se hizo en un intento anterior).
+                    properties:
+                      id: { type: string, format: uuid }
+                      flight_id: { type: string, format: uuid }
+                      crew_user_id: { type: string, format: uuid }
+                      role: { type: string }
+                      status: { type: string, example: assigned }
+                      created_at: { type: string, format: date-time }
+        '400':
+          description: candidate_user_id inválido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: Ausencia o vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El tripulante no es candidato, la ausencia ya está cubierta o el vuelo ya no admite reemplazos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Crew o Flights no respondieron
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:

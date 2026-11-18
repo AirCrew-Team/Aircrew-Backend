@@ -17,4 +17,13 @@ function getCrewMembers(authorization) {
   });
 }
 
-module.exports = { getAbsence, getCrewMembers };
+function coverAbsence(id, replacementUserId, authorization) {
+  return requestJson(`${crewServiceUrl}/absences/${encodeURIComponent(id)}/cover`, {
+    method: 'PATCH',
+    body: { replacement_user_id: replacementUserId },
+    authorization,
+    serviceName,
+  });
+}
+
+module.exports = { getAbsence, getCrewMembers, coverAbsence };

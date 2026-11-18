@@ -18,4 +18,11 @@ function getAssignments({ from, to }, authorization) {
   });
 }
 
-module.exports = { getFlight, getAssignments };
+function replaceCrewMember(flightId, body, authorization) {
+  return requestJson(
+    `${flightsServiceUrl}/flights/${encodeURIComponent(flightId)}/assignments/replace`,
+    { method: 'POST', body, authorization, serviceName }
+  );
+}
+
+module.exports = { getFlight, getAssignments, replaceCrewMember };

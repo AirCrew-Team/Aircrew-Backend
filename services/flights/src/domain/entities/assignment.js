@@ -35,9 +35,40 @@ function flightsOverlap(a, b) {
   );
 }
 
+// El primer vuelo de `otherFlights` que se cruza con `flight`, si hay alguno.
+function findConflictingFlight(otherFlights, flight) {
+  return otherFlights.find(
+    (other) => other.id !== flight.id && flightsOverlap(other, flight)
+  );
+}
+
+// Valida los datos para cambiar a un tripulante por otro en un vuelo.
+function createReplacement({ replacedCrewUserId, crewUserId }) {
+  if (
+    typeof replacedCrewUserId !== 'string' ||
+    !uuidPattern.test(replacedCrewUserId) ||
+    typeof crewUserId !== 'string' ||
+    !uuidPattern.test(crewUserId)
+  ) {
+    throw new DomainError(
+      'Se requieren un replaced_crew_user_id y un crew_user_id válidos.'
+    );
+  }
+
+  if (replacedCrewUserId.toLowerCase() === crewUserId.toLowerCase()) {
+    throw new DomainError(
+      'El reemplazo debe ser un tripulante distinto al reemplazado.'
+    );
+  }
+
+  return { replacedCrewUserId, crewUserId };
+}
+
 module.exports = {
   CREW_ROLES,
   createAssignment,
   canAssignCrewTo,
   flightsOverlap,
+  findConflictingFlight,
+  createReplacement,
 };

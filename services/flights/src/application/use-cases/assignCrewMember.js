@@ -1,7 +1,7 @@
 const {
   createAssignment,
   canAssignCrewTo,
-  flightsOverlap,
+  findConflictingFlight,
 } = require('../../domain/entities/assignment');
 const { isValidFlightId } = require('../../domain/entities/flight');
 const { DomainError } = require('../../domain/errors');
@@ -28,9 +28,7 @@ function createAssignCrewMember({ flightRepository, assignmentRepository }) {
 
     const otherFlights =
       await assignmentRepository.findActiveFlightsByCrewUser(crewUserId);
-    const conflict = otherFlights.find(
-      (other) => other.id !== flight.id && flightsOverlap(other, flight)
-    );
+    const conflict = findConflictingFlight(otherFlights, flight);
 
     if (conflict) {
       throw new DomainError(

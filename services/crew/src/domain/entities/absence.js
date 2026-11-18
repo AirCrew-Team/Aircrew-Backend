@@ -3,6 +3,8 @@ const { DomainError } = require('../errors');
 // illness: incapacidad · fatigue: fatiga
 // emergency: calamidad · transfer: problema de traslado
 const ABSENCE_REASONS = ['illness', 'fatigue', 'emergency', 'transfer'];
+// reported: falta reemplazo · covered: ya tiene reemplazo
+const ABSENCE_STATUSES = ['reported', 'covered'];
 const MAX_NOTES_LENGTH = 500;
 
 const uuidPattern =
@@ -44,4 +46,51 @@ function canReportAbsenceFor(flight, now = new Date()) {
   );
 }
 
-module.exports = { ABSENCE_REASONS, createAbsence, canReportAbsenceFor };
+function isValidAbsenceId(id) {
+  return typeof id === 'string' && uuidPattern.test(id);
+}
+
+// Filtro opcional de la lista de ausencias.
+function parseStatusFilter(status) {
+  if (status === undefined || status === '') {
+    return null;
+  }
+
+  if (!ABSENCE_STATUSES.includes(status)) {
+    throw new DomainError(
+      `status debe ser uno de: ${ABSENCE_STATUSES.join(', ')}.`
+    );
+  }
+
+  return status;
+}
+
+// Valida el reemplazo que cubre una ausencia.
+function validateCoverage(absence, replacementUserId) {
+  if (
+    typeof replacementUserId !== 'string' ||
+    !uuidPattern.test(replacementUserId)
+  ) {
+    throw new DomainError('Se requiere un replacement_user_id válido.');
+  }
+
+  if (replacementUserId.toLowerCase() === absence.crew_user_id.toLowerCase()) {
+    throw new DomainError(
+      'El reemplazo no puede ser el mismo tripulante que se ausentó.'
+    );
+  }
+
+  if (absence.status === 'covered') {
+    throw new DomainError('La ausencia ya está cubierta.', 409);
+  }
+}
+
+module.exports = {
+  ABSENCE_REASONS,
+  ABSENCE_STATUSES,
+  createAbsence,
+  canReportAbsenceFor,
+  isValidAbsenceId,
+  parseStatusFilter,
+  validateCoverage,
+};

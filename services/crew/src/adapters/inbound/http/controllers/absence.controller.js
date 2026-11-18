@@ -1,4 +1,9 @@
-function createAbsenceController({ reportAbsence, getAbsences }) {
+function createAbsenceController({
+  reportAbsence,
+  getAbsences,
+  getAbsenceById,
+  coverAbsence,
+}) {
   async function create(req, res, next) {
     try {
       const absence = await reportAbsence(
@@ -14,14 +19,32 @@ function createAbsenceController({ reportAbsence, getAbsences }) {
 
   async function list(req, res, next) {
     try {
-      const absences = await getAbsences();
+      const absences = await getAbsences({ status: req.query.status });
       return res.status(200).json(absences);
     } catch (error) {
       return next(error);
     }
   }
 
-  return { create, list };
+  async function getById(req, res, next) {
+    try {
+      const absence = await getAbsenceById(req.params.id);
+      return res.status(200).json(absence);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function cover(req, res, next) {
+    try {
+      const absence = await coverAbsence(req.params.id, req.body);
+      return res.status(200).json(absence);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  return { create, list, getById, cover };
 }
 
 module.exports = createAbsenceController;

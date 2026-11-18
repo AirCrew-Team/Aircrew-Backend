@@ -1,7 +1,17 @@
 const pool = require('../pool');
 
 const absenceColumns = `id, crew_user_id, flight_id, flight_number,
-       flight_departure_at, reason, notes, status, created_at`;
+       flight_departure_at, reason, notes, status, replacement_user_id,
+       covered_at, created_at`;
+
+// Ausencia con el código y cargo del tripulante que se ausentó.
+const absenceWithCrewMember = `
+  SELECT a.id, a.crew_user_id, a.flight_id, a.flight_number,
+         a.flight_departure_at, a.reason, a.notes, a.status,
+         a.replacement_user_id, a.covered_at, a.created_at,
+         c.employee_code, c.position
+  FROM public.absences a
+  LEFT JOIN public.crew_members c ON c.user_id = a.crew_user_id`;
 
 async function createAbsence({
   crewUserId,
@@ -32,18 +42,45 @@ async function createAbsence({
   }
 }
 
-// Ausencias con el código y cargo del tripulante, las más recientes primero.
-async function findAbsences() {
+// Las más recientes primero; `status` es opcional.
+async function findAbsences({ status = null } = {}) {
   const { rows } = await pool.query(
-    `SELECT a.id, a.crew_user_id, a.flight_id, a.flight_number,
-            a.flight_departure_at, a.reason, a.notes, a.status, a.created_at,
-            c.employee_code, c.position
-     FROM public.absences a
-     LEFT JOIN public.crew_members c ON c.user_id = a.crew_user_id
-     ORDER BY a.created_at DESC`
+    `${absenceWithCrewMember}
+     WHERE ($1::text IS NULL OR a.status = $1)
+     ORDER BY a.created_at DESC`,
+    [status]
   );
 
   return rows;
 }
 
-module.exports = { createAbsence, findAbsences };
+async function findAbsenceById(id) {
+  const { rows } = await pool.query(
+    `${absenceWithCrewMember}
+     WHERE a.id = $1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+// Solo cambia una ausencia que siga `reported`; si otra petición la cubrió
+// primero, devuelve null.
+async function markAbsenceCovered(id, replacementUserId) {
+  const { rows } = await pool.query(
+    `UPDATE public.absences
+     SET status = 'covered', replacement_user_id = $2, covered_at = now()
+     WHERE id = $1 AND status = 'reported'
+     RETURNING ${absenceColumns}`,
+    [id, replacementUserId]
+  );
+
+  return rows[0] || null;
+}
+
+module.exports = {
+  createAbsence,
+  findAbsences,
+  findAbsenceById,
+  markAbsenceCovered,
+};

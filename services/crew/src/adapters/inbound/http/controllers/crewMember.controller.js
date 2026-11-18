@@ -1,4 +1,4 @@
-function createCrewMemberController(createCrewMember) {
+function createCrewMemberController({ createCrewMember, getCrewMembers }) {
   async function create(req, res, next) {
     try {
       const crewMember = await createCrewMember(req.body);
@@ -8,7 +8,16 @@ function createCrewMemberController(createCrewMember) {
     }
   }
 
-  return { create };
+  async function list(req, res, next) {
+    try {
+      const crewMembers = await getCrewMembers();
+      return res.status(200).json(crewMembers);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  return { create, list };
 }
 
 module.exports = createCrewMemberController;

@@ -20,4 +20,15 @@ async function createCrewMember({
   return rows[0];
 }
 
-module.exports = { createCrewMember };
+async function findCrewMembers() {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, employee_code, position, current_location, status,
+            is_active, created_at
+     FROM public.crew_members
+     ORDER BY employee_code`
+  );
+
+  return rows;
+}
+
+module.exports = { createCrewMember, findCrewMembers };

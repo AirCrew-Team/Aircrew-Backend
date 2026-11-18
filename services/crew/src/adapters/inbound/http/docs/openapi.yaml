@@ -3,12 +3,13 @@ info:
   title: AirCrew - Crew
   version: 1.0.0
   description: |
-    Tripulantes. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
+    Tripulantes y ausencias. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
 servers:
   - url: http://localhost:3002
 tags:
   - name: Salud
   - name: Tripulantes
+  - name: Ausencias
 
 paths:
   /health:
@@ -83,6 +84,118 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+    get:
+      tags: [Tripulantes]
+      summary: Listar tripulantes (supervisor o super_admin)
+      description: Perfiles de tripulación ordenados por código de empleado.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tripulantes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CrewMember' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences:
+    post:
+      tags: [Ausencias]
+      summary: Reportar una ausencia (crew)
+      description: |
+        El tripulante reporta que no podrá cumplir un vuelo que tiene asignado.
+        Crew confirma con Flights que el vuelo sea suyo y que todavía no haya salido.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_id, reason]
+              properties:
+                flight_id: { type: string, format: uuid, description: Id del vuelo asignado. }
+                reason: { $ref: '#/components/schemas/AbsenceReason' }
+                notes: { type: string, maxLength: 500, nullable: true, example: Fiebre alta desde la madrugada. }
+      responses:
+        '201':
+          description: Ausencia reportada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Absence' }
+        '400':
+          description: Datos inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo un tripulante puede reportar ausencias
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El vuelo no está asignado al tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Ya reportó ausencia para ese vuelo, o el vuelo ya salió
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: No se pudo consultar el servicio de vuelos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Ausencias]
+      summary: Listar ausencias reportadas (supervisor o super_admin)
+      description: Las más recientes primero, con el código y cargo del tripulante.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ausencias
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/Absence'
+                    - type: object
+                      properties:
+                        employee_code: { type: string, nullable: true, example: EMP-001 }
+                        position: { type: string, nullable: true, example: pilot }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -91,6 +204,22 @@ components:
       bearerFormat: JWT
 
   schemas:
+    AbsenceReason:
+      type: string
+      enum: [illness, fatigue, emergency, transfer]
+      description: illness (incapacidad), fatigue (fatiga), emergency (calamidad), transfer (traslado)
+    Absence:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        crew_user_id: { type: string, format: uuid }
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: AC201 }
+        flight_departure_at: { type: string, format: date-time }
+        reason: { $ref: '#/components/schemas/AbsenceReason' }
+        notes: { type: string, nullable: true }
+        status: { type: string, enum: [reported, covered] }
+        created_at: { type: string, format: date-time }
     CrewStatus:
       type: string
       enum: [available, on_duty, in_flight, medical_leave]

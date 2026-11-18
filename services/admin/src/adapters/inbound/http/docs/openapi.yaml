@@ -130,7 +130,8 @@ paths:
   /users:
     post:
       tags: [Usuarios]
-      summary: Crear un usuario (solo super_admin)
+      summary: Crear un supervisor o super_admin (solo super_admin)
+      description: Los tripulantes no se crean aquí; se registran con POST /crew/crew-members, que crea la cuenta y el perfil juntos.
       security:
         - bearerAuth: []
       requestBody:
@@ -148,7 +149,7 @@ paths:
                   format: password
                   minLength: 12
                   description: Entre 12 y 72 bytes UTF-8.
-                role: { $ref: '#/components/schemas/Role' }
+                role: { type: string, enum: [supervisor, super_admin] }
       responses:
         '201':
           description: Usuario creado. No incluye token; el usuario obtiene el suyo con POST /auth/login.

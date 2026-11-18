@@ -84,6 +84,31 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+    get:
+      tags: [Tripulantes]
+      summary: Listar tripulantes (supervisor o super_admin)
+      description: Perfiles de tripulación ordenados por código de empleado.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tripulantes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CrewMember' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences:
     post:
       tags: [Ausencias]

@@ -24,7 +24,14 @@ function createUser({ name, email, password, role }) {
   }
 
   if (!ROLES.includes(role.trim())) {
-    throw new DomainError(`role debe ser uno de: ${ROLES.join(', ')}.`);
+    throw new DomainError('role debe ser supervisor o super_admin.');
+  }
+
+  // Un tripulante necesita su perfil en Crew; Crew crea la cuenta y el perfil juntos.
+  if (role.trim() === 'crew') {
+    throw new DomainError(
+      'Los tripulantes se registran con POST /crew/crew-members.'
+    );
   }
 
   if (!isValidPassword(password)) {

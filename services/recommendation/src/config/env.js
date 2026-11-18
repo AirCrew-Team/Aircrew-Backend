@@ -9,4 +9,6 @@ module.exports = {
   crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
   flightsServiceUrl:
     process.env.FLIGHTS_SERVICE_URL || 'http://localhost:3001',
+  notificationServiceUrl:
+    process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
 };

@@ -24,4 +24,24 @@ function createServiceProxy(name, target) {
   });
 }
 
-module.exports = { createServiceProxy };
+// Las conexiones WebSocket no pasan por las rutas de Express: llegan como
+// 'upgrade' al servidor HTTP con la URL completa, así que aquí se quita el prefijo.
+// /api/notification/socket.io/... -> /socket.io/...
+function createSocketProxy(name, target) {
+  const prefix = `/api/${name}`;
+
+  return createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    ws: true,
+    pathFilter: `${prefix}/socket.io`,
+    pathRewrite: { [`^${prefix}`]: '' },
+    on: {
+      error(error) {
+        console.error(`Gateway -> ${name} (WebSocket): ${error.message}`);
+      },
+    },
+  });
+}
+
+module.exports = { createServiceProxy, createSocketProxy };

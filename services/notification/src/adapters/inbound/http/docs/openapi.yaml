@@ -1,0 +1,120 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Notification
+  version: 1.0.0
+  description: |
+    Alertas en tiempo real para supervisores con **Socket.IO**.
+
+    **Conexión (frontend):**
+    ```js
+    import { io } from 'socket.io-client';
+    const socket = io('http://localhost:3000', {
+      path: '/api/notification/socket.io',
+      auth: { token: '<JWT de supervisor o super_admin>' },
+    });
+    socket.on('absence:reported', (alert) => console.log(alert.message));
+    socket.on('absence:covered', (alert) => console.log(alert.message));
+    socket.on('connect_error', (error) => console.log(error.message));
+    ```
+    Solo `supervisor` y `super_admin` pueden conectarse; con otro rol o un token inválido,
+    `connect_error` trae el motivo.
+
+    **Eventos que emite el servidor:**
+    - `connected`: confirmación al conectarse.
+    - `absence:reported`: un tripulante reportó una ausencia.
+    - `absence:covered`: una ausencia ya tiene reemplazo.
+
+    Los endpoints de abajo los llaman otros servicios para disparar las alertas.
+servers:
+  - url: http://localhost:3004
+tags:
+  - name: Salud
+  - name: Eventos
+    description: Los llaman Crew y Recommendation, no el frontend.
+
+paths:
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+
+  /events/absence-reported:
+    post:
+      tags: [Eventos]
+      summary: Avisar a los supervisores que se reportó una ausencia (crew)
+      description: Lo llama Crew después de guardar la ausencia, con el token del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbsenceEvent' }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /events/absence-covered:
+    post:
+      tags: [Eventos]
+      summary: Avisar a los supervisores que una ausencia ya tiene reemplazo (supervisor o super_admin)
+      description: Lo llama Recommendation al confirmar un reemplazo, con el token del supervisor.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbsenceEvent' }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Published:
+      description: Alerta enviada a los supervisores conectados
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              type: { type: string, example: 'absence:reported' }
+              message: { type: string, example: EMP-004 no podrá volar AC201 (incapacidad). }
+              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron. }
+    Error:
+      description: Datos inválidos, falta autenticación o el rol no tiene permiso
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+
+  schemas:
+    AbsenceEvent:
+      type: object
+      required: [absence]
+      properties:
+        absence:
+          type: object
+          required: [id, flight_number]
+          description: La ausencia tal como la devuelve Crew.
+          properties:
+            id: { type: string, format: uuid }
+            flight_number: { type: string, example: AC201 }
+            employee_code: { type: string, nullable: true, example: EMP-004 }
+            reason: { type: string, enum: [illness, fatigue, emergency, transfer] }

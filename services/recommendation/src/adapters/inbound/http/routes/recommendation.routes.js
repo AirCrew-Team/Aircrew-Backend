@@ -3,6 +3,7 @@ const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
 const crewClient = require('../../../outbound/clients/crewClient');
 const flightsClient = require('../../../outbound/clients/flightsClient');
+const notificationClient = require('../../../outbound/clients/notificationClient');
 const createLoadReplacementContext = require('../../../../application/use-cases/loadReplacementContext');
 const createGetCandidates = require('../../../../application/use-cases/getCandidates');
 const createConfirmReplacement = require('../../../../application/use-cases/confirmReplacement');
@@ -19,6 +20,7 @@ const controller = createRecommendationController({
     loadReplacementContext,
     crewClient,
     flightsClient,
+    notificationClient,
   }),
 });
 

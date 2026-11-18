@@ -2,6 +2,7 @@ const express = require('express');
 const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
 const flightsClient = require('../../../outbound/clients/flightsClient');
+const notificationClient = require('../../../outbound/clients/notificationClient');
 const absenceRepository = require('../../../outbound/persistence/repositories/absenceRepository');
 const createReportAbsence = require('../../../../application/use-cases/reportAbsence');
 const createGetAbsences = require('../../../../application/use-cases/getAbsences');
@@ -11,7 +12,11 @@ const createAbsenceController = require('../controllers/absence.controller');
 
 const router = express.Router();
 const controller = createAbsenceController({
-  reportAbsence: createReportAbsence({ flightsClient, absenceRepository }),
+  reportAbsence: createReportAbsence({
+    flightsClient,
+    absenceRepository,
+    notificationClient,
+  }),
   getAbsences: createGetAbsences(absenceRepository),
   getAbsenceById: createGetAbsenceById(absenceRepository),
   coverAbsence: createCoverAbsence(absenceRepository),

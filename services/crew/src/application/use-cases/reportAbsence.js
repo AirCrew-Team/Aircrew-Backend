@@ -4,7 +4,11 @@ const {
 } = require('../../domain/entities/absence');
 const { DomainError } = require('../../domain/errors');
 
-function createReportAbsence({ flightsClient, absenceRepository }) {
+function createReportAbsence({
+  flightsClient,
+  absenceRepository,
+  notificationClient,
+}) {
   return async function reportAbsence(user, authorization, input) {
     const { flight_id: flightId, reason, notes } = input || {};
     const absence = createAbsence({ flightId, reason, notes });
@@ -25,8 +29,7 @@ function createReportAbsence({ flightsClient, absenceRepository }) {
       );
     }
 
-    // Paso 3: aquí Crew pedirá a Recommendation que busque reemplazo.
-    return absenceRepository.createAbsence({
+    const created = await absenceRepository.createAbsence({
       crewUserId: user.id,
       flightId: absence.flightId,
       flightNumber: assignment.flight.flight_number,
@@ -34,6 +37,19 @@ function createReportAbsence({ flightsClient, absenceRepository }) {
       reason: absence.reason,
       notes: absence.notes,
     });
+
+    // Alerta en tiempo real a los supervisores, con el código del tripulante.
+    // No se espera: el tripulante recibe su respuesta aunque Notification tarde o falle.
+    absenceRepository
+      .findAbsenceById(created.id)
+      .then((detail) =>
+        notificationClient.notifyAbsenceReported(detail || created, authorization)
+      )
+      .catch((error) =>
+        console.error(`No se pudo enviar la alerta de ausencia: ${error.message}`)
+      );
+
+    return created;
   };
 }
 

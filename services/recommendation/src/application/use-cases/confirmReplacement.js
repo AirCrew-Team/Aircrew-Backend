@@ -12,6 +12,7 @@ function createConfirmReplacement({
   loadReplacementContext,
   crewClient,
   flightsClient,
+  notificationClient,
 }) {
   return async function confirmReplacement(absenceId, authorization, input) {
     const { candidate_user_id: candidateUserId } = input || {};
@@ -82,6 +83,12 @@ function createConfirmReplacement({
       error.status = 502;
       throw error;
     }
+
+    // Actualiza la cola de los demás supervisores conectados. No se espera.
+    notificationClient.notifyAbsenceCovered(
+      { ...covered, employee_code: absence.employee_code },
+      authorization
+    );
 
     return {
       absence: covered,

@@ -12,6 +12,8 @@ module.exports = {
   port: Number(process.env.PORT) || 3002,
   adminServiceUrl:
     process.env.ADMIN_SERVICE_URL || 'http://localhost:3005',
+  flightsServiceUrl:
+    process.env.FLIGHTS_SERVICE_URL || 'http://localhost:3001',
   DataBase: {
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT) || 5432,

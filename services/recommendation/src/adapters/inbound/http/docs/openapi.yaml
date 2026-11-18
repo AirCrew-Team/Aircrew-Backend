@@ -1,0 +1,148 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Recommendation
+  version: 1.0.0
+  description: |
+    Motor de recomendación de reemplazos. No tiene base de datos: una ausencia `reported`
+    de Crew es la solicitud de reemplazo, y los candidatos se calculan en cada consulta con
+    datos de Crew y Flights, reenviando el token del supervisor.
+
+    **Reglas que descartan:**
+    - Disponibilidad: activo, en estado `available` y no asignado ya al vuelo.
+    - Habilitación: captain y first_officer requieren `pilot`; purser y flight_attendant requieren `cabin_crew`.
+    - Descanso: ningún otro vuelo a menos de 10 h antes de la salida o después de la llegada.
+
+    **Puntaje (0 a 100):** +60 si está en la ciudad de origen; hasta +40 por baja carga
+    (40 sin vuelos en las 24 h cercanas, 20 con uno, 0 con dos o más).
+servers:
+  - url: http://localhost:3003
+tags:
+  - name: Salud
+  - name: Recomendación
+
+paths:
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { type: string, example: recommendation }
+                  status: { type: string, example: ok }
+
+  /absences/{id}/candidates:
+    get:
+      tags: [Recomendación]
+      summary: Candidatos para cubrir una ausencia (supervisor o super_admin)
+      description: Candidatos ordenados de mayor a menor puntaje, y los descartados con sus motivos.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id de la ausencia en Crew.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Candidatos calculados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CandidatesResult' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: Ausencia o vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La ausencia ya está cubierta, el vuelo ya no admite reemplazos o el ausente ya no está en el vuelo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Crew o Flights no respondieron
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Error:
+      description: Falta autenticación, no es válida o el rol no tiene permiso
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    CrewSummary:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string, example: EMP-003 }
+        position: { type: string, example: pilot }
+        current_location: { type: string, nullable: true, example: BOG }
+    Candidate:
+      allOf:
+        - $ref: '#/components/schemas/CrewSummary'
+        - type: object
+          properties:
+            score: { type: integer, minimum: 0, maximum: 100, example: 100 }
+            reasons:
+              type: array
+              items: { type: string }
+              example: [Disponible, Cargo habilitado, En BOG, Sin vuelos en 24 h]
+    Discarded:
+      allOf:
+        - $ref: '#/components/schemas/CrewSummary'
+        - type: object
+          properties:
+            reasons:
+              type: array
+              items: { type: string }
+              example: ['No está disponible (estado: medical_leave).']
+    CandidatesResult:
+      type: object
+      properties:
+        absence:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            crew_user_id: { type: string, format: uuid }
+            employee_code: { type: string, nullable: true }
+            reason: { type: string, enum: [illness, fatigue, emergency, transfer] }
+            status: { type: string, enum: [reported, covered] }
+        flight:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            flight_number: { type: string, example: AC201 }
+            origin: { type: string, example: BOG }
+            destination: { type: string, example: MDE }
+            departure_at: { type: string, format: date-time }
+            arrival_at: { type: string, format: date-time }
+        role: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
+        required_position: { type: string, enum: [pilot, cabin_crew] }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Candidate' }
+        discarded:
+          type: array
+          items: { $ref: '#/components/schemas/Discarded' }

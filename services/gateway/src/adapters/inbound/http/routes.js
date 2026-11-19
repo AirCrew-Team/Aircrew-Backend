@@ -1,6 +1,7 @@
 const express = require('express');
 const { services } = require('../../../config/env');
 const { createServiceProxy } = require('../../outbound/http/serviceProxy');
+const { cookieToAuthorization } = require('./cookieAuth');
 
 const router = express.Router();
 
@@ -10,6 +11,7 @@ router.get('/health', (req, res) => {
 
 // El frontend llama a /api/<servicio>/<ruta>; el gateway no tiene lógica de
 // negocio ni valida el token: cada servicio lo sigue verificando.
+router.use(cookieToAuthorization);
 for (const [name, target] of Object.entries(services)) {
   router.use(`/api/${name}`, createServiceProxy(name, target));
 }

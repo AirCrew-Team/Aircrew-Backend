@@ -15,8 +15,9 @@ info:
     3. **Prioridad:** de guardia en la base de salida → libre en la base → otra base (si alcanza a llegar).
     4. **IA (Claude):** ordena de 3 a 5 candidatos y explica en español por qué. Proveedor
        configurable: Claude Code (`AI_PROVIDER=claude_code`, suscripción) o la API (`AI_PROVIDER=api`).
-    5. **Plan B:** si la IA está apagada o falla, se ordena con un puntaje por reglas
-       (`source: "rule"`). El supervisor nunca se queda sin candidatos.
+    5. **Sin respaldo:** si la IA está apagada o no responde, la ausencia queda con
+       `suggestions_state: "error"` y el supervisor recibe el aviso; puede pedir otra ronda
+       (`POST /absences/{id}/regenerate`), que responde 503 `ai_unavailable` si la IA sigue sin responder.
     6. Se guardan los candidatos y la auditoría de la decisión, y los supervisores reciben
        `absence:suggestions_ready` por socket.
 
@@ -30,6 +31,11 @@ servers:
 tags:
   - name: Salud
   - name: Recomendación
+  - name: Programación
+    description: |
+      Armar la tripulación de los vuelos (pantalla de Programación). Puestos de cada vuelo:
+      Capitán y Primer Oficial siempre; Piloto de relevo si dura más de 8 h; Jefe de Cabina
+      más 1 TCP por cada 50 sillas.
   - name: Interno
     description: Endpoints para otros servicios (token de servicio), no para el frontend.
 
@@ -72,6 +78,7 @@ paths:
       description: |
         Vuelve a aplicar las reglas y la IA con datos frescos y devuelve los candidatos nuevos
         (mismo formato que GET /candidates). Quien ya dejó vencer su plazo no se vuelve a proponer.
+        Responde 503 con code ai_unavailable si la IA no responde.
         Con Claude Code puede tardar entre 10 y 40 segundos.
       security:
         - bearerAuth: []
@@ -156,6 +163,257 @@ paths:
           description: Búsqueda iniciada
         '403': { $ref: '#/components/responses/Error' }
 
+  /schedule/days:
+    get:
+      tags: [Programación]
+      summary: Resumen de los próximos días (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          schema: { type: string, example: '2026-11-19' }
+        - name: days
+          in: query
+          description: De 1 a 14. Por defecto 7.
+          schema: { type: integer, example: 7 }
+      responses:
+        '200':
+          description: Un elemento por día
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    date: { type: string, example: '2026-11-20' }
+                    flight_count: { type: integer }
+                    pending_count: { type: integer, description: Vuelos sin tripulación confirmada. }
+        '400': { $ref: '#/components/responses/Error' }
+
+  /schedule:
+    get:
+      tags: [Programación]
+      summary: Vuelos de un día con sus puestos (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date
+          in: query
+          description: AAAA-MM-DD (hora de Colombia). Por defecto, hoy.
+          schema: { type: string, example: '2026-11-20' }
+      responses:
+        '200':
+          description: Vuelos programados
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PlannedFlight' }
+
+  /flights/{id}/plan:
+    get:
+      tags: [Programación]
+      summary: Un vuelo con sus puestos (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo programado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannedFlight' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /flights/{id}/slots/{slotId}/candidates:
+    get:
+      tags: [Programación]
+      summary: Candidatos para un puesto (supervisor o super_admin)
+      description: Elegibles (cumplen las 8 reglas) ordenados por puntaje, y no elegibles del mismo rango con el primer motivo que falla.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+        - name: slotId
+          in: path
+          required: true
+          description: 'Puesto: captain, first_officer, relief, purser, fa-1, fa-2...'
+          schema: { type: string, example: first_officer }
+      responses:
+        '200':
+          description: Candidatos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slot: { type: object, properties: { id: { type: string }, label: { type: string }, accepts: { type: array, items: { type: string } } } }
+                  eligible:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        crew_id: { type: string, format: uuid }
+                        employee_code: { type: string }
+                        full_name: { type: string }
+                        rank: { type: string }
+                        base: { type: string }
+                        month_hours: { type: number }
+                        score: { type: integer }
+                        summary: { type: string, example: 'Habilitado en A320 · 40 h de 90 · 20 h de descanso' }
+                  ineligible:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        crew_id: { type: string, format: uuid }
+                        full_name: { type: string }
+                        reason: { type: string, example: No está habilitado en 787. }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /flights/{id}/slots/{slotId}:
+    put:
+      tags: [Programación]
+      summary: Asignar a mano un puesto (supervisor o super_admin)
+      description: Valida las 8 reglas. Si no cumple, 409 con el motivo (por ejemplo «No está habilitado en 787.»).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+        - name: slotId
+          in: path
+          required: true
+          description: 'Puesto: captain, first_officer, relief, purser, fa-1, fa-2...'
+          schema: { type: string, example: first_officer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_id]
+              properties:
+                crew_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannedFlight' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: 'code: not_eligible (motivo de regla), slot_taken, crew_confirmed, already_on_flight'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Programación]
+      summary: Quitar a alguien de un puesto (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+        - name: slotId
+          in: path
+          required: true
+          description: 'Puesto: captain, first_officer, relief, purser, fa-1, fa-2...'
+          schema: { type: string, example: first_officer }
+      responses:
+        '200':
+          description: Vuelo actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannedFlight' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /flights/{id}/suggest:
+    post:
+      tags: [Programación]
+      summary: Sugerir con IA la tripulación de los puestos vacíos (supervisor o super_admin)
+      description: |
+        Para cada puesto vacío: las 8 reglas filtran a los elegibles y Claude elige al mejor
+        para cada puesto (sin repetir personas), buscando repartir la carga, cuidar el descanso
+        y equilibrar la experiencia. Si Claude no responde: 503 ai_unavailable. Cada asignación queda con
+        `source` (ai o rule) y `rationale`. El vuelo **nunca se confirma solo**.
+        Con Claude Code tarda entre 20 y 40 segundos.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo con los puestos sugeridos; `unfilled` lista los que nadie pudo cubrir
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PlannedFlight'
+                  - type: object
+                    properties:
+                      unfilled:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            slot_id: { type: string }
+                            label: { type: string }
+                            reason: { type: string }
+        '409':
+          description: 'code: no_empty_slots, no_candidates (nadie cumple las reglas) o crew_confirmed'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /flights/{id}/confirm:
+    post:
+      tags: [Programación]
+      summary: Confirmar la tripulación (supervisor o super_admin)
+      description: Exige todos los puestos ocupados. Después ya no se puede editar.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo confirmado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannedFlight' }
+        '409':
+          description: 'code: crew_incomplete o crew_confirmed'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -213,7 +471,7 @@ components:
           items: { type: string }
           example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', Margen de 90 h en el mes]
         rationale: { type: string, example: 'Es el más rápido en llegar: 12 min a la rampa frente a 174 min hasta la salida...' }
-        source: { type: string, enum: [ai, rule], description: 'ai = ordenado por Claude; rule = plan B.' }
+        source: { type: string, enum: [ai], description: 'Siempre ai: ordenado por Claude.' }
         status: { type: string, enum: [proposed, offered, missed, accepted, discarded] }
         location: { type: string, nullable: true, example: Sala de tripulaciones T1 }
         minutes_to_ramp: { type: integer, nullable: true, example: 12 }
@@ -235,8 +493,52 @@ components:
             reported_at: { type: string, format: date-time }
         flight: { $ref: '#/components/schemas/FlightSummary' }
         slot_role: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        suggestions_state: { type: string, enum: [searching, ready, none] }
+        suggestions_state: { type: string, enum: [searching, ready, none, error], description: 'error = la IA no respondió; pedir otra ronda.' }
         round: { type: integer, nullable: true }
         candidates:
           type: array
           items: { $ref: '#/components/schemas/Candidate' }
+    PlannedFlight:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_number: { type: string, example: AV-4021 }
+        date: { type: string, example: '2026-11-20' }
+        origin: { type: object, properties: { code: { type: string, example: BOG }, city: { type: string, example: Bogotá } } }
+        destination: { type: object, properties: { code: { type: string, example: MAD }, city: { type: string, example: Madrid } } }
+        departure_at: { type: string, format: date-time }
+        arrival_at: { type: string, format: date-time }
+        duration_minutes: { type: integer, example: 620 }
+        scope: { type: string, enum: [domestic, international] }
+        gate: { type: string, nullable: true }
+        aircraft:
+          type: object
+          properties:
+            model: { type: string, example: Boeing 787-8 }
+            family: { type: string, example: '787' }
+            registration: { type: string, example: N781AV }
+            seats: { type: integer, example: 248 }
+        minimum_crew: { type: object, properties: { pilots: { type: integer, example: 3 }, cabin: { type: integer, example: 5 } } }
+        status: { type: string, enum: [unassigned, incomplete, complete, confirmed] }
+        slots:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, example: relief }
+              role: { type: string, example: relief }
+              accepts: { type: array, items: { type: string }, example: [captain, first_officer] }
+              label: { type: string, example: Piloto de relevo }
+              assignee:
+                type: object
+                nullable: true
+                properties:
+                  crew_id: { type: string, format: uuid }
+                  employee_code: { type: string }
+                  full_name: { type: string, example: Ricardo Morales }
+                  rank: { type: string }
+                  month_hours: { type: integer, example: 52 }
+                  max_month_hours: { type: integer, example: 90 }
+                  source: { type: string, enum: [manual, ai, rule] }
+                  rationale: { type: string, nullable: true }
+                  is_replacement: { type: boolean }

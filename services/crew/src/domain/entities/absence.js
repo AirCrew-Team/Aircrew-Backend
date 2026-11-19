@@ -13,8 +13,9 @@ const REASON_LABELS = {
 };
 
 // Estado de la búsqueda de reemplazos: searching (la IA trabaja), ready
-// (hay candidatos) o none (nadie cumple las reglas).
-const SUGGESTIONS_STATES = ['searching', 'ready', 'none'];
+// (hay candidatos), none (nadie cumple las reglas) o error (la IA no pudo
+// responder; el supervisor puede pedir otra ronda).
+const SUGGESTIONS_STATES = ['searching', 'ready', 'none', 'error'];
 // reported: falta reemplazo · covered: ya tiene reemplazo
 // reported: falta reemplazo · pending_ack: el reemplazo aún no da «Enterado»
 // covered: cubierta · cancelled: cancelada

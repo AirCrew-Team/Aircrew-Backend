@@ -15,12 +15,16 @@ function parseOptionalDate(value, name) {
   return date.toISOString();
 }
 
+const { requiredSlots } = require('../../domain/entities/crewComplement');
+
+// Cada vuelo trae sus puestos requeridos (required_slots) para la programación.
 function createGetFlights(flightRepository) {
-  return function getFlights({ from, to } = {}) {
-    return flightRepository.findFlights({
+  return async function getFlights({ from, to } = {}) {
+    const flights = await flightRepository.findFlights({
       from: parseOptionalDate(from, 'from'),
       to: parseOptionalDate(to, 'to'),
     });
+    return flights.map((flight) => ({ ...flight, required_slots: requiredSlots(flight) }));
   };
 }
 

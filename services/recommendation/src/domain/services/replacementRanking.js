@@ -24,8 +24,8 @@ function tierOf(member, flight, now) {
   return 'other_base';
 }
 
-// Puntaje del plan B (0 a 100) y los datos que lo explican. Es el orden que
-// se usa si la IA está apagada o falla, y el filtro de los 15 que se le envían.
+// Puntaje (0 a 100) y los datos que lo explican. Decide cuáles 15 elegibles se
+// le envían a la IA; el orden final y la explicación los da Claude.
 function scoreCandidate({ member, flight, memberAssignments, tier }) {
   const hours = monthHours(flight, memberAssignments);
   const margin = Math.max(0, Math.round(MAX_MONTH_HOURS - hours));

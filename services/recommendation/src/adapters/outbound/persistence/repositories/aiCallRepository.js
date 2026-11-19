@@ -1,7 +1,7 @@
 const pool = require('../pool');
 
 // Auditoría de cada decisión: qué se envió a la IA, qué respondió, cuánto
-// tardó y si se usó el plan B. Si falla guardar la auditoría, la decisión
+// tardó y el error si no respondió. Si falla guardar la auditoría, la decisión
 // sigue adelante: solo se registra el error.
 async function saveAiCall({
   kind,

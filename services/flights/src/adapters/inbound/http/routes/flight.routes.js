@@ -11,6 +11,7 @@ const assignmentRepository = require('../../../outbound/persistence/repositories
 const createAssignCrewMember = require('../../../../application/use-cases/assignCrewMember');
 const createReplaceCrewMember = require('../../../../application/use-cases/replaceCrewMember');
 const createRevertReplacement = require('../../../../application/use-cases/revertReplacement');
+const createManageCrewSlots = require('../../../../application/use-cases/manageCrewSlots');
 const createAssignmentController = require('../controllers/assignment.controller');
 
 const router = express.Router();
@@ -18,6 +19,7 @@ const controller = createFlightController({
   createFlight: createCreateFlight({ flightRepository, aircraftRepository }),
   getFlights: createGetFlights(flightRepository),
   getFlightById: createGetFlightById(flightRepository),
+  crewSlots: createManageCrewSlots({ flightRepository, assignmentRepository }),
 });
 const assignmentController = createAssignmentController({
   assignCrewMember: createAssignCrewMember({
@@ -40,7 +42,7 @@ router.post(
 router.get(
   '/',
   verifyJwt,
-  allowRoles('supervisor', 'super_admin'),
+  allowRoles('supervisor', 'super_admin', 'service'),
   controller.list
 );
 router.get(
@@ -68,5 +70,14 @@ router.post(
   allowRoles('service'),
   assignmentController.revert
 );
+
+// Programación (internos): Recommendation valida las reglas y luego llama aquí.
+const service = allowRoles('service');
+router.get('/:id/crew', verifyJwt, allowRoles('supervisor', 'super_admin', 'service'), controller.crewPlan);
+router.put('/:id/slots/:slotId', verifyJwt, service, controller.assignSlot);
+router.delete('/:id/slots/:slotId', verifyJwt, service, controller.removeSlot);
+// Confirmar no se salta reglas (exige tripulación completa): se acepta el token del supervisor
+// para guardar quién confirmó.
+router.post('/:id/confirm', verifyJwt, allowRoles('supervisor', 'super_admin', 'service'), controller.confirmCrew);
 
 module.exports = router;

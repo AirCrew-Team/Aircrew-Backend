@@ -73,8 +73,11 @@ UPDATE public.crew_members SET rank = 'flight_attendant'
 ALTER TABLE public.absences DROP CONSTRAINT IF EXISTS absences_status_check;
 ALTER TABLE public.absences ADD CONSTRAINT absences_status_check
   CHECK (status IN ('reported', 'pending_ack', 'covered', 'cancelled'));
-ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS suggestions_state TEXT
-  CHECK (suggestions_state IN ('searching', 'ready', 'none'));
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS suggestions_state TEXT;
+-- error: la IA no pudo responder (se puede pedir otra ronda).
+ALTER TABLE public.absences DROP CONSTRAINT IF EXISTS absences_suggestions_state_check;
+ALTER TABLE public.absences ADD CONSTRAINT absences_suggestions_state_check
+  CHECK (suggestions_state IN ('searching', 'ready', 'none', 'error'));
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS slot_role TEXT;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS flight_origin TEXT;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS flight_destination TEXT;
@@ -93,11 +96,17 @@ CREATE TABLE IF NOT EXISTS public.absence_events (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   absence_id UUID        NOT NULL REFERENCES public.absences (id) ON DELETE CASCADE,
   type       TEXT        NOT NULL
-    CHECK (type IN ('reported', 'ai_ready', 'ai_none', 'approved',
+    CHECK (type IN ('reported', 'ai_ready', 'ai_none', 'ai_error', 'approved',
                     'candidate_missed', 'acknowledged', 'covered', 'cancelled')),
   text       TEXT        NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Bases creadas antes de ai_error.
+ALTER TABLE public.absence_events DROP CONSTRAINT IF EXISTS absence_events_type_check;
+ALTER TABLE public.absence_events ADD CONSTRAINT absence_events_type_check
+  CHECK (type IN ('reported', 'ai_ready', 'ai_none', 'ai_error', 'approved',
+                  'candidate_missed', 'acknowledged', 'covered', 'cancelled'));
 
 CREATE INDEX IF NOT EXISTS absence_events_absence_id_idx
   ON public.absence_events (absence_id, created_at);

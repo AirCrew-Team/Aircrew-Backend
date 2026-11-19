@@ -83,7 +83,7 @@ function createAbsenceCoveredAlert(absence) {
 
 // Alerta: terminó la búsqueda de reemplazos de una ausencia.
 function createSuggestionsReadyAlert(input) {
-  const { absence_id: absenceId, flight_number: flightNumber, candidate_count: count, source } =
+  const { absence_id: absenceId, flight_number: flightNumber, candidate_count: count, source, state } =
     input || {};
 
   if (typeof absenceId !== 'string' || !uuidPattern.test(absenceId) || !Number.isInteger(count)) {
@@ -95,9 +95,12 @@ function createSuggestionsReadyAlert(input) {
   return {
     type: ALERT_EVENTS.suggestionsReady,
     message:
-      count > 0
-        ? `Hay ${count} candidato${count === 1 ? '' : 's'} para la ausencia${flight}.`
-        : `Nadie cumple las reglas para cubrir la ausencia${flight}.`,
+      state === 'error'
+        ? `La IA no pudo proponer candidatos para la ausencia${flight}. Intenta de nuevo.`
+        : count > 0
+          ? `Hay ${count} candidato${count === 1 ? '' : 's'} para la ausencia${flight}.`
+          : `Nadie cumple las reglas para cubrir la ausencia${flight}.`,
+    state: state || (count > 0 ? 'ready' : 'none'),
     absence_id: absenceId,
     candidate_count: count,
     source: source || null,

@@ -27,7 +27,7 @@ function trackingOrder(a, b) {
 
   const time = (value) => (value ? new Date(value).getTime() : 0);
   if (a.status === 'reported') {
-    const search = (x) => ({ none: 0, ready: 1, searching: 2 }[x.suggestions_state] ?? 1);
+    const search = (x) => ({ none: 0, error: 0, ready: 1, searching: 2 }[x.suggestions_state] ?? 1);
     return search(a) - search(b) || time(a.flight_departure_at) - time(b.flight_departure_at);
   }
   if (a.status === 'pending_ack') return time(a.deadline_at) - time(b.deadline_at);

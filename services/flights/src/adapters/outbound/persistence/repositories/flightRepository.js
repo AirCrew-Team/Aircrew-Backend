@@ -42,39 +42,49 @@ async function createFlight({
   }
 }
 
+// Vuelo con los datos que usan la programación y las reglas: familia y sillas
+// del avión, ciudades, y si es internacional (algún aeropuerto fuera de Colombia).
+const flightDetail = `
+  SELECT f.id, f.flight_number, f.aircraft_id, f.origin, f.destination,
+         f.departure_at, f.arrival_at, f.status, f.gate, f.crew_confirmed_at,
+         f.created_at, f.updated_at,
+         ac.family AS aircraft_family, ac.capacity AS aircraft_seats,
+         ac.name AS aircraft_name, ac.registration AS aircraft_registration,
+         o.city AS origin_city, d.city AS destination_city,
+         CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
+              THEN 'international' ELSE 'domestic' END AS scope
+  FROM public.flights f
+  JOIN public.aircraft ac ON ac.id = f.aircraft_id
+  LEFT JOIN public.airports o ON o.code = f.origin
+  LEFT JOIN public.airports d ON d.code = f.destination`;
+
 async function findFlights({ from, to }) {
   const { rows } = await pool.query(
-    `SELECT ${flightColumns}
-     FROM public.flights
-     WHERE ($1::timestamptz IS NULL OR departure_at >= $1)
-       AND ($2::timestamptz IS NULL OR departure_at < $2)
-     ORDER BY departure_at`,
+    `${flightDetail}
+     WHERE ($1::timestamptz IS NULL OR f.departure_at >= $1)
+       AND ($2::timestamptz IS NULL OR f.departure_at < $2)
+     ORDER BY f.departure_at`,
     [from, to]
   );
 
   return rows;
 }
 
-// Vuelo con los datos que usan las reglas de elegibilidad: familia y sillas
-// del avión, y si es internacional (algún aeropuerto fuera de Colombia).
-async function findFlightById(id) {
+// El supervisor confirmó la tripulación: ya no se edita.
+async function confirmFlightCrew(id, userId) {
   const { rows } = await pool.query(
-    `SELECT f.id, f.flight_number, f.aircraft_id, f.origin, f.destination,
-            f.departure_at, f.arrival_at, f.status, f.gate, f.crew_confirmed_at,
-            f.created_at, f.updated_at,
-            ac.family AS aircraft_family, ac.capacity AS aircraft_seats,
-            ac.name AS aircraft_name, ac.registration AS aircraft_registration,
-            CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
-                 THEN 'international' ELSE 'domestic' END AS scope
-     FROM public.flights f
-     JOIN public.aircraft ac ON ac.id = f.aircraft_id
-     LEFT JOIN public.airports o ON o.code = f.origin
-     LEFT JOIN public.airports d ON d.code = f.destination
-     WHERE f.id = $1`,
-    [id]
+    `UPDATE public.flights SET crew_confirmed_at = now(), crew_confirmed_by = $2, updated_at = now()
+     WHERE id = $1 AND crew_confirmed_at IS NULL
+     RETURNING id`,
+    [id, userId]
   );
 
   return rows[0] || null;
 }
 
-module.exports = { createFlight, findFlights, findFlightById };
+async function findFlightById(id) {
+  const { rows } = await pool.query(`${flightDetail} WHERE f.id = $1`, [id]);
+  return rows[0] || null;
+}
+
+module.exports = { createFlight, findFlights, findFlightById, confirmFlightCrew };

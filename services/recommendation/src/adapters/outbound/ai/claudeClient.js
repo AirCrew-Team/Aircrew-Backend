@@ -4,7 +4,7 @@ const { ai } = require('../../../config/env');
 // Adaptador de salida hacia Claude. Recibe un prompt de sistema fijo, los datos
 // de la decisión y un JSON Schema; devuelve el JSON que respondió Claude.
 // Cualquier problema (sin API key, tiempo agotado, rechazo, respuesta cortada
-// o JSON inválido) se lanza como error: el caso de uso usa entonces el plan B.
+// o JSON inválido) se lanza como error y el caso de uso lo informa.
 let client = null;
 
 function getClient() {

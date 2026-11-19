@@ -399,7 +399,7 @@ paths:
               type: object
               required: [state]
               properties:
-                state: { type: string, enum: [searching, ready, none] }
+                state: { type: string, enum: [searching, ready, none, error] }
                 candidate_count: { type: integer }
       responses:
         '200':
@@ -516,7 +516,7 @@ components:
         reason: { $ref: '#/components/schemas/AbsenceReason' }
         notes: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/AbsenceStatus' }
-        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none] }
+        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
         slot_role: { type: string, nullable: true, example: first_officer }
         flight_origin: { type: string, nullable: true, example: BOG }
         flight_destination: { type: string, nullable: true, example: MIA }
@@ -555,7 +555,7 @@ components:
         employee_code: { type: string, nullable: true }
         reported_at: { type: string, format: date-time }
         status: { $ref: '#/components/schemas/AbsenceStatus' }
-        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none] }
+        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
         candidate_count: { type: integer }
         replacement:
           type: object
@@ -578,7 +578,7 @@ components:
             type: object
             properties:
               at: { type: string, format: date-time }
-              type: { type: string, enum: [reported, ai_ready, ai_none, approved, candidate_missed, acknowledged, covered, cancelled] }
+              type: { type: string, enum: [reported, ai_ready, ai_none, ai_error, approved, candidate_missed, acknowledged, covered, cancelled] }
               text: { type: string, example: Andrés Gómez dejó vencer su plazo }
               missed: { type: boolean }
     CrewStatus:

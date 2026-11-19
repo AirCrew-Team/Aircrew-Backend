@@ -24,6 +24,8 @@ Para cada uno devuelve:
 - checks: de 3 a 5 frases muy cortas en español con los datos que lo hacen apto.
 - rationale: 1 a 3 frases en español que expliquen por qué va en ese lugar frente a los demás,
   citando datos concretos (minutos, horas, habilitación). No inventes datos.
+Escribe en lenguaje natural para el supervisor: no menciones nombres de campos
+(como rule_score o month_margin_hours) ni identificadores.
 
 Si hay candidatos, deja no_candidates_reason como texto vacío. Si no hay, devuelve candidates
 vacío y explica el motivo en no_candidates_reason.`;

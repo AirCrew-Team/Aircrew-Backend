@@ -298,7 +298,61 @@ async function revertReplacement(flightId, crewUserId) {
   }
 }
 
+// Asignaciones activas de un vuelo (puestos ocupados).
+async function findActiveByFlight(flightId) {
+  const { rows } = await pool.query(
+    `SELECT ${assignmentColumns} FROM public.flight_assignments
+     WHERE flight_id = $1 AND status = 'assigned'
+     ORDER BY created_at`,
+    [flightId]
+  );
+
+  return rows;
+}
+
+async function insertSlotAssignment({ flightId, crewUserId, role, slotId, source, rationale }) {
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO public.flight_assignments
+         (flight_id, crew_user_id, role, slot_id, source, rationale)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING ${assignmentColumns}`,
+      [flightId, crewUserId, role, slotId, source, rationale]
+    );
+
+    return rows[0];
+  } catch (cause) {
+    if (cause.code === '23505') {
+      const error = new Error(
+        cause.constraint === 'flight_assignments_active_slot_unique'
+          ? 'El puesto ya está ocupado.'
+          : 'El tripulante ya está en este vuelo.'
+      );
+      error.status = 409;
+      error.code = cause.constraint === 'flight_assignments_active_slot_unique' ? 'slot_taken' : 'already_on_flight';
+      throw error;
+    }
+
+    throw cause;
+  }
+}
+
+// Quitar a alguien de un puesto (antes de confirmar la tripulación).
+async function deleteSlotAssignment(flightId, slotId) {
+  const { rows } = await pool.query(
+    `DELETE FROM public.flight_assignments
+     WHERE flight_id = $1 AND slot_id = $2 AND status = 'assigned' AND NOT is_replacement
+     RETURNING ${assignmentColumns}`,
+    [flightId, slotId]
+  );
+
+  return rows[0] || null;
+}
+
 module.exports = {
+  findActiveByFlight,
+  insertSlotAssignment,
+  deleteSlotAssignment,
   acknowledgeAssignment,
   findAssignmentById,
   revertReplacement,

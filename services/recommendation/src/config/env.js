@@ -27,8 +27,8 @@ module.exports = {
   // - claude_code: ejecuta Claude Code (`claude -p`) con la suscripción de quien
   //   corre el backend (token de `claude setup-token` en CLAUDE_CODE_OAUTH_TOKEN).
   // - api: usa la API de Anthropic con ANTHROPIC_API_KEY (saldo de la API).
-  // Si la IA está apagada (AI_ENABLED=false) o falla, se usa el plan B: el
-  // orden por reglas.
+  // Si la IA está apagada (AI_ENABLED=false) o falla, las recomendaciones y
+  // sugerencias responden error (no hay orden de respaldo).
   ai: {
     provider: aiProvider,
     enabled:

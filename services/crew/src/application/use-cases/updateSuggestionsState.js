@@ -28,6 +28,12 @@ function createUpdateSuggestionsState(absenceRepository) {
           ? 'Se propuso 1 candidato'
           : `Se propusieron ${candidateCount} candidatos`
       );
+    } else if (state === 'error') {
+      await absenceRepository.addAbsenceEvent(
+        id,
+        'ai_error',
+        'La IA no pudo proponer candidatos'
+      );
     } else if (state === 'none') {
       await absenceRepository.addAbsenceEvent(
         id,

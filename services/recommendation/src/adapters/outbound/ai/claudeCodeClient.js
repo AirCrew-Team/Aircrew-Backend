@@ -6,7 +6,7 @@ const { ai } = require('../../../config/env');
 // Usa la suscripción de quien corre el backend: el token de
 // `claude setup-token` en CLAUDE_CODE_OAUTH_TOKEN, o la sesión ya iniciada.
 // Cumple el mismo contrato que claudeClient.js (API): decide() devuelve el JSON
-// que respondió Claude, o lanza un error y el caso de uso usa el plan B.
+// que respondió Claude, o lanza un error y el caso de uso lo informa.
 //
 // Seguridad: Claude Code no recibe acceso a la base de datos ni al proyecto.
 // El backend le entrega los datos ya consultados y filtrados por las reglas;

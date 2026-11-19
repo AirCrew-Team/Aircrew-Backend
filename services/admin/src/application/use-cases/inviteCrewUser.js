@@ -31,11 +31,25 @@ function createInviteCrewUser({ userRepository, passwordHasher, emailClient }) {
       activationExpiresAt: expiresAt,
     });
 
-    await emailClient.sendCrewInvitation({
-      email: user.email,
-      name: user.name,
-      token,
-    });
+    try {
+      await emailClient.sendCrewInvitation({
+        email: user.email,
+        name: user.name,
+        token,
+      });
+    } catch (sendError) {
+      // Sin correo nadie recibe el enlace: se borra la cuenta pendiente para que la
+      // invitación se pueda repetir con el mismo email (si no, daría 409).
+      try {
+        await userRepository.deletePendingCrewUser(user.id);
+      } catch (deleteError) {
+        console.error(
+          `No se pudo borrar la cuenta pendiente ${user.id}:`,
+          deleteError
+        );
+      }
+      throw sendError;
+    }
 
     return {
       id: user.id,

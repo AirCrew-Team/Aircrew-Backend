@@ -63,6 +63,21 @@ async function createPendingCrewUser({
   }
 }
 
+// Borra una invitación cuyo correo no se pudo enviar. Solo toca cuentas crew
+// pendientes de activación: nunca una cuenta activa.
+async function deletePendingCrewUser(id) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM public.users
+     WHERE id = $1
+       AND role = 'crew'
+       AND is_active = false
+       AND activation_token_hash IS NOT NULL`,
+    [id]
+  );
+
+  return rowCount > 0;
+}
+
 async function activateUser({ activationTokenHash, passwordHash }) {
   const { rows } = await pool.query(
     `UPDATE public.users
@@ -182,6 +197,7 @@ module.exports = {
   findById,
   create,
   createPendingCrewUser,
+  deletePendingCrewUser,
   activateUser,
   findByEmail,
   createFirstSuperAdmin,

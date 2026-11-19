@@ -25,4 +25,12 @@ function replaceCrewMember(flightId, body, authorization) {
   );
 }
 
-module.exports = { getFlight, getAssignments, replaceCrewMember };
+// Interno: deshace un reemplazo cuyo plazo de «Enterado» venció.
+function revertReplacement(flightId, crewUserId, authorization) {
+  return requestJson(
+    `${flightsServiceUrl}/flights/${encodeURIComponent(flightId)}/assignments/revert`,
+    { method: 'POST', body: { crew_user_id: crewUserId }, authorization, serviceName }
+  );
+}
+
+module.exports = { getFlight, getAssignments, replaceCrewMember, revertReplacement };

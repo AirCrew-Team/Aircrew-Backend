@@ -10,6 +10,7 @@ const createFlightController = require('../controllers/flight.controller');
 const assignmentRepository = require('../../../outbound/persistence/repositories/assignmentRepository');
 const createAssignCrewMember = require('../../../../application/use-cases/assignCrewMember');
 const createReplaceCrewMember = require('../../../../application/use-cases/replaceCrewMember');
+const createRevertReplacement = require('../../../../application/use-cases/revertReplacement');
 const createAssignmentController = require('../controllers/assignment.controller');
 
 const router = express.Router();
@@ -27,6 +28,7 @@ const assignmentController = createAssignmentController({
     flightRepository,
     assignmentRepository,
   }),
+  revertReplacement: createRevertReplacement(assignmentRepository),
 });
 
 router.post(
@@ -58,6 +60,13 @@ router.post(
   verifyJwt,
   allowRoles('supervisor', 'super_admin'),
   assignmentController.replace
+);
+// Interno: Recommendation deshace un reemplazo cuyo plazo venció.
+router.post(
+  '/:id/assignments/revert',
+  verifyJwt,
+  allowRoles('service'),
+  assignmentController.revert
 );
 
 module.exports = router;

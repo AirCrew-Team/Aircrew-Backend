@@ -4,6 +4,7 @@ const { allowRoles } = require('../middlewares/roles.middleware');
 const crewClient = require('../../../outbound/clients/crewClient');
 const flightsClient = require('../../../outbound/clients/flightsClient');
 const notificationClient = require('../../../outbound/clients/notificationClient');
+const adminClient = require('../../../outbound/clients/adminClient');
 const ai = require('../../../outbound/ai');
 const { serviceAuthorization } = require('../../../outbound/clients/serviceToken');
 const suggestionRepository = require('../../../outbound/persistence/repositories/suggestionRepository');
@@ -31,6 +32,8 @@ const controller = createRecommendationController({
     loadReplacementContext,
     crewClient,
     flightsClient,
+    adminClient,
+    suggestionRepository,
     notificationClient,
   }),
 });

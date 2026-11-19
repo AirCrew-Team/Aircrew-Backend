@@ -1,24 +1,37 @@
 openapi: 3.0.3
 info:
   title: AirCrew - Recommendation
-  version: 1.0.0
+  version: 2.0.0
   description: |
-    Motor de recomendación de reemplazos. No tiene base de datos: una ausencia `reported`
-    de Crew es la solicitud de reemplazo, y los candidatos se calculan en cada consulta con
-    datos de Crew y Flights, reenviando el token del supervisor.
+    Recomendación de reemplazos cuando un tripulante reporta una ausencia.
 
-    **Reglas que descartan:**
-    - Disponibilidad: activo, en estado `available` y no asignado ya al vuelo.
-    - Habilitación: captain y first_officer requieren `pilot`; purser y flight_attendant requieren `cabin_crew`.
-    - Descanso: ningún otro vuelo a menos de 10 h antes de la salida o después de la llegada.
+    **Flujo:**
+    1. El tripulante reporta la ausencia en Crew. Crew pide a este servicio, en segundo plano,
+       que busque candidatos (`POST /absences/{id}/suggest`, interno).
+    2. **Reglas (código):** se descarta a quien no cumple alguna de las 8 reglas: rango del puesto,
+       habilitación en la familia del avión, certificado médico vigente, disponibilidad
+       (no ausente, incapacitado ni de vacaciones), sin vuelos que se crucen, 10 h de descanso,
+       máximo 90 h de vuelo en el mes e inglés OACI 4 para pilotos en vuelos internacionales.
+    3. **Prioridad:** de guardia en la base de salida → libre en la base → otra base (si alcanza a llegar).
+    4. **IA (Claude):** ordena de 3 a 5 candidatos y explica en español por qué. Proveedor
+       configurable: Claude Code (`AI_PROVIDER=claude_code`, suscripción) o la API (`AI_PROVIDER=api`).
+    5. **Plan B:** si la IA está apagada o falla, se ordena con un puntaje por reglas
+       (`source: "rule"`). El supervisor nunca se queda sin candidatos.
+    6. Se guardan los candidatos y la auditoría de la decisión, y los supervisores reciben
+       `absence:suggestions_ready` por socket.
 
-    **Puntaje (0 a 100):** +60 si está en la ciudad de origen; hasta +40 por baja carga
-    (40 sin vuelos en las 24 h cercanas, 20 con uno, 0 con dos o más).
+    **Al confirmar** un candidato, la ausencia queda `pending_ack` y el elegido recibe
+    `assignment:replacement`. Cuando pulsa «Enterado» (`POST /api/flights/assignments/{id}/acknowledge`)
+    la ausencia queda `covered`. Si vence el plazo (30 min o la mitad del tiempo hasta la salida,
+    lo que sea menor), la ausencia vuelve a la cola, el candidato queda `missed` y los supervisores
+    reciben `absence:deadline_missed` con la siguiente opción.
 servers:
   - url: http://localhost:3003
 tags:
   - name: Salud
   - name: Recomendación
+  - name: Interno
+    description: Endpoints para otros servicios (token de servicio), no para el frontend.
 
 paths:
   /health:
@@ -28,47 +41,53 @@ paths:
       responses:
         '200':
           description: Servicio activo
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  service: { type: string, example: recommendation }
-                  status: { type: string, example: ok }
 
   /absences/{id}/candidates:
     get:
       tags: [Recomendación]
-      summary: Candidatos para cubrir una ausencia (supervisor o super_admin)
-      description: Candidatos ordenados de mayor a menor puntaje, y los descartados con sus motivos.
+      summary: Candidatos propuestos para una ausencia (supervisor o super_admin)
+      description: |
+        Devuelve la última ronda guardada, en orden. Si la IA todavía está buscando,
+        `suggestions_state` es `searching` y `candidates` viene vacío: esperar el evento
+        `absence:suggestions_ready` y volver a pedir.
       security:
         - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          description: Id de la ausencia en Crew.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/AbsenceId'
       responses:
         '200':
-          description: Candidatos calculados
+          description: Candidatos
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CandidatesResult' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
-        '404':
-          description: Ausencia o vuelo no encontrado
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /absences/{id}/regenerate:
+    post:
+      tags: [Recomendación]
+      summary: Pedir otra ronda de candidatos (supervisor o super_admin)
+      description: |
+        Vuelve a aplicar las reglas y la IA con datos frescos y devuelve los candidatos nuevos
+        (mismo formato que GET /candidates). Quien ya dejó vencer su plazo no se vuelve a proponer.
+        Con Claude Code puede tardar entre 10 y 40 segundos.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AbsenceId'
+      responses:
+        '200':
+          description: Candidatos de la nueva ronda
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: '#/components/schemas/CandidatesResult' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
         '409':
-          description: La ausencia ya está cubierta, el vuelo ya no admite reemplazos o el ausente ya no está en el vuelo
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '502':
-          description: Crew o Flights no respondieron
+          description: La ausencia ya tiene un reemplazo esperando confirmación, está cubierta o el vuelo ya no admite cambios
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -76,22 +95,15 @@ paths:
   /absences/{id}/confirm:
     post:
       tags: [Recomendación]
-      summary: Confirmar el reemplazo de una ausencia (supervisor o super_admin)
+      summary: Confirmar un candidato (supervisor o super_admin)
       description: |
-        Vuelve a evaluar las reglas con datos frescos y, si el candidato sigue siendo válido,
-        Flights lo pone en el vuelo en lugar del ausente (con el mismo rol) y Crew marca la
-        ausencia como `covered`.
-
-        Si Flights hizo el cambio pero Crew falló, responde 502 y se puede reintentar:
-        el reemplazo ya hecho se detecta y solo se marca la ausencia.
+        Vuelve a evaluar las 8 reglas con datos frescos. Si el candidato sigue siendo válido:
+        Flights lo pone en el puesto como reemplazo (con quién lo aprobó y el plazo), la ausencia
+        queda `pending_ack` y el candidato recibe `assignment:replacement` en su canal.
       security:
         - bearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          description: Id de la ausencia en Crew.
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/AbsenceId'
       requestBody:
         required: true
         content:
@@ -100,60 +112,49 @@ paths:
               type: object
               required: [candidate_user_id]
               properties:
-                candidate_user_id: { type: string, format: uuid, description: 'user_id de un candidato de GET /absences/{id}/candidates.' }
+                candidate_user_id: { type: string, format: uuid }
       responses:
         '200':
-          description: Reemplazo confirmado
+          description: Reemplazo aprobado; esperando «Enterado»
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  absence:
-                    type: object
-                    description: La ausencia ya cubierta, con replacement_user_id y covered_at.
-                  flight:
-                    type: object
-                    properties:
-                      id: { type: string, format: uuid }
-                      flight_number: { type: string }
-                      origin: { type: string }
-                      destination: { type: string }
-                      departure_at: { type: string, format: date-time }
-                      arrival_at: { type: string, format: date-time }
-                  replacement:
-                    type: object
-                    nullable: true
-                    description: La nueva asignación en Flights (null si se hizo en un intento anterior).
-                    properties:
-                      id: { type: string, format: uuid }
-                      flight_id: { type: string, format: uuid }
-                      crew_user_id: { type: string, format: uuid }
-                      role: { type: string }
-                      status: { type: string, example: assigned }
-                      created_at: { type: string, format: date-time }
-        '400':
-          description: candidate_user_id inválido
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+                  absence: { type: object, description: 'La ausencia en estado pending_ack.' }
+                  flight: { $ref: '#/components/schemas/FlightSummary' }
+                  replacement: { type: object, description: 'La asignación del reemplazo en Flights.' }
+                  deadline_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
-        '404':
-          description: Ausencia o vuelo no encontrado
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/Error' }
         '409':
-          description: El tripulante no es candidato, la ausencia ya está cubierta o el vuelo ya no admite reemplazos
+          description: |
+            code: candidate_not_eligible (no cumple una regla; el mensaje dice cuál),
+            candidate_missed (ya dejó vencer su plazo), absence_pending_ack, absence_covered o flight_closed
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '502':
-          description: Crew o Flights no respondieron
+          description: El reemplazo quedó en el vuelo pero no se pudo actualizar la ausencia; se puede reintentar
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/{id}/suggest:
+    post:
+      tags: [Interno]
+      summary: Buscar candidatos en segundo plano (token de servicio)
+      description: Lo llama Crew al reportarse una ausencia. Responde de inmediato y avisa por socket al terminar.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AbsenceId'
+      responses:
+        '202':
+          description: Búsqueda iniciada
+        '403': { $ref: '#/components/responses/Error' }
 
 components:
   securitySchemes:
@@ -162,9 +163,17 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    AbsenceId:
+      name: id
+      in: path
+      required: true
+      description: Id de la ausencia en Crew.
+      schema: { type: string, format: uuid }
+
   responses:
     Error:
-      description: Falta autenticación, no es válida o el rol no tiene permiso
+      description: 'Error: { error, code?, field? }'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -174,33 +183,42 @@ components:
       type: object
       properties:
         error: { type: string }
-    CrewSummary:
+        code: { type: string, description: Código fijo para la lógica del frontend. }
+        field: { type: string, description: Campo del formulario que falló. }
+    FlightSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_number: { type: string, example: AV-9344 }
+        origin: { type: string, example: BOG }
+        destination: { type: string, example: MIA }
+        departure_at: { type: string, format: date-time }
+        arrival_at: { type: string, format: date-time }
+        gate: { type: string, nullable: true, example: C04 }
+        scope: { type: string, enum: [domestic, international] }
+        aircraft_family: { type: string, nullable: true, example: A320 }
+    Candidate:
       type: object
       properties:
         user_id: { type: string, format: uuid }
-        name: { type: string, nullable: true, example: Juan }
-        employee_code: { type: string, example: EMP-003 }
-        position: { type: string, example: pilot }
-        current_location: { type: string, nullable: true, example: BOG }
-    Candidate:
-      allOf:
-        - $ref: '#/components/schemas/CrewSummary'
-        - type: object
-          properties:
-            score: { type: integer, minimum: 0, maximum: 100, example: 100 }
-            reasons:
-              type: array
-              items: { type: string }
-              example: [Disponible, Cargo habilitado, En BOG, Sin vuelos en 24 h]
-    Discarded:
-      allOf:
-        - $ref: '#/components/schemas/CrewSummary'
-        - type: object
-          properties:
-            reasons:
-              type: array
-              items: { type: string }
-              example: ['No está disponible (estado: medical_leave).']
+        full_name: { type: string, nullable: true, example: Andrés Gómez }
+        employee_code: { type: string, example: EMP-021 }
+        rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
+        base: { type: string, example: BOG }
+        rank_position: { type: integer, example: 1, description: Lugar en la lista (1 = primera opción). }
+        affinity: { type: integer, minimum: 0, maximum: 100, example: 96 }
+        affinity_label: { type: string, enum: [optimal, high, acceptable], description: 'optimal ≥ 90, high 75–89, acceptable < 75' }
+        checks:
+          type: array
+          items: { type: string }
+          example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', Margen de 90 h en el mes]
+        rationale: { type: string, example: 'Es el más rápido en llegar: 12 min a la rampa frente a 174 min hasta la salida...' }
+        source: { type: string, enum: [ai, rule], description: 'ai = ordenado por Claude; rule = plan B.' }
+        status: { type: string, enum: [proposed, offered, missed, accepted, discarded] }
+        location: { type: string, nullable: true, example: Sala de tripulaciones T1 }
+        minutes_to_ramp: { type: integer, nullable: true, example: 12 }
+        phone: { type: string, nullable: true }
+        radio_channel: { type: string, nullable: true, example: OPS-2 }
     CandidatesResult:
       type: object
       properties:
@@ -212,21 +230,13 @@ components:
             crew_name: { type: string, nullable: true }
             employee_code: { type: string, nullable: true }
             reason: { type: string, enum: [illness, fatigue, emergency, transfer] }
-            status: { type: string, enum: [reported, covered] }
-        flight:
-          type: object
-          properties:
-            id: { type: string, format: uuid }
-            flight_number: { type: string, example: AC201 }
-            origin: { type: string, example: BOG }
-            destination: { type: string, example: MDE }
-            departure_at: { type: string, format: date-time }
-            arrival_at: { type: string, format: date-time }
-        role: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        required_position: { type: string, enum: [pilot, cabin_crew] }
+            notes: { type: string, nullable: true }
+            status: { type: string, enum: [reported, pending_ack, covered, cancelled] }
+            reported_at: { type: string, format: date-time }
+        flight: { $ref: '#/components/schemas/FlightSummary' }
+        slot_role: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
+        suggestions_state: { type: string, enum: [searching, ready, none] }
+        round: { type: integer, nullable: true }
         candidates:
           type: array
           items: { $ref: '#/components/schemas/Candidate' }
-        discarded:
-          type: array
-          items: { $ref: '#/components/schemas/Discarded' }

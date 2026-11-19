@@ -82,6 +82,10 @@ ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS approved_by UUID;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 
+-- Seguimiento: cuántos candidatos propuso la IA y qué opción de la lista se eligió.
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS candidate_count SMALLINT;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS replacement_option SMALLINT;
+
 CREATE INDEX IF NOT EXISTS absences_status_idx ON public.absences (status);
 
 -- Línea de tiempo de cada ausencia (pantalla de Seguimiento).

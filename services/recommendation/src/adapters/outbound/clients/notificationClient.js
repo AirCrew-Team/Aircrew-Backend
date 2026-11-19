@@ -28,4 +28,19 @@ function notifySuggestionsReady(payload, authorization) {
   return post('/events/suggestions-ready', payload, authorization, 'candidatos listos');
 }
 
-module.exports = { notifyAbsenceCovered, notifySuggestionsReady };
+// Al tripulante elegido: lo asignaron como reemplazo (token del supervisor).
+function notifyAssignmentReplacement(payload, authorization) {
+  return post('/events/assignment-replacement', payload, authorization, 'reemplazo asignado');
+}
+
+// A los supervisores: el reemplazo no confirmó a tiempo (token de servicio).
+function notifyDeadlineMissed(payload, authorization) {
+  return post('/events/deadline-missed', payload, authorization, 'plazo vencido');
+}
+
+module.exports = {
+  notifyAbsenceCovered,
+  notifySuggestionsReady,
+  notifyAssignmentReplacement,
+  notifyDeadlineMissed,
+};

@@ -18,6 +18,8 @@ function createUpdateSuggestionsState(absenceRepository) {
       throw new DomainError('Ausencia no encontrada.', 404);
     }
 
+    await absenceRepository.setCandidateCount(id, candidateCount);
+
     if (state === 'ready') {
       await absenceRepository.addAbsenceEvent(
         id,

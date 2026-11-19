@@ -12,6 +12,7 @@ const createGetAbsences = require('../../../../application/use-cases/getAbsences
 const createGetAbsenceById = require('../../../../application/use-cases/getAbsenceById');
 const createCoverAbsence = require('../../../../application/use-cases/coverAbsence');
 const createUpdateSuggestionsState = require('../../../../application/use-cases/updateSuggestionsState');
+const createAbsenceWorkflow = require('../../../../application/use-cases/absenceWorkflow');
 const createAbsenceController = require('../controllers/absence.controller');
 
 const router = express.Router();
@@ -27,14 +28,25 @@ const controller = createAbsenceController({
   getAbsenceById: createGetAbsenceById(absenceRepository, attachUserNames),
   coverAbsence: createCoverAbsence(absenceRepository),
   updateSuggestionsState: createUpdateSuggestionsState(absenceRepository),
+  workflow: createAbsenceWorkflow({ absenceRepository, attachUserNames, notificationClient }),
 });
 
 const supervisors = allowRoles('supervisor', 'super_admin');
 
 router.post('/', verifyJwt, allowRoles('crew'), controller.create);
 router.get('/', verifyJwt, supervisors, controller.list);
+// Rutas fijas antes de /:id para que Express no las tome como un id.
+router.get('/tracking', verifyJwt, supervisors, controller.tracking);
+router.get('/stats', verifyJwt, supervisors, controller.stats);
+// Internas (token de servicio).
+router.get('/expired', verifyJwt, allowRoles('service'), controller.expired);
+router.post('/acknowledged', verifyJwt, allowRoles('service'), controller.acknowledged);
 router.get('/:id', verifyJwt, allowRoles('supervisor', 'super_admin', 'service'), controller.getById);
 router.patch('/:id/cover', verifyJwt, supervisors, controller.cover);
+// El supervisor confirmó un reemplazo: queda esperando su «Enterado».
+router.patch('/:id/approve', verifyJwt, supervisors, controller.approve);
+// Interno: el reemplazo dejó vencer el plazo.
+router.patch('/:id/missed', verifyJwt, allowRoles('service'), controller.missed);
 // Interno: Recommendation informa el resultado de la búsqueda de reemplazos.
 router.patch('/:id/suggestions', verifyJwt, allowRoles('service'), controller.updateSuggestions);
 

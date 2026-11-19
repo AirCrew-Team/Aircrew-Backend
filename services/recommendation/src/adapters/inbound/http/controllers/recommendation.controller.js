@@ -41,7 +41,8 @@ function createRecommendationController({
       const result = await confirmReplacement(
         req.params.id,
         req.headers.authorization,
-        req.body
+        req.body,
+        req.user
       );
       return res.status(200).json(result);
     } catch (error) {

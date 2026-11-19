@@ -16,13 +16,22 @@ info:
     socket.on('absence:covered', (alert) => console.log(alert.message));
     socket.on('connect_error', (error) => console.log(error.message));
     ```
-    Solo `supervisor` y `super_admin` pueden conectarse; con otro rol o un token inválido,
-    `connect_error` trae el motivo.
+    Cualquier usuario con sesión puede conectarse:
+    - **Supervisores y super_admin** reciben las alertas operativas.
+    - **Cada usuario** recibe además los avisos dirigidos a él (por ejemplo, un tripulante
+      recibe `assignment:replacement` cuando lo eligen como reemplazo).
+
+    Con un token inválido o vencido, `connect_error` trae el motivo. Antes de que venza el token,
+    el servidor emite `auth:expired` y desconecta.
 
     **Eventos que emite el servidor:**
     - `connected`: confirmación al conectarse.
     - `absence:reported`: un tripulante reportó una ausencia.
-    - `absence:covered`: una ausencia ya tiene reemplazo.
+    - `absence:suggestions_ready`: terminó la búsqueda de candidatos (`{ absence_id, candidate_count, source }`).
+    - `absence:covered`: el reemplazo confirmó con «Enterado».
+    - `absence:deadline_missed`: el reemplazo no confirmó a tiempo (`{ absence_id, candidate_name, next_candidate_name }`).
+    - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ assignment_id, flight_number, deadline_at }`).
+    - `auth:expired`: el token venció; volver a iniciar sesión.
 
     Los endpoints de abajo los llaman otros servicios para disparar las alertas.
 servers:

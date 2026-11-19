@@ -8,7 +8,10 @@ module.exports = {
   port: Number(process.env.PORT) || 3003,
   jwtSecret: process.env.JWT_SECRET,
   jwtIssuer: process.env.JWT_ISSUER || 'aircrew-admin',
+  adminServiceUrl: process.env.ADMIN_SERVICE_URL || 'http://localhost:3005',
   crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
+  // Cada cuánto se revisan los plazos de «Enterado» vencidos (ms).
+  deadlineCheckMs: Number(process.env.DEADLINE_CHECK_MS) || 60000,
   flightsServiceUrl:
     process.env.FLIGHTS_SERVICE_URL || 'http://localhost:3001',
   notificationServiceUrl:

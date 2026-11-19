@@ -5,6 +5,9 @@ const ALERT_EVENTS = {
   absenceReported: 'absence:reported',
   absenceCovered: 'absence:covered',
   suggestionsReady: 'absence:suggestions_ready',
+  deadlineMissed: 'absence:deadline_missed',
+  // Solo para el tripulante afectado (sala personal).
+  assignmentReplacement: 'assignment:replacement',
 };
 
 // Solo los supervisores reciben las alertas operativas.
@@ -70,7 +73,9 @@ function createAbsenceCoveredAlert(absence) {
 
   return {
     type: ALERT_EVENTS.absenceCovered,
-    message: `La ausencia del vuelo ${absence.flight_number} ya tiene reemplazo.`,
+    message: absence.replacement_name
+      ? `${absence.replacement_name} cubrirá el vuelo ${absence.flight_number}.`
+      : `La ausencia del vuelo ${absence.flight_number} ya tiene reemplazo.`,
     absence,
     sent_at: new Date().toISOString(),
   };
@@ -100,8 +105,54 @@ function createSuggestionsReadyAlert(input) {
   };
 }
 
+// Alerta para supervisores: el reemplazo no confirmó a tiempo.
+function createDeadlineMissedAlert(input) {
+  const { absence_id: absenceId, flight_number: flightNumber, candidate_name: candidate,
+    next_candidate_name: next } = input || {};
+
+  if (typeof absenceId !== 'string' || !uuidPattern.test(absenceId)) {
+    throw new DomainError('Se requiere absence_id.');
+  }
+
+  const who = isNonEmptyString(candidate) ? candidate : 'El reemplazo';
+  const flight = isNonEmptyString(flightNumber) ? ` del vuelo ${flightNumber}` : '';
+
+  return {
+    type: ALERT_EVENTS.deadlineMissed,
+    message: `${who} dejó vencer su plazo${flight}.${
+      isNonEmptyString(next) ? ` Siguiente opción: ${next}.` : ' No quedan más candidatos.'
+    }`,
+    absence_id: absenceId,
+    candidate_name: candidate || null,
+    next_candidate_name: next || null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
+// Aviso para el tripulante: lo asignaron como reemplazo y debe dar «Enterado».
+function createAssignmentReplacementAlert(input) {
+  const { crew_user_id: crewUserId, flight_number: flightNumber, deadline_at: deadlineAt,
+    assignment_id: assignmentId } = input || {};
+
+  if (typeof crewUserId !== 'string' || !uuidPattern.test(crewUserId) || !isNonEmptyString(flightNumber)) {
+    throw new DomainError('Se requieren crew_user_id y flight_number.');
+  }
+
+  return {
+    type: ALERT_EVENTS.assignmentReplacement,
+    message: `Te asignaron como reemplazo en el vuelo ${flightNumber}. Confirma con «Enterado».`,
+    crew_user_id: crewUserId,
+    assignment_id: assignmentId || null,
+    flight_number: flightNumber,
+    deadline_at: deadlineAt || null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   ALERT_EVENTS,
+  createDeadlineMissedAlert,
+  createAssignmentReplacementAlert,
   createSuggestionsReadyAlert,
   SUPERVISORS_ROOM,
   userRoom,

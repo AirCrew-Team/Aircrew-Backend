@@ -68,4 +68,34 @@ async function findLatestRound(absenceId) {
   return rows;
 }
 
-module.exports = { saveRound, findLatestRound };
+// Cambia el estado de un candidato en la última ronda (offered, missed, accepted).
+async function markStatus(absenceId, crewUserId, status) {
+  const { rows } = await pool.query(
+    `UPDATE public.replacement_suggestions SET status = $3
+     WHERE absence_id = $1 AND crew_user_id = $2
+       AND round = (SELECT MAX(round) FROM public.replacement_suggestions WHERE absence_id = $1)
+     RETURNING ${suggestionColumns}`,
+    [absenceId, crewUserId, status]
+  );
+
+  return rows[0] || null;
+}
+
+// Tripulantes que ya dejaron vencer su plazo en esta ausencia: no se vuelven a proponer.
+async function findMissedUserIds(absenceId) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT crew_user_id FROM public.replacement_suggestions
+     WHERE absence_id = $1 AND status = 'missed'`,
+    [absenceId]
+  );
+
+  return rows.map((row) => row.crew_user_id);
+}
+
+// El siguiente candidato todavía propuesto de la última ronda.
+async function findNextProposed(absenceId) {
+  const rows = await findLatestRound(absenceId);
+  return rows.find((row) => row.status === 'proposed') || null;
+}
+
+module.exports = { saveRound, findLatestRound, markStatus, findMissedUserIds, findNextProposed };

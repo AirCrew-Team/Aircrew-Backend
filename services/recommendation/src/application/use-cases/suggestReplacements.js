@@ -39,8 +39,11 @@ function createSuggestReplacements({
       );
     }
 
+    // Quien ya dejó vencer su plazo en esta ausencia no se vuelve a proponer.
+    const missed = await suggestionRepository.findMissedUserIds(absence.id);
+
     const { eligible } = evaluateReplacements({
-      members,
+      members: members.filter((member) => !missed.includes(member.user_id)),
       flight,
       role,
       absentUserId: absence.crew_user_id,

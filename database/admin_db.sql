@@ -16,3 +16,24 @@ CREATE TABLE IF NOT EXISTS public.users (
 CREATE UNIQUE INDEX IF NOT EXISTS users_activation_token_hash_unique
   ON public.users (activation_token_hash)
   WHERE activation_token_hash IS NOT NULL;
+
+-- Perfil del usuario (supervisor y administrador). ALTER para bases ya creadas.
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS base_code TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS shift TEXT
+  CHECK (shift IN ('morning', 'afternoon', 'night'));
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS notification_preferences JSONB
+  NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+
+-- Bases de operación. code es el IATA del aeropuerto de la base.
+CREATE TABLE IF NOT EXISTS public.bases (
+  code                  TEXT PRIMARY KEY,
+  icao                  TEXT NOT NULL,
+  name                  TEXT NOT NULL,
+  city                  TEXT NOT NULL,
+  unit                  TEXT NOT NULL,
+  hq_code               TEXT NOT NULL,
+  operational_condition TEXT NOT NULL DEFAULT 'normal'
+    CHECK (operational_condition IN ('normal', 'degraded', 'critical'))
+);

@@ -6,9 +6,14 @@ const ALERT_EVENTS = {
   absenceCovered: 'absence:covered',
 };
 
-// Solo los supervisores reciben alertas.
+// Solo los supervisores reciben las alertas operativas.
 const SUPERVISOR_ROLES = ['supervisor', 'super_admin'];
 const SUPERVISORS_ROOM = 'supervisors';
+
+// Sala personal de cada usuario, para avisos dirigidos a una sola persona.
+function userRoom(userId) {
+  return `user:${userId}`;
+}
 
 const REASON_LABELS = {
   illness: 'incapacidad',
@@ -73,6 +78,7 @@ function createAbsenceCoveredAlert(absence) {
 module.exports = {
   ALERT_EVENTS,
   SUPERVISORS_ROOM,
+  userRoom,
   canReceiveAlerts,
   createAbsenceReportedAlert,
   createAbsenceCoveredAlert,

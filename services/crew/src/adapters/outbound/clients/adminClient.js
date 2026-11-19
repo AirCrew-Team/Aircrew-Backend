@@ -31,6 +31,8 @@ async function createUser({ name, email }) {
 
     const error = new Error(message);
     error.status = response.status;
+    if (data.code) error.code = data.code;
+    if (data.field) error.field = data.field;
     throw error;
   }
 

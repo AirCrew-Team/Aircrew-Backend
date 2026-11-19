@@ -50,3 +50,44 @@ CREATE TABLE IF NOT EXISTS public.flight_assignments (
 
 CREATE INDEX IF NOT EXISTS flight_assignments_crew_user_id_idx
   ON public.flight_assignments (crew_user_id);
+
+-- ===== Programación y reemplazos =====
+
+-- Catálogo de aeropuertos: ciudad, nombre y zona horaria para el frontend.
+CREATE TABLE IF NOT EXISTS public.airports (
+  code     TEXT PRIMARY KEY,
+  icao     TEXT NOT NULL,
+  city     TEXT NOT NULL,
+  name     TEXT NOT NULL,
+  country  TEXT NOT NULL,
+  timezone TEXT NOT NULL
+);
+
+-- family: familia del avión (A320, 787...). La usa la regla de habilitación.
+ALTER TABLE public.aircraft ADD COLUMN IF NOT EXISTS family TEXT;
+
+-- gate: puerta de embarque · crew_confirmed_at: el supervisor confirmó la tripulación.
+ALTER TABLE public.flights ADD COLUMN IF NOT EXISTS gate TEXT;
+ALTER TABLE public.flights ADD COLUMN IF NOT EXISTS crew_confirmed_at TIMESTAMPTZ;
+ALTER TABLE public.flights ADD COLUMN IF NOT EXISTS crew_confirmed_by UUID;
+
+-- slot_id: puesto que ocupa (captain, first_officer, relief, purser, fa-1...).
+-- source: quién la propuso · rationale: explicación de la IA o de la regla.
+-- Reemplazos: is_replacement, quién aprobó y plazo para dar «Enterado».
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS slot_id TEXT;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS source TEXT NOT NULL
+  DEFAULT 'manual' CHECK (source IN ('manual', 'ai', 'rule'));
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS rationale TEXT;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS is_replacement BOOLEAN
+  NOT NULL DEFAULT false;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS replacement_reason TEXT;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS approved_by UUID;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS approved_by_name TEXT;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
+ALTER TABLE public.flight_assignments ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+
+-- Un puesto activo solo puede tener una persona.
+CREATE UNIQUE INDEX IF NOT EXISTS flight_assignments_active_slot_unique
+  ON public.flight_assignments (flight_id, slot_id)
+  WHERE status = 'assigned' AND slot_id IS NOT NULL;

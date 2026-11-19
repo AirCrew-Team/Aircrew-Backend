@@ -35,3 +35,65 @@ CREATE TABLE IF NOT EXISTS public.absences (
 -- Quién cubrió la ausencia y cuándo. ALTER para bases creadas antes de estas columnas.
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS replacement_user_id UUID;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS covered_at TIMESTAMPTZ;
+
+-- ===== Supervisor, programación y recomendaciones =====
+
+-- Datos que usan las reglas de elegibilidad y la pantalla de Tripulación.
+-- rank: cargo a bordo · ratings: familias de avión habilitadas (A320, 787...)
+-- english_level: nivel OACI (1 a 6) · status on_duty = de guardia en el aeropuerto.
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS rank TEXT
+  CHECK (rank IN ('captain', 'first_officer', 'purser', 'flight_attendant'));
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS base_code TEXT;
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS ratings TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS english_level SMALLINT
+  CHECK (english_level BETWEEN 1 AND 6);
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS medical_expires_on DATE;
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS hire_date DATE;
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS radio_channel TEXT;
+-- Guardia: ubicación declarada al iniciarla (no hay registro de presencia real).
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS standby_location TEXT;
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS minutes_to_ramp SMALLINT
+  CHECK (minutes_to_ramp >= 0);
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS standby_until TIMESTAMPTZ;
+
+-- Se agrega vacation a los estados del tripulante.
+ALTER TABLE public.crew_members DROP CONSTRAINT IF EXISTS crew_members_status_check;
+ALTER TABLE public.crew_members ADD CONSTRAINT crew_members_status_check
+  CHECK (status IN ('available', 'on_duty', 'in_flight', 'medical_leave', 'vacation'));
+
+-- Tripulantes creados antes de rank: los pilotos quedan como primer oficial.
+UPDATE public.crew_members SET rank = 'first_officer'
+  WHERE rank IS NULL AND position ILIKE 'pilot%';
+UPDATE public.crew_members SET rank = 'flight_attendant'
+  WHERE rank IS NULL AND position ILIKE 'cabin%';
+
+-- Ausencias: estado intermedio pending_ack (el reemplazo aún no confirma),
+-- estado de la búsqueda de la IA y copia de los datos del vuelo para la cola.
+ALTER TABLE public.absences DROP CONSTRAINT IF EXISTS absences_status_check;
+ALTER TABLE public.absences ADD CONSTRAINT absences_status_check
+  CHECK (status IN ('reported', 'pending_ack', 'covered', 'cancelled'));
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS suggestions_state TEXT
+  CHECK (suggestions_state IN ('searching', 'ready', 'none'));
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS slot_role TEXT;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS flight_origin TEXT;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS flight_destination TEXT;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS approved_by UUID;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS absences_status_idx ON public.absences (status);
+
+-- Línea de tiempo de cada ausencia (pantalla de Seguimiento).
+CREATE TABLE IF NOT EXISTS public.absence_events (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  absence_id UUID        NOT NULL REFERENCES public.absences (id) ON DELETE CASCADE,
+  type       TEXT        NOT NULL
+    CHECK (type IN ('reported', 'ai_ready', 'ai_none', 'approved',
+                    'candidate_missed', 'acknowledged', 'covered', 'cancelled')),
+  text       TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS absence_events_absence_id_idx
+  ON public.absence_events (absence_id, created_at);

@@ -17,7 +17,7 @@ function verifyJwt(req, res, next) {
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Se requiere autenticación.' });
+    return res.status(401).json({ error: 'Se requiere autenticación.', code: 'auth_required' });
   }
 
   const token = authorization.slice('Bearer '.length);
@@ -33,7 +33,7 @@ function verifyJwt(req, res, next) {
       typeof payload.sub !== 'string' ||
       typeof payload.role !== 'string'
     ) {
-      return res.status(401).json({ error: 'El token de autenticación no es válido.' });
+      return res.status(401).json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
     }
 
     req.user = {
@@ -43,11 +43,16 @@ function verifyJwt(req, res, next) {
 
     return next();
   } catch (error) {
-    if (
-      error.name === 'JsonWebTokenError' ||
-      error.name === 'TokenExpiredError'
-    ) {
-      return res.status(401).json({ error: 'El token no es válido o ya venció.' });
+    if (error.name === 'TokenExpiredError') {
+      return res
+        .status(401)
+        .json({ error: 'Tu sesión venció. Inicia sesión de nuevo.', code: 'token_expired' });
+    }
+
+    if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
+      return res
+        .status(401)
+        .json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
     }
 
     return next(error);

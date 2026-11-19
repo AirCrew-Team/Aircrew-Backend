@@ -51,8 +51,17 @@ Cada servicio tiene su propia base en PostgreSQL. Crea las bases y ejecuta el sc
 | `admin_db` | `database/admin_db.sql` |
 | `crew_db` | `database/crew_db.sql` |
 | `flights_db` | `database/flights_db.sql` |
+| `recommendation_db` | `database/recommendation_db.sql` |
 
-Los scripts se pueden ejecutar varias veces sin error. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+
+### Datos de demo
+
+```bash
+npm run seed:demo
+```
+
+Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 17 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
 
 ## Documentación de la API (Swagger)
 

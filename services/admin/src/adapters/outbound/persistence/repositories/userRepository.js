@@ -20,6 +20,8 @@ function toDuplicateEmailError(cause) {
   if (cause.code === '23505') {
     const error = new Error('Ya existe un usuario con ese email.');
     error.status = 409;
+    error.code = 'duplicate_email';
+    error.field = 'email';
     return error;
   }
 

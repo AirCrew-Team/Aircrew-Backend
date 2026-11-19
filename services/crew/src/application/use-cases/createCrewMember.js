@@ -2,12 +2,9 @@ const { createCrewMember: buildCrewMember } = require('../../domain/entities/cre
 
 function createCreateCrewMember({ createUser, saveCrewMember }) {
   return async function createCrewMember(input) {
-    const crewMember = buildCrewMember(input || {});
+    const { name, email, ...profile } = buildCrewMember(input || {});
 
-    const user = await createUser({
-      name: crewMember.name,
-      email: crewMember.email,
-    });
+    const user = await createUser({ name, email });
 
     if (!user || !user.id) {
       const error = new Error(
@@ -17,14 +14,7 @@ function createCreateCrewMember({ createUser, saveCrewMember }) {
       throw error;
     }
 
-    return saveCrewMember({
-      userId: user.id,
-      employeeCode: crewMember.employeeCode,
-      position: crewMember.position,
-      currentLocation: crewMember.currentLocation,
-      status: crewMember.status,
-      isActive: crewMember.isActive,
-    });
+    return saveCrewMember({ userId: user.id, ...profile });
   };
 }
 

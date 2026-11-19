@@ -3,6 +3,7 @@ function createAbsenceController({
   getAbsences,
   getAbsenceById,
   coverAbsence,
+  updateSuggestionsState,
 }) {
   async function create(req, res, next) {
     try {
@@ -44,7 +45,16 @@ function createAbsenceController({
     }
   }
 
-  return { create, list, getById, cover };
+  async function updateSuggestions(req, res, next) {
+    try {
+      const absence = await updateSuggestionsState(req.params.id, req.body);
+      return res.status(200).json(absence);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  return { create, list, getById, cover, updateSuggestions };
 }
 
 module.exports = createAbsenceController;

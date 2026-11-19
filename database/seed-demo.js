@@ -1,5 +1,5 @@
 // Datos de demo para AirCrew: bases, aeropuertos, aeronaves, un supervisor,
-// 17 tripulantes y 12 vuelos en los próximos 7 días.
+// 21 tripulantes y 12 vuelos en los próximos 7 días.
 //
 // Uso (desde la raíz):  npm run seed:demo
 //
@@ -104,6 +104,10 @@ const crew = [
   ['daniel.ortiz', 'Daniel Ortiz', 'EMP-023', 'first_officer', 'BOG', ['A320'], 3, 160, 'on_duty', ['Hotel aeropuerto', 25]],
   ['juan.ruiz', 'Juan Ruiz', 'EMP-024', 'first_officer', 'BOG', ['A320'], 4, -5, 'available'],
   ['camilo.vargas', 'Camilo Vargas', 'EMP-025', 'first_officer', 'MDE', ['A320'], 4, 100, 'vacation'],
+  ['carolina.mendez', 'Carolina Méndez', 'EMP-026', 'first_officer', 'BOG', ['A320'], 4, 140, 'available'],
+  ['felipe.rojas', 'Felipe Rojas', 'EMP-027', 'first_officer', 'BOG', ['A320', '787'], 5, 190, 'available'],
+  ['sebastian.pardo', 'Sebastián Pardo', 'EMP-028', 'first_officer', 'BOG', ['A320'], 5, 220, 'on_duty', ['Hotel aeropuerto', 30]],
+  ['diego.salazar', 'Diego Salazar', 'EMP-014', 'captain', 'BOG', ['A320'], 5, 250, 'available'],
   ['natalia.suarez', 'Natalia Suárez', 'EMP-030', 'purser', 'BOG', ['A320', '787'], 5, 140, 'available'],
   ['paula.mejia', 'Paula Mejía', 'EMP-031', 'purser', 'BOG', ['A320'], 4, 110, 'on_duty', ['Sala de tripulaciones T1', 10]],
   ['mateo.lopez', 'Mateo López', 'EMP-040', 'flight_attendant', 'BOG', ['A320'], 4, 130, 'available'],
@@ -142,6 +146,7 @@ const assignments = [
   ['AV-9344', 'fa-2', 'flight_attendant', 'santiago.ramirez'],
   ['AV-9344', 'fa-3', 'flight_attendant', 'mariana.cruz'],
   ['AV-8120', 'captain', 'captain', 'ricardo.morales'],
+  ['AV-8120', 'first_officer', 'first_officer', 'felipe.rojas'],
   ['AV-4021', 'captain', 'captain', 'sofia.herrera'],
 ];
 const confirmedFlights = ['AV-9344'];

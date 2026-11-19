@@ -3,8 +3,22 @@ const { DomainError } = require('../errors');
 // illness: incapacidad · fatigue: fatiga
 // emergency: calamidad · transfer: problema de traslado
 const ABSENCE_REASONS = ['illness', 'fatigue', 'emergency', 'transfer'];
+
+// Texto en español de cada motivo, para la línea de tiempo y las alertas.
+const REASON_LABELS = {
+  illness: 'incapacidad',
+  fatigue: 'fatiga',
+  emergency: 'calamidad',
+  transfer: 'problema de traslado',
+};
+
+// Estado de la búsqueda de reemplazos: searching (la IA trabaja), ready
+// (hay candidatos) o none (nadie cumple las reglas).
+const SUGGESTIONS_STATES = ['searching', 'ready', 'none'];
 // reported: falta reemplazo · covered: ya tiene reemplazo
-const ABSENCE_STATUSES = ['reported', 'covered'];
+// reported: falta reemplazo · pending_ack: el reemplazo aún no da «Enterado»
+// covered: cubierta · cancelled: cancelada
+const ABSENCE_STATUSES = ['reported', 'pending_ack', 'covered', 'cancelled'];
 const MAX_NOTES_LENGTH = 500;
 
 const uuidPattern =
@@ -85,8 +99,30 @@ function validateCoverage(absence, replacementUserId) {
   }
 }
 
+// Lo que informa Recommendation al terminar una búsqueda.
+function validateSuggestionsUpdate({ state, candidate_count: count } = {}) {
+  if (!SUGGESTIONS_STATES.includes(state)) {
+    throw new DomainError(
+      `state debe ser uno de: ${SUGGESTIONS_STATES.join(', ')}.`,
+      400,
+      { field: 'state' }
+    );
+  }
+
+  if (count !== undefined && (!Number.isInteger(count) || count < 0)) {
+    throw new DomainError('candidate_count debe ser un entero mayor o igual a 0.', 400, {
+      field: 'candidate_count',
+    });
+  }
+
+  return { state, candidateCount: count || 0 };
+}
+
 module.exports = {
   ABSENCE_REASONS,
+  REASON_LABELS,
+  SUGGESTIONS_STATES,
+  validateSuggestionsUpdate,
   ABSENCE_STATUSES,
   createAbsence,
   canReportAbsenceFor,

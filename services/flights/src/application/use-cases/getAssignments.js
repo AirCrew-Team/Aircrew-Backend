@@ -1,6 +1,7 @@
 const { DomainError } = require('../../domain/errors');
 
-const MAX_RANGE_DAYS = 31;
+// 40 días: el motor pide el mes del vuelo más un día a cada lado.
+const MAX_RANGE_DAYS = 40;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function parseRequiredDate(value, name) {

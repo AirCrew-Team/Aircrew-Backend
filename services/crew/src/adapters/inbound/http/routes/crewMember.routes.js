@@ -23,7 +23,7 @@ const crewMemberController = createCrewMemberController({
 });
 
 router.post('/', verifyJwt, allowRoles('supervisor', 'super_admin'), crewMemberController.create);
-router.get('/', verifyJwt, allowRoles('supervisor', 'super_admin'), crewMemberController.list);
+router.get('/', verifyJwt, allowRoles('supervisor', 'super_admin', 'service'), crewMemberController.list);
 router.get('/me', verifyJwt, allowRoles('crew'), crewMemberController.me);
 
 module.exports = router;

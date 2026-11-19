@@ -55,11 +55,22 @@ async function findFlights({ from, to }) {
   return rows;
 }
 
+// Vuelo con los datos que usan las reglas de elegibilidad: familia y sillas
+// del avión, y si es internacional (algún aeropuerto fuera de Colombia).
 async function findFlightById(id) {
   const { rows } = await pool.query(
-    `SELECT ${flightColumns}
-     FROM public.flights
-     WHERE id = $1`,
+    `SELECT f.id, f.flight_number, f.aircraft_id, f.origin, f.destination,
+            f.departure_at, f.arrival_at, f.status, f.gate, f.crew_confirmed_at,
+            f.created_at, f.updated_at,
+            ac.family AS aircraft_family, ac.capacity AS aircraft_seats,
+            ac.name AS aircraft_name, ac.registration AS aircraft_registration,
+            CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
+                 THEN 'international' ELSE 'domestic' END AS scope
+     FROM public.flights f
+     JOIN public.aircraft ac ON ac.id = f.aircraft_id
+     LEFT JOIN public.airports o ON o.code = f.origin
+     LEFT JOIN public.airports d ON d.code = f.destination
+     WHERE f.id = $1`,
     [id]
   );
 

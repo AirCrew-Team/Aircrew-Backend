@@ -2,15 +2,28 @@ const {
   isValidAbsenceId,
   assertCanBeReplaced,
 } = require('../../domain/entities/replacementRequest');
-const { LOAD_WINDOW_HOURS } = require('../../domain/services/scoring');
 const { DomainError } = require('../../domain/errors');
 
-const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Reúne lo que el motor necesita de Crew y Flights para una ausencia:
-// la ausencia, su vuelo, los tripulantes y las asignaciones cercanas.
+// Asignaciones a pedir: el mes del vuelo completo (regla de 90 h) más un día a
+// cada lado del vuelo (descanso y carga cercana).
+function assignmentWindow(flight) {
+  const departure = new Date(flight.departure_at);
+  const monthStart = Date.UTC(departure.getUTCFullYear(), departure.getUTCMonth(), 1);
+  const monthEnd = Date.UTC(departure.getUTCFullYear(), departure.getUTCMonth() + 1, 1);
+  const from = Math.min(monthStart, departure.getTime() - DAY_MS);
+  const to = Math.max(monthEnd, new Date(flight.arrival_at).getTime() + DAY_MS);
+
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+}
+
+// Reúne lo que el motor necesita de Crew y Flights para una ausencia: la
+// ausencia, su vuelo (con familia del avión y alcance), los tripulantes y las
+// asignaciones del período. `authorization` es el token del supervisor o uno
+// de servicio cuando corre en segundo plano.
 function createLoadReplacementContext({ crewClient, flightsClient }) {
-  return async function loadReplacementContext(absenceId, authorization) {
+  return async function loadReplacementContext(absenceId, authorization, { allowCovered = false } = {}) {
     if (!isValidAbsenceId(absenceId)) {
       throw new DomainError('Ausencia no encontrada.', 404);
     }
@@ -21,15 +34,12 @@ function createLoadReplacementContext({ crewClient, flightsClient }) {
       crewClient.getCrewMembers(authorization),
     ]);
 
-    assertCanBeReplaced(absence, flight);
+    if (!allowCovered) {
+      assertCanBeReplaced(absence, flight);
+    }
 
-    // La ventana de carga (24 h) cubre también la de descanso (10 h).
-    const windowMs = LOAD_WINDOW_HOURS * HOUR_MS;
     const assignments = await flightsClient.getAssignments(
-      {
-        from: new Date(new Date(flight.departure_at).getTime() - windowMs).toISOString(),
-        to: new Date(new Date(flight.arrival_at).getTime() + windowMs).toISOString(),
-      },
+      assignmentWindow(flight),
       authorization
     );
 
@@ -38,7 +48,11 @@ function createLoadReplacementContext({ crewClient, flightsClient }) {
         (item) => item.flight.id === flight.id && item.crew_user_id === userId
       ) || null;
 
-    return { absence, flight, members, assignments, findOnFlight };
+    // El puesto del ausente: el guardado en la ausencia, o el de su asignación.
+    const absentAssignment = findOnFlight(absence.crew_user_id);
+    const role = absence.slot_role || (absentAssignment && absentAssignment.role) || null;
+
+    return { absence, flight, members, assignments, findOnFlight, absentAssignment, role };
   };
 }
 

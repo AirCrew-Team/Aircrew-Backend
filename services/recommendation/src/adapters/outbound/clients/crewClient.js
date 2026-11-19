@@ -26,4 +26,14 @@ function coverAbsence(id, replacementUserId, authorization) {
   });
 }
 
-module.exports = { getAbsence, getCrewMembers, coverAbsence };
+// Interno: informa a Crew el resultado de la búsqueda de reemplazos.
+function updateSuggestionsState(id, { state, candidateCount }, authorization) {
+  return requestJson(`${crewServiceUrl}/absences/${encodeURIComponent(id)}/suggestions`, {
+    method: 'PATCH',
+    body: { state, candidate_count: candidateCount },
+    authorization,
+    serviceName,
+  });
+}
+
+module.exports = { getAbsence, getCrewMembers, coverAbsence, updateSuggestionsState };

@@ -12,18 +12,25 @@ function isValidUserId(id) {
   return typeof id === 'string' && uuidPattern.test(id);
 }
 
-// La solicitud sigue abierta si la ausencia no está cubierta y el vuelo
+const CLOSED_MESSAGES = {
+  pending_ack: ['La ausencia ya tiene un reemplazo esperando confirmación.', 'absence_pending_ack'],
+  covered: ['La ausencia ya está cubierta.', 'absence_covered'],
+  cancelled: ['La ausencia fue cancelada.', 'absence_cancelled'],
+};
+
+// La solicitud sigue abierta si la ausencia está `reported` y el vuelo
 // todavía no ha salido.
 function assertCanBeReplaced(absence, flight, now = new Date()) {
-  if (absence.status === 'covered') {
-    throw new DomainError('La ausencia ya está cubierta.', 409);
+  if (CLOSED_MESSAGES[absence.status]) {
+    const [message, code] = CLOSED_MESSAGES[absence.status];
+    throw new DomainError(message, 409, { code });
   }
 
   if (
     !['scheduled', 'delayed'].includes(flight.status) ||
     new Date(flight.departure_at) <= now
   ) {
-    throw new DomainError('El vuelo ya no admite reemplazos.', 409);
+    throw new DomainError('El vuelo ya no admite reemplazos.', 409, { code: 'flight_closed' });
   }
 }
 

@@ -61,7 +61,7 @@ Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelv
 npm run seed:demo
 ```
 
-Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 17 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
+Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 21 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
 
 ## Documentación de la API (Swagger)
 

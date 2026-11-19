@@ -4,6 +4,7 @@ const { DomainError } = require('./errors');
 const ALERT_EVENTS = {
   absenceReported: 'absence:reported',
   absenceCovered: 'absence:covered',
+  suggestionsReady: 'absence:suggestions_ready',
 };
 
 // Solo los supervisores reciben las alertas operativas.
@@ -75,8 +76,33 @@ function createAbsenceCoveredAlert(absence) {
   };
 }
 
+// Alerta: terminó la búsqueda de reemplazos de una ausencia.
+function createSuggestionsReadyAlert(input) {
+  const { absence_id: absenceId, flight_number: flightNumber, candidate_count: count, source } =
+    input || {};
+
+  if (typeof absenceId !== 'string' || !uuidPattern.test(absenceId) || !Number.isInteger(count)) {
+    throw new DomainError('Se requieren absence_id y candidate_count.');
+  }
+
+  const flight = isNonEmptyString(flightNumber) ? ` del vuelo ${flightNumber}` : '';
+
+  return {
+    type: ALERT_EVENTS.suggestionsReady,
+    message:
+      count > 0
+        ? `Hay ${count} candidato${count === 1 ? '' : 's'} para la ausencia${flight}.`
+        : `Nadie cumple las reglas para cubrir la ausencia${flight}.`,
+    absence_id: absenceId,
+    candidate_count: count,
+    source: source || null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   ALERT_EVENTS,
+  createSuggestionsReadyAlert,
   SUPERVISORS_ROOM,
   userRoom,
   canReceiveAlerts,

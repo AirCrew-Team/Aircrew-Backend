@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const { jwtSecret, jwtIssuer } = require('../../../config/env');
 
-const allowedRoles = new Set(['crew', 'supervisor', 'super_admin']);
+// service: token de 1 minuto que firma otro servicio para llamadas internas
+// sin usuario (por ejemplo, la IA que corre en segundo plano).
+const allowedRoles = new Set(['crew', 'supervisor', 'super_admin', 'service']);
 
 // Valida un JWT de Admin. Lo usan el middleware HTTP y el WebSocket.
 // Devuelve { user, expiresAt } si es válido, o { reason } si no:

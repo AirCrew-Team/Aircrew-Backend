@@ -17,7 +17,7 @@ const controller = createAssignmentController({
 router.get(
   '/',
   verifyJwt,
-  allowRoles('supervisor', 'super_admin'),
+  allowRoles('supervisor', 'super_admin', 'service'),
   controller.list
 );
 router.get('/me', verifyJwt, allowRoles('crew'), controller.listMine);

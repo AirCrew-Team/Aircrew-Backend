@@ -331,7 +331,7 @@ paths:
       summary: Asignaciones activas en un rango de fechas (supervisor o super_admin)
       description: |
         Asignaciones `assigned` de todos los tripulantes cuyos vuelos se cruzan con el rango
-        [from, to). Excluye vuelos completed y cancelled. El rango máximo es de 31 días.
+        [from, to). Excluye vuelos completed y cancelled. El rango máximo es de 40 días.
         Lo usa el motor de recomendación para la regla de descanso.
       security:
         - bearerAuth: []

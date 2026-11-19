@@ -44,7 +44,7 @@ router.get(
 router.get(
   '/:id',
   verifyJwt,
-  allowRoles('supervisor', 'super_admin'),
+  allowRoles('supervisor', 'super_admin', 'service'),
   controller.getById
 );
 router.post(

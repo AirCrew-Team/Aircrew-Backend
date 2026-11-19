@@ -1,4 +1,4 @@
-const { rankCandidates } = require('../../domain/services/recommendationEngine');
+const { evaluateReplacements } = require('../../domain/services/replacementRanking');
 const { isValidUserId } = require('../../domain/entities/replacementRequest');
 const { DomainError } = require('../../domain/errors');
 const { absentNotAssignedError, toFlightSummary } = require('./getCandidates');
@@ -21,28 +21,28 @@ function createConfirmReplacement({
       throw new DomainError('Se requiere un candidate_user_id válido.');
     }
 
-    const { absence, flight, members, assignments, findOnFlight } =
+    const { absence, flight, members, assignments, findOnFlight, absentAssignment, role } =
       await loadReplacementContext(absenceId, authorization);
 
-    const absentAssignment = findOnFlight(absence.crew_user_id);
     let replacement = null;
 
     if (absentAssignment) {
-      const { candidates, discarded } = rankCandidates({
+      const { eligible, ineligible } = evaluateReplacements({
         members,
         flight,
-        role: absentAssignment.role,
+        role,
         absentUserId: absence.crew_user_id,
         assignments,
       });
 
-      if (!candidates.some((item) => item.user_id === candidateUserId)) {
-        const rejected = discarded.find((item) => item.user_id === candidateUserId);
+      if (!eligible.some((item) => item.member.user_id === candidateUserId)) {
+        const rejected = ineligible.find((item) => item.member.user_id === candidateUserId);
         throw new DomainError(
           rejected
-            ? `El tripulante no puede cubrir esta ausencia: ${rejected.reasons.join(' ')}`
+            ? `El tripulante no puede cubrir esta ausencia: ${rejected.reason}`
             : 'El tripulante no es un candidato para esta ausencia.',
-          409
+          409,
+          { code: 'candidate_not_eligible' }
         );
       }
 

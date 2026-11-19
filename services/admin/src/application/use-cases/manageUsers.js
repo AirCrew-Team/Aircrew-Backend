@@ -24,8 +24,17 @@ function createManageUsers(userRepository) {
   }
 
   // La cuenta del usuario del token, para restaurar la sesión al recargar.
+  // Si ya no existe o está desactivada, la sesión deja de valer (401).
   async function getCurrentUser(requester) {
-    return findExisting(requester.id);
+    const user = isValidUserId(requester.id)
+      ? await userRepository.findById(requester.id)
+      : null;
+
+    if (!user || user.is_active !== true) {
+      throw new DomainError('La sesión ya no es válida.', 401);
+    }
+
+    return user;
   }
 
   function listUsers(filters) {

@@ -11,6 +11,7 @@ const {
 const { verifyBootstrapKey } = require('../middlewares/auth.middleware');
 const {
   createLoginController,
+  createLogoutController,
   createBootstrapSuperAdminController,
   createActivateUserController,
 } = require('../controllers/auth.controller');
@@ -19,6 +20,7 @@ const router = express.Router();
 
 const login = createLogin({ userRepository, passwordHasher });
 const loginController = createLoginController(login);
+const logoutController = createLogoutController();
 const activateUser = createActivateUser({ userRepository, passwordHasher });
 const activateUserController = createActivateUserController(activateUser);
 const bootstrapSuperAdmin = createBootstrapSuperAdmin({
@@ -37,6 +39,8 @@ const manageUsers = createManageUsersController(createManageUsers(userRepository
 
 router.get('/me', verifyJwt, manageUsers.me);
 router.post('/login', loginController);
+// Sin verifyJwt: cerrar sesión con un token vencido también debe borrar la cookie.
+router.post('/logout', logoutController);
 router.post('/activate', activateUserController);
 router.post(
   '/bootstrap/super-admin',

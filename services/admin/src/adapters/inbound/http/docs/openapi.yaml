@@ -43,7 +43,13 @@ paths:
                 password: { type: string, format: password }
       responses:
         '200':
-          description: Sesión iniciada
+          description: Sesión iniciada. El body no cambia y además se pone la cookie de sesión.
+          headers:
+            Set-Cookie:
+              description: |
+                `aircrew_token=<JWT>; Max-Age=<segundos hasta el exp del JWT>; Path=/; HttpOnly; SameSite=Lax`.
+                Lleva `Secure` solo con `NODE_ENV=production`. El gateway la convierte en `Authorization: Bearer <JWT>`.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -54,6 +60,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/logout:
+    post:
+      tags: [Autenticación]
+      summary: Cerrar sesión
+      description: Borra la cookie `aircrew_token`. No requiere token y responde 204 aunque no haya cookie.
+      security: []
+      responses:
+        '204':
+          description: Sesión cerrada
+          headers:
+            Set-Cookie:
+              description: '`aircrew_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax` (con `Secure` en producción).'
+              schema: { type: string }
 
   /auth/me:
     get:
@@ -68,9 +88,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '404':
-          description: El usuario del token ya no existe
+        '401':
+          description: Falta el token, no es válido o venció, o el usuario del token ya no existe o está desactivado
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

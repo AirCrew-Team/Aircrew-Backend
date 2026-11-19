@@ -177,7 +177,39 @@ async function updateUser(id, { name, email, role, isActive }) {
   }
 }
 
+// Perfil propio: datos de contacto, base, turno y preferencias.
+async function findProfileById(id) {
+  const { rows } = await pool.query(
+    `SELECT id, name, email, role, is_active, phone, base_code, shift,
+            notification_preferences, password_changed_at
+     FROM public.users WHERE id = $1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+async function updateProfile(id, { phone }) {
+  await pool.query('UPDATE public.users SET phone = $2 WHERE id = $1', [id, phone]);
+}
+
+// Mezcla las preferencias nuevas con las guardadas y devuelve el resultado.
+async function mergePreferences(id, changes) {
+  const { rows } = await pool.query(
+    `UPDATE public.users
+     SET notification_preferences = notification_preferences || $2::jsonb
+     WHERE id = $1
+     RETURNING notification_preferences`,
+    [id, JSON.stringify(changes)]
+  );
+
+  return rows[0] ? rows[0].notification_preferences : {};
+}
+
 module.exports = {
+  findProfileById,
+  updateProfile,
+  mergePreferences,
   findUsers,
   findUsersByIds,
   updateUser,

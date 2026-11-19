@@ -1,5 +1,5 @@
 // Datos de demo para AirCrew: bases, aeropuertos, aeronaves, un supervisor,
-// 21 tripulantes y 12 vuelos en los próximos 7 días.
+// 21 tripulantes, 12 vuelos en los próximos 7 días y 2 ya realizados.
 //
 // Uso (desde la raíz):  npm run seed:demo
 //
@@ -122,6 +122,9 @@ const crew = [
 
 // número, matrícula, origen, destino, horas desde ahora, duración (min), puerta
 const flights = [
+  // Ya realizados (historial de Mis Vuelos).
+  ['AV-9340', 'HK-5320', 'MIA', 'BOG', -50, 235, 'E2'],
+  ['AV-8118', 'HK-5321', 'BOG', 'MDE', -26, 60, 'B10'],
   ['AV-9344', 'HK-5320', 'BOG', 'MIA', 3, 230, 'C04'],
   ['AV-8120', 'HK-5321', 'BOG', 'MDE', 5, 60, 'B12'],
   ['AV-4021', 'N781AV', 'BOG', 'MAD', 26, 620, 'D02'],
@@ -139,6 +142,10 @@ const flights = [
 // Tripulación ya armada: AV-9344 completa y confirmada (sirve para reportar
 // una ausencia en la demo); AV-8120 y AV-4021 a medias (para Programación).
 const assignments = [
+  ['AV-9340', 'first_officer', 'first_officer', 'valentina.rios'],
+  ['AV-9340', 'captain', 'captain', 'laura.perez'],
+  ['AV-8118', 'first_officer', 'first_officer', 'valentina.rios'],
+  ['AV-8118', 'captain', 'captain', 'diego.salazar'],
   ['AV-9344', 'captain', 'captain', 'laura.perez'],
   ['AV-9344', 'first_officer', 'first_officer', 'valentina.rios'],
   ['AV-9344', 'purser', 'purser', 'natalia.suarez'],
@@ -149,7 +156,7 @@ const assignments = [
   ['AV-8120', 'first_officer', 'first_officer', 'felipe.rojas'],
   ['AV-4021', 'captain', 'captain', 'sofia.herrera'],
 ];
-const confirmedFlights = ['AV-9344'];
+const confirmedFlights = ['AV-9340', 'AV-8118', 'AV-9344'];
 
 // ---------- Ejecución ----------
 
@@ -272,13 +279,14 @@ async function main() {
       await flightsDb.query(
         `INSERT INTO public.flights
            (id, flight_number, aircraft_id, origin, destination, departure_at, arrival_at, gate,
-            crew_confirmed_at, crew_confirmed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            crew_confirmed_at, crew_confirmed_by, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           flightIds[number], number, aircraftIds[registration], origin, destination,
           departure.toISOString(), arrival.toISOString(), gate,
           confirmedFlights.includes(number) ? new Date().toISOString() : null,
           confirmedFlights.includes(number) ? userId(supervisor.key) : null,
+          hours < 0 ? 'completed' : 'scheduled',
         ]
       );
     }
@@ -294,7 +302,7 @@ async function main() {
     console.log('Datos de demo cargados:');
     console.log(`  ${bases.length} bases, ${airports.length} aeropuertos, ${aircraft.length} aeronaves`);
     console.log(`  1 supervisor y ${crew.length} tripulantes (contraseña: ${DEMO_PASSWORD})`);
-    console.log(`  ${flights.length} vuelos en los próximos 7 días, ${assignments.length} asignaciones`);
+    console.log(`  ${flights.length} vuelos (2 ya realizados), ${assignments.length} asignaciones`);
     console.log(`  Supervisor: ${supervisor.key}${DEMO_DOMAIN}`);
   } finally {
     await Promise.all([admin, crewDb, flightsDb, recommendation].map((client) => client.end()));

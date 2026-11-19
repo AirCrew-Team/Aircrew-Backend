@@ -9,6 +9,8 @@ const assignmentWithFlight = `
          f.departure_at, f.arrival_at, f.status AS flight_status, f.gate,
          o.city AS origin_city, o.name AS origin_name, o.timezone AS origin_timezone,
          d.city AS destination_city, d.name AS destination_name,
+         CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
+              THEN 'international' ELSE 'domestic' END AS scope,
          ac.id AS aircraft_id, ac.name AS aircraft_name,
          ac.registration AS aircraft_registration, ac.family AS aircraft_family
   FROM public.flight_assignments a
@@ -52,6 +54,8 @@ function toAssignmentWithFlight(row) {
       arrival_at: row.arrival_at,
       status: row.flight_status,
       gate: row.gate,
+      scope: row.scope,
+      block_minutes: Math.round((new Date(row.arrival_at) - new Date(row.departure_at)) / 60000),
     },
     aircraft: {
       id: row.aircraft_id,

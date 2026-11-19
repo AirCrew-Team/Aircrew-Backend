@@ -39,10 +39,7 @@ function createAssignmentController({
 
   async function listMine(req, res, next) {
     try {
-      const assignments = await getMyAssignments(req.user, {
-        replacement: req.query.replacement,
-        acknowledged: req.query.acknowledged,
-      });
+      const assignments = await getMyAssignments(req.user, req.query);
       return res.status(200).json(assignments);
     } catch (error) {
       return next(error);

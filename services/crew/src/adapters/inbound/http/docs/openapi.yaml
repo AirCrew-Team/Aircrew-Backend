@@ -10,6 +10,7 @@ tags:
   - name: Salud
   - name: Tripulantes
   - name: Ausencias
+  - name: Turno
   - name: Interno
     description: Endpoints para otros servicios (token de servicio), no para el frontend.
 
@@ -492,6 +493,105 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /shifts/current:
+    get:
+      tags: [Turno]
+      summary: Turno actual (banner del inicio del supervisor)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Sin base, todas.
+          schema: { type: string, example: BOG }
+      responses:
+        '200':
+          description: Turno
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora de Colombia: 06–14, 14–22, 22–06' }
+                  base: { type: string, nullable: true }
+                  flights_today: { type: integer }
+                  standby_total: { type: integer, description: De guardia. }
+                  standby_ready: { type: integer, description: De guardia y sin impedimento para reemplazar. }
+                  staffing_delays: { type: integer }
+
+  /shift-crew:
+    get:
+      tags: [Turno]
+      summary: Tripulación del turno (supervisor o super_admin)
+      description: |
+        Ya ordenada: guardia (por minutos a rampa), en vuelo (por llegada), programados (por
+        presentación), descanso (por fin), ausentes y libres. La ubicación y los minutos a rampa
+        son los declarados al iniciar la guardia.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          schema: { type: string, example: BOG }
+      responses:
+        '200':
+          description: Tripulantes del turno
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base: { type: string, nullable: true }
+                  shift: { type: string }
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      description: |
+                        Campos comunes más, según status:
+                        standby (location, minutes_to_ramp, guard_until, replacement_blocker),
+                        in_flight (flight, arrival_at), scheduled (flight, report_at),
+                        rest (rest_until), absent (flight, reason), available.
+                      properties:
+                        id: { type: string, format: uuid }
+                        employee_code: { type: string }
+                        full_name: { type: string }
+                        position: { type: string }
+                        rank: { type: string }
+                        phone: { type: string, nullable: true }
+                        radio_channel: { type: string, nullable: true }
+                        status: { type: string, enum: [standby, in_flight, scheduled, rest, absent, available] }
+                        expiring_certification:
+                          type: object
+                          nullable: true
+                          properties:
+                            name: { type: string, example: Certificado médico }
+                            days_left: { type: integer }
+
+  /crew-members/me/metrics:
+    get:
+      tags: [Tripulantes]
+      summary: Métricas de Mis Vuelos (crew)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: month
+          in: query
+          description: AAAA-MM. Por defecto, el mes actual.
+          schema: { type: string, example: '2026-11' }
+      responses:
+        '200':
+          description: Horas del mes (FDP), descanso y sectores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  month: { type: string }
+                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
+                  rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
+                  sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
 
 components:
   securitySchemes:

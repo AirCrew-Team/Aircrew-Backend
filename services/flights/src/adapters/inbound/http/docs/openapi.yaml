@@ -435,6 +435,9 @@ paths:
       description: |
         Vuelos del tripulante que inició sesión, ordenados por hora de salida.
         Con `?replacement=true&acknowledged=false` devuelve los reemplazos que todavía debe confirmar.
+        Historial: `?status=completed` (ya aterrizó) o `?status=upcoming`. Por fecha: `?month=AAAA-MM`
+        o `?from=&to=`. Cada vuelo trae scope (domestic/international), block_minutes, ciudades y
+        zona horaria del origen.
       security:
         - bearerAuth: []
       responses:

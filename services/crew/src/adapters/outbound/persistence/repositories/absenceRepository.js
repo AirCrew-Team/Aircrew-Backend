@@ -232,7 +232,16 @@ async function getAbsenceStats(now) {
   return rows[0];
 }
 
+// Ausencias abiertas (por aprobar o esperando «Enterado»).
+async function findOpenAbsences() {
+  const { rows } = await pool.query(
+    `${absenceWithCrewMember} WHERE a.status IN ('reported', 'pending_ack')`
+  );
+  return rows;
+}
+
 module.exports = {
+  findOpenAbsences,
   markAbsencePendingAck,
   markAcknowledged,
   markMissed,

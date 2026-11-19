@@ -86,6 +86,6 @@ CREW_ACTIVATION_URL=http://localhost:3000/activar-cuenta
 ACTIVATION_TOKEN_EXPIRES_MINUTES=1440
 ```
 
-El remitente debe estar verificado en Resend. El enlace de activación debe llevar el token a la pantalla frontend, que envía `POST /auth/activate` con `token` y una contraseña de 12 a 72 bytes. Luego el tripulante inicia sesión en `POST /auth/login`. El token vence según la configuración y solo sirve una vez.
+El remitente debe estar verificado en Resend. El enlace de activación debe llevar el token a la pantalla frontend, que envía `POST /auth/activate` con `token` y una contraseña de mínimo 8 caracteres (máximo 72 bytes). Luego el tripulante inicia sesión en `POST /auth/login`. El token vence según la configuración y solo sirve una vez.
 
 `CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña. Si el envío del correo falla, la cuenta pendiente permanece en Admin y requerirá limpieza manual antes de reintentar con el mismo correo.

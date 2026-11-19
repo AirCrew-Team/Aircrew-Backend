@@ -58,6 +58,7 @@ function createGetCandidates({ crewClient, flightsClient, suggestionRepository }
       slot_role: absence.slot_role,
       suggestions_state: absence.suggestions_state,
       round: suggestions[0] ? suggestions[0].round : null,
+      reason: suggestions[0] ? suggestions[0].supervisor_reason || null : null,
       candidates: suggestions.map((suggestion) => {
         const member = byUser.get(suggestion.crew_user_id) || {};
         return {

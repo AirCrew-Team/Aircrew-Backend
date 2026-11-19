@@ -80,10 +80,24 @@ paths:
         (mismo formato que GET /candidates). Quien ya dejó vencer su plazo no se vuelve a proponer.
         Responde 503 con code ai_unavailable si la IA no responde.
         Con Claude Code puede tardar entre 10 y 40 segundos.
+
+        **reason** (opcional, máx. 300 caracteres): preferencia del supervisor, por ejemplo
+        «Preferir a alguien con experiencia en la ruta BOG-MIA». Se le pasa a Claude como dato,
+        solo para ordenar y explicar: las 8 reglas se aplican antes y no se las puede saltar.
+        El rationale de cada candidato dice cómo se tuvo en cuenta. Queda guardado con la ronda
+        y se devuelve en `reason`. Vacío o ausente: busca igual que siempre.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/AbsenceId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 300, example: Preferir a alguien con experiencia en la ruta BOG-MIA }
       responses:
         '200':
           description: Candidatos de la nueva ronda
@@ -495,6 +509,7 @@ components:
         slot_role: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
         suggestions_state: { type: string, enum: [searching, ready, none, error], description: 'error = la IA no respondió; pedir otra ronda.' }
         round: { type: integer, nullable: true }
+        reason: { type: string, nullable: true, description: Motivo del supervisor con el que se pidió esta ronda. }
         candidates:
           type: array
           items: { $ref: '#/components/schemas/Candidate' }

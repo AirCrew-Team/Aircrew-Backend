@@ -51,6 +51,7 @@ const flightDetail = `
          ac.family AS aircraft_family, ac.capacity AS aircraft_seats,
          ac.name AS aircraft_name, ac.registration AS aircraft_registration,
          o.city AS origin_city, d.city AS destination_city,
+         o.name AS origin_name, d.name AS destination_name,
          CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
               THEN 'international' ELSE 'domestic' END AS scope
   FROM public.flights f
@@ -58,13 +59,14 @@ const flightDetail = `
   LEFT JOIN public.airports o ON o.code = f.origin
   LEFT JOIN public.airports d ON d.code = f.destination`;
 
-async function findFlights({ from, to }) {
+async function findFlights({ from, to, ids = null }) {
   const { rows } = await pool.query(
     `${flightDetail}
      WHERE ($1::timestamptz IS NULL OR f.departure_at >= $1)
        AND ($2::timestamptz IS NULL OR f.departure_at < $2)
+       AND ($3::uuid[] IS NULL OR f.id = ANY($3::uuid[]))
      ORDER BY f.departure_at`,
-    [from, to]
+    [from, to, ids]
   );
 
   return rows;

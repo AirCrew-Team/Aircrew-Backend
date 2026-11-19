@@ -210,6 +210,8 @@ paths:
       description: |
         Las más recientes primero, con el código y cargo del tripulante.
         Con `?status=reported` se obtiene la cola de ausencias que todavía necesitan reemplazo.
+        Cada ausencia trae además gate, origin_name, destination_name y aircraft_family del vuelo
+        (en null si el servicio de vuelos no responde).
       security:
         - bearerAuth: []
       parameters:
@@ -224,7 +226,15 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/AbsenceWithCrewMember' }
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/AbsenceWithCrewMember'
+                    - type: object
+                      properties:
+                        gate: { type: string, nullable: true, example: A12 }
+                        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+                        destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
+                        aircraft_family: { type: string, nullable: true, example: A320 }
         '400':
           description: status inválido
           content:

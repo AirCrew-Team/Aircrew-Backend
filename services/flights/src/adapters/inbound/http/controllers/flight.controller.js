@@ -21,6 +21,7 @@ function createFlightController({ createFlight, getFlights, getFlightById, crewS
       const flights = await getFlights({
         from: req.query.from,
         to: req.query.to,
+        ids: req.query.ids,
       });
       return res.status(200).json(flights);
     } catch (error) {

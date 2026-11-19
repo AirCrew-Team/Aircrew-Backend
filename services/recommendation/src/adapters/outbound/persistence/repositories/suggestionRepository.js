@@ -1,11 +1,11 @@
 const pool = require('../pool');
 
 const suggestionColumns = `id, absence_id, crew_user_id, rank_position, affinity,
-       checks, rationale, source, status, round, created_at`;
+       checks, rationale, source, status, round, supervisor_reason, created_at`;
 
 // Guarda una ronda nueva de candidatos y descarta los que seguían propuestos
 // de rondas anteriores. Todo en una transacción.
-async function saveRound(absenceId, suggestions) {
+async function saveRound(absenceId, suggestions, reason = null) {
   const client = await pool.connect();
 
   try {
@@ -27,8 +27,9 @@ async function saveRound(absenceId, suggestions) {
     for (const item of suggestions) {
       const { rows } = await client.query(
         `INSERT INTO public.replacement_suggestions
-           (absence_id, crew_user_id, rank_position, affinity, checks, rationale, source, round)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           (absence_id, crew_user_id, rank_position, affinity, checks, rationale, source, round,
+            supervisor_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING ${suggestionColumns}`,
         [
           absenceId,
@@ -39,6 +40,7 @@ async function saveRound(absenceId, suggestions) {
           item.rationale,
           item.source,
           round,
+          reason,
         ]
       );
       saved.push(rows[0]);

@@ -1,3 +1,5 @@
+const { parseRegenerateReason } = require('../../../../domain/entities/replacementRequest');
+
 function createRecommendationController({
   getCandidates,
   suggestReplacements,
@@ -25,10 +27,12 @@ function createRecommendationController({
     return res.status(202).json({ absence_id: id, suggestions_state: 'searching' });
   }
 
-  // El supervisor pide otra ronda: espera el resultado y devuelve los candidatos.
+  // El supervisor pide otra ronda, opcionalmente con un motivo:
+  // espera el resultado y devuelve los candidatos.
   async function regenerate(req, res, next) {
     try {
-      await suggestReplacements(req.params.id, req.headers.authorization);
+      const reason = parseRegenerateReason(req.body);
+      await suggestReplacements(req.params.id, req.headers.authorization, { reason });
       const result = await getCandidates(req.params.id, req.headers.authorization);
       return res.status(200).json(result);
     } catch (error) {

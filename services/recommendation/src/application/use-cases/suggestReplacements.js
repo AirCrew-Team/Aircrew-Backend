@@ -46,7 +46,9 @@ function createSuggestReplacements({
     );
   }
 
-  return async function suggestReplacements(absenceId, authorization) {
+  // reason: motivo opcional del supervisor. Solo influye en el orden y la
+  // explicación de Claude; las reglas ya se aplicaron antes.
+  return async function suggestReplacements(absenceId, authorization, { reason = null } = {}) {
     const context = await loadReplacementContext(absenceId, authorization);
     const { absence, flight, members, assignments, role } = context;
 
@@ -70,11 +72,16 @@ function createSuggestReplacements({
     });
 
     const shortlist = eligible.slice(0, MAX_FOR_AI);
-    const request = buildReplacementRequest({ absence, flight, candidates: shortlist });
+    const request = buildReplacementRequest({
+      absence,
+      flight,
+      candidates: shortlist,
+      supervisorNote: reason,
+    });
 
     // Nadie cumple las reglas: no hay nada que preguntarle a la IA.
     if (shortlist.length === 0) {
-      await suggestionRepository.saveRound(absence.id, []);
+      await suggestionRepository.saveRound(absence.id, [], reason);
       await report(absence, 'none', 0);
       return { state: 'none', round: null, candidateCount: 0 };
     }
@@ -125,7 +132,7 @@ function createSuggestReplacements({
       source: 'ai',
     }));
 
-    const saved = await suggestionRepository.saveRound(absence.id, suggestions);
+    const saved = await suggestionRepository.saveRound(absence.id, suggestions, reason);
     await report(absence, 'ready', suggestions.length);
 
     const state = 'ready';

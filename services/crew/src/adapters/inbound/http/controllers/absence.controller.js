@@ -31,7 +31,7 @@ function createAbsenceController({
 
   async function list(req, res, next) {
     try {
-      const absences = await getAbsences({ status: req.query.status });
+      const absences = await getAbsences({ status: req.query.status }, req.headers.authorization);
       return res.status(200).json(absences);
     } catch (error) {
       return next(error);

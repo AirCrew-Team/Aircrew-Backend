@@ -185,6 +185,10 @@ paths:
           in: query
           description: Solo vuelos que salen antes de esta fecha.
           schema: { type: string, format: date-time, example: '2026-11-21T00:00:00Z' }
+        - name: ids
+          in: query
+          description: Solo estos vuelos (hasta 200 UUID separados por comas).
+          schema: { type: string }
       responses:
         '200':
           description: Vuelos
@@ -566,6 +570,13 @@ components:
         departure_at: { type: string, format: date-time }
         arrival_at: { type: string, format: date-time }
         status: { $ref: '#/components/schemas/FlightStatus' }
+        gate: { type: string, nullable: true, example: A12 }
+        aircraft_family: { type: string, nullable: true, example: A320 }
+        scope: { type: string, enum: [domestic, international] }
+        origin_city: { type: string, nullable: true, example: Bogotá }
+        destination_city: { type: string, nullable: true, example: Miami }
+        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+        destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Error:

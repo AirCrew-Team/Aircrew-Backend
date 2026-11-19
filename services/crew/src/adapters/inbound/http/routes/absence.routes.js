@@ -24,7 +24,7 @@ const controller = createAbsenceController({
     notificationClient,
     recommendationClient,
   }),
-  getAbsences: createGetAbsences(absenceRepository, attachUserNames),
+  getAbsences: createGetAbsences(absenceRepository, attachUserNames, flightsClient),
   getAbsenceById: createGetAbsenceById(absenceRepository, attachUserNames),
   coverAbsence: createCoverAbsence(absenceRepository),
   updateSuggestionsState: createUpdateSuggestionsState(absenceRepository),

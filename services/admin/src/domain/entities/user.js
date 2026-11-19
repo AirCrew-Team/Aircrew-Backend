@@ -35,7 +35,7 @@ function createUser({ name, email, password, role }) {
   }
 
   if (!isValidPassword(password)) {
-    throw new DomainError('La contraseña debe tener entre 12 y 72 bytes.');
+    throw new DomainError('La contraseña debe tener mínimo 8 caracteres (máximo 72 bytes).');
   }
 
   return {
@@ -54,7 +54,7 @@ function createSuperAdmin({ name, email, password }) {
     !isValidPassword(password)
   ) {
     throw new DomainError(
-      'Se requieren name, email y una contraseña de 12 a 72 bytes.'
+      'Se requieren name, email y una contraseña de mínimo 8 caracteres (máximo 72 bytes).'
     );
   }
 
@@ -83,7 +83,7 @@ function createCrewInvitation({ name, email }) {
 function validateActivation({ token, password }) {
   if (!isNonEmptyString(token) || !isValidPassword(password)) {
     throw new DomainError(
-      'Se requieren el token de activación y una contraseña de 12 a 72 bytes.'
+      'Se requieren el token de activación y una contraseña de mínimo 8 caracteres (máximo 72 bytes).'
     );
   }
 }

@@ -34,4 +34,23 @@ function assertCanBeReplaced(absence, flight, now = new Date()) {
   }
 }
 
-module.exports = { isValidAbsenceId, isValidUserId, assertCanBeReplaced };
+const MAX_REASON_LENGTH = 300;
+
+// Motivo opcional del supervisor al pedir otra ronda. Vacío o ausente = null.
+function parseRegenerateReason(body) {
+  const reason = body && body.reason;
+  if (reason === undefined || reason === null) return null;
+  if (typeof reason !== 'string') {
+    throw new DomainError('reason debe ser texto.', 400, { code: 'invalid_reason', field: 'reason' });
+  }
+  const trimmed = reason.trim();
+  if (trimmed.length > MAX_REASON_LENGTH) {
+    throw new DomainError(`El motivo admite máximo ${MAX_REASON_LENGTH} caracteres.`, 400, {
+      code: 'invalid_reason',
+      field: 'reason',
+    });
+  }
+  return trimmed || null;
+}
+
+module.exports = { isValidAbsenceId, isValidUserId, assertCanBeReplaced, parseRegenerateReason };

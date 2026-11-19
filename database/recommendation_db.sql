@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS public.replacement_suggestions (
 CREATE INDEX IF NOT EXISTS replacement_suggestions_absence_idx
   ON public.replacement_suggestions (absence_id, round, rank_position);
 
+-- supervisor_reason: motivo con el que el supervisor pidió esta ronda (opcional).
+ALTER TABLE public.replacement_suggestions ADD COLUMN IF NOT EXISTS supervisor_reason TEXT;
+
 -- Auditoría de cada decisión de la IA: qué se envió, qué respondió y si se usó
 -- el plan B (orden por reglas). Sirve para explicar después una elección.
 CREATE TABLE IF NOT EXISTS public.ai_calls (

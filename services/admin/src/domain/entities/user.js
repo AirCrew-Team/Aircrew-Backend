@@ -88,9 +88,32 @@ function validateActivation({ token, password }) {
   }
 }
 
+// Correo para pedir el enlace de recuperación. Devuelve el correo normalizado.
+function validatePasswordResetRequest({ email }) {
+  if (!isNonEmptyString(email)) {
+    throw new DomainError('Se requiere email.');
+  }
+
+  return normalizeEmail(email);
+}
+
+// Datos para restablecer la contraseña con el enlace del correo.
+function validatePasswordReset({ token, password }) {
+  if (!isNonEmptyString(token) || !isValidPassword(password)) {
+    throw new DomainError(
+      'Se requieren el token y una contraseña de 12 a 72 bytes.'
+    );
+  }
+}
+
 // Solo una cuenta activa con un rol conocido puede iniciar sesión.
 function canLogIn(user) {
   return Boolean(user) && user.is_active === true && ROLES.includes(user.role);
+}
+
+// Una cuenta pendiente de activación usa su invitación, no la recuperación.
+function canResetPassword(user) {
+  return canLogIn(user) && !user.pending_activation;
 }
 
 // super_admin ve cualquier usuario; los demás solo su propia cuenta.
@@ -209,6 +232,9 @@ module.exports = {
   createSuperAdmin,
   createCrewInvitation,
   validateActivation,
+  validatePasswordResetRequest,
+  validatePasswordReset,
   canLogIn,
+  canResetPassword,
   canViewUser,
 };

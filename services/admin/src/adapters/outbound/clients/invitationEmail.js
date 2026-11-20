@@ -1,4 +1,4 @@
-// Contenido del correo de invitación, común a Resend y a SMTP.
+// Contenido de los correos de invitación y de recuperación, común a Resend y a SMTP.
 
 // Mensaje que ve quien invita cuando el envío falla. El detalle del proveedor va al log:
 // puede incluir datos de la cuenta del proveedor (por ejemplo, el correo de su dueño).
@@ -25,28 +25,38 @@ function configError(message) {
   return error;
 }
 
-function getActivationUrl(token, crewActivationUrl) {
-  if (!crewActivationUrl) {
-    throw configError('Debe configurarse CREW_ACTIVATION_URL.');
+// Enlace a una pantalla del frontend con ?token=. Sin token solo valida la URL base.
+// variableName es la variable de entorno que se nombra en el 503.
+function getLinkUrl(token, baseUrl, variableName) {
+  if (!baseUrl) {
+    throw configError(`Debe configurarse ${variableName}.`);
   }
 
-  let activationUrl;
+  let linkUrl;
 
   try {
-    activationUrl = new URL(crewActivationUrl);
+    linkUrl = new URL(baseUrl);
   } catch {
-    throw configError('CREW_ACTIVATION_URL debe ser una URL válida.');
+    throw configError(`${variableName} debe ser una URL válida.`);
   }
 
-  if (!['http:', 'https:'].includes(activationUrl.protocol)) {
-    throw configError('CREW_ACTIVATION_URL debe usar HTTP o HTTPS.');
+  if (!['http:', 'https:'].includes(linkUrl.protocol)) {
+    throw configError(`${variableName} debe usar HTTP o HTTPS.`);
   }
 
   if (token) {
-    activationUrl.searchParams.set('token', token);
+    linkUrl.searchParams.set('token', token);
   }
 
-  return activationUrl;
+  return linkUrl;
+}
+
+function getActivationUrl(token, crewActivationUrl) {
+  return getLinkUrl(token, crewActivationUrl, 'CREW_ACTIVATION_URL');
+}
+
+function getPasswordResetUrl(token, passwordResetUrl) {
+  return getLinkUrl(token, passwordResetUrl, 'PASSWORD_RESET_URL');
 }
 
 function buildCrewInvitation({ name, token, crewActivationUrl }) {
@@ -61,6 +71,21 @@ function buildCrewInvitation({ name, token, crewActivationUrl }) {
   };
 }
 
+function buildPasswordReset({ name, token, passwordResetUrl }) {
+  const resetUrl = getPasswordResetUrl(token, passwordResetUrl).toString();
+  const safeName = escapeHtml(name);
+  const safeUrl = escapeHtml(resetUrl);
+  const intro =
+    'recibimos una solicitud para restablecer tu contraseña. Abre este enlace para crear una nueva (vence en 10 minutos):';
+  const closing = 'Si no la solicitaste, ignora este correo: tu contraseña no cambia.';
+
+  return {
+    subject: 'Restablece tu contraseña de AirCrew',
+    html: `<p>Hola ${safeName}, ${intro}</p><p><a href="${safeUrl}">Restablecer contraseña</a></p><p>${closing}</p>`,
+    text: `Hola ${name}, ${intro}\n${resetUrl}\n\n${closing}`,
+  };
+}
+
 // Registra el detalle y devuelve el 502 genérico.
 function sendFailedError(provider, cause) {
   console.error(`Fallo al enviar la invitación con ${provider}:`, cause);
@@ -72,7 +97,9 @@ function sendFailedError(provider, cause) {
 module.exports = {
   SEND_FAILED_MESSAGE,
   buildCrewInvitation,
+  buildPasswordReset,
   configError,
   getActivationUrl,
+  getPasswordResetUrl,
   sendFailedError,
 };

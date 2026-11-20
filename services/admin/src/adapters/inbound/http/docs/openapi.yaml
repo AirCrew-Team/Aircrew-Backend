@@ -3,7 +3,7 @@ info:
   title: AirCrew - Admin
   version: 1.0.0
   description: |
-    Autenticación, usuarios, roles e invitación de tripulantes.
+    Autenticación, usuarios, roles, invitación de tripulantes y recuperación de contraseña.
     Los JWT se firman con HS256 y el issuer `aircrew-admin`. Crew y Flights validan esos mismos tokens.
 servers:
   - url: http://localhost:3005
@@ -125,6 +125,191 @@ paths:
                   user: { $ref: '#/components/schemas/UserSummary' }
         '400':
           description: Datos inválidos o token inválido/vencido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/activate/check:
+    post:
+      tags: [Autenticación]
+      summary: Comprobar el enlace de activación
+      description: |
+        Público. Dice si el token de la invitación serviría ahora, con las mismas condiciones que
+        `POST /auth/activate`: existe, no venció y la cuenta sigue pendiente de activación.
+        No modifica nada: no gasta el token. `activate` vuelve a comprobarlo todo al enviar.
+        Va por POST para que el token no quede en la URL de los logs.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: El enlace sirve
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean, example: true }
+        '400':
+          description: |
+            Falta el token, o no existe, venció o ya se usó (la cuenta ya está activa).
+            `error`: «El token de activación no es válido o ya venció.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/forgot-password:
+    post:
+      tags: [Autenticación]
+      summary: Pedir el enlace para restablecer la contraseña
+      description: |
+        Público. Si el correo es de una cuenta activa (no pendiente de activación ni desactivada),
+        guarda el hash de un token que vence a los 10 minutos (reemplaza el anterior) y envía el
+        enlace `PASSWORD_RESET_URL?token=…` en segundo plano, después de responder. Si el envío
+        falla, queda en el log y la respuesta no cambia.
+        La respuesta es la misma exista o no la cuenta. Solo los límites por cuenta (últimas 24 h)
+        responden distinto, en este orden: 3 cambios de contraseña, una solicitud hace menos de
+        2 minutos y 5 solicitudes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Respuesta genérica, exista o no la cuenta
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Si el correo corresponde a una cuenta activa, te enviamos un enlace para restablecer la contraseña.
+        '400':
+          description: Falta `email` o no es un texto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            Límite de la cuenta. No se genera token ni se envía correo. `error` es uno de:
+            - «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
+            - «Ya te enviamos un enlace hace poco. Revisa tu correo (también la carpeta de spam) o espera 2 minutos para pedir otro.»
+            - «Alcanzaste el límite de 5 solicitudes en 24 horas. Intenta de nuevo más tarde.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: |
+            Falta `PASSWORD_RESET_URL` o no es una URL http/https, falta la configuración del
+            proveedor de correo o `EMAIL_PROVIDER` no es válido. Se comprueba antes de buscar la cuenta.
+            El detalle queda en el log; `error` es siempre «El servicio de correo no está disponible.
+            Intenta más tarde.».
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/reset-password:
+    post:
+      tags: [Autenticación]
+      summary: Restablecer la contraseña con el token del correo
+      description: |
+        Público. El token es de un solo uso y vence a los 10 minutos. Guarda la contraseña nueva,
+        borra el token y registra el cambio. No crea la cookie de sesión: el frontend inicia
+        sesión después con `POST /auth/login`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Entre 12 y 72 bytes UTF-8.
+      responses:
+        '200':
+          description: Contraseña actualizada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: Contraseña actualizada. Ya puedes iniciar sesión. }
+                  user: { $ref: '#/components/schemas/UserSummary' }
+        '400':
+          description: |
+            «Se requieren el token y una contraseña de 12 a 72 bytes.» si falta el token o la
+            contraseña no es válida; «El enlace para restablecer la contraseña no es válido o ya venció.»
+            si el token no existe, venció, ya se usó o la cuenta está desactivada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas. La contraseña no cambia.
+            `error`: «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/reset-password/check:
+    post:
+      tags: [Autenticación]
+      summary: Comprobar el enlace para restablecer la contraseña
+      description: |
+        Público. Dice si el token del enlace serviría ahora, con las mismas comprobaciones que
+        `POST /auth/reset-password`. No modifica nada: no gasta el token ni registra eventos.
+        `reset-password` vuelve a comprobarlo todo al enviar, porque el enlace puede vencer entre medias.
+        Va por POST para que el token no quede en la URL de los logs.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        '200':
+          description: El enlace sirve
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean, example: true }
+        '400':
+          description: |
+            Falta el token, o no existe, venció, ya se usó o la cuenta está desactivada.
+            `error`: «El enlace para restablecer la contraseña no es válido o ya venció.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas.
+            `error`: «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

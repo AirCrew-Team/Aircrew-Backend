@@ -50,9 +50,64 @@ function createActivateUserController(activateUser) {
   };
 }
 
+// Responde el mensaje genérico; el correo sale después, en segundo plano.
+function createForgotPasswordController(requestPasswordReset) {
+  return async function handleForgotPassword(req, res, next) {
+    try {
+      const result = await requestPasswordReset(req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
+// No crea la cookie de sesión: el frontend inicia sesión después.
+function createResetPasswordController(resetPassword) {
+  return async function handleResetPassword(req, res, next) {
+    try {
+      const user = await resetPassword(req.body);
+      return res.status(200).json({
+        message: 'Contraseña actualizada. Ya puedes iniciar sesión.',
+        user,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
+// Solo dice si el enlace sirve; los fallos llegan al errorHandler con su estado.
+function createCheckResetTokenController(checkResetToken) {
+  return async function handleCheckResetToken(req, res, next) {
+    try {
+      const result = await checkResetToken(req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
+// Solo dice si el enlace de invitación sirve; no activa la cuenta.
+function createCheckActivationTokenController(checkActivationToken) {
+  return async function handleCheckActivationToken(req, res, next) {
+    try {
+      const result = await checkActivationToken(req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 module.exports = {
   createLoginController,
   createLogoutController,
   createBootstrapSuperAdminController,
   createActivateUserController,
+  createForgotPasswordController,
+  createResetPasswordController,
+  createCheckResetTokenController,
+  createCheckActivationTokenController,
 };

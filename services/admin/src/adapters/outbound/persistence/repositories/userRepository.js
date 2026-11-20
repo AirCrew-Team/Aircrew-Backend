@@ -16,9 +16,19 @@ async function findById(id) {
   return rows[0] || null;
 }
 
-function toDuplicateEmailError(cause) {
+// Índice único parcial de database/admin_db.sql.
+const EMPLOYEE_CODE_INDEX = 'users_employee_code_unique';
+// CHECK de database/admin_db.sql: solo los supervisores tienen datos laborales.
+const EMPLOYMENT_CHECK = 'users_employment_supervisor_check';
+
+// 23505: el código de empleado repetido tiene su mensaje; cualquier otro es el email.
+function toDuplicateError(cause) {
   if (cause.code === '23505') {
-    const error = new Error('Ya existe un usuario con ese email.');
+    const error = new Error(
+      cause.constraint === EMPLOYEE_CODE_INDEX
+        ? 'Ya existe un supervisor con ese código de empleado.'
+        : 'Ya existe un usuario con ese email.'
+    );
     error.status = 409;
     return error;
   }
@@ -26,18 +36,31 @@ function toDuplicateEmailError(cause) {
   return cause;
 }
 
-async function create({ name, email, passwordHash, role }) {
+// employment: datos laborales de un supervisor; null para los demás roles.
+async function create({ name, email, passwordHash, role, employment }) {
+  const job = employment || {};
+
   try {
     const { rows } = await pool.query(
-      `INSERT INTO public.users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO public.users (name, email, password_hash, role, password_changed_at,
+                                 employee_code, base, shift, operational_status)
+       VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8)
        RETURNING id, name, email, role, is_active, created_at`,
-      [name, email, passwordHash, role]
+      [
+        name,
+        email,
+        passwordHash,
+        role,
+        job.employeeCode ?? null,
+        job.base ?? null,
+        job.shift ?? null,
+        job.operationalStatus ?? null,
+      ]
     );
 
     return rows[0];
   } catch (cause) {
-    throw toDuplicateEmailError(cause);
+    throw toDuplicateError(cause);
   }
 }
 
@@ -59,7 +82,7 @@ async function createPendingCrewUser({
 
     return rows[0];
   } catch (cause) {
-    throw toDuplicateEmailError(cause);
+    throw toDuplicateError(cause);
   }
 }
 
@@ -82,6 +105,7 @@ async function activateUser({ activationTokenHash, passwordHash }) {
   const { rows } = await pool.query(
     `UPDATE public.users
      SET password_hash = $2,
+         password_changed_at = NOW(),
          is_active = true,
          activation_token_hash = NULL,
          activation_expires_at = NULL
@@ -188,8 +212,45 @@ async function withPasswordResetLock(userId, fn) {
     return fn({
       countPasswordResetEvents: (args) => countPasswordResetEvents(args, client),
       savePasswordResetToken: (args) => savePasswordResetToken(client, args),
+      findPasswordHash: (id) => findPasswordHash(id, client),
+      savePasswordChange: (args) => savePasswordChange(client, args),
     });
   });
+}
+
+// Hash y estado de la cuenta. `db` es el pool o el cliente de una transacción.
+async function findPasswordHash(userId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT password_hash, is_active
+     FROM public.users
+     WHERE id = $1`,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
+// Cambio de contraseña con sesión: guarda el hash, la fecha y el evento 'changed'.
+// Anula el enlace de recuperación pendiente: un reset que ya pasó la comprobación
+// no puede sumar otro cambio después de este.
+async function savePasswordChange(client, { userId, passwordHash }) {
+  const { rows } = await client.query(
+    `UPDATE public.users
+     SET password_hash = $2,
+         password_changed_at = NOW(),
+         password_reset_token_hash = NULL,
+         password_reset_expires_at = NULL
+     WHERE id = $1
+     RETURNING password_changed_at`,
+    [userId, passwordHash]
+  );
+  await client.query(
+    `INSERT INTO public.password_reset_events (user_id, event)
+     VALUES ($1, 'changed')`,
+    [userId]
+  );
+
+  return rows[0].password_changed_at;
 }
 
 // Cuenta dueña del token. El caso de uso revisa el vencimiento y el estado.
@@ -213,6 +274,7 @@ async function resetPasswordByToken({ tokenHash, passwordHash }) {
     const { rows } = await client.query(
       `UPDATE public.users
        SET password_hash = $2,
+           password_changed_at = NOW(),
            password_reset_token_hash = NULL,
            password_reset_expires_at = NULL
        WHERE password_reset_token_hash = $1
@@ -256,8 +318,8 @@ async function createFirstSuperAdmin({ name, email, passwordHash }) {
     }
 
     const { rows } = await client.query(
-      `INSERT INTO public.users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO public.users (name, email, password_hash, role, password_changed_at)
+       VALUES ($1, $2, $3, $4, NOW())
        RETURNING id, name, email, role, is_active, created_at`,
       [name, email, passwordHash, 'super_admin']
     );
@@ -297,27 +359,152 @@ async function findUsersByIds(ids) {
   return rows;
 }
 
-// Actualiza solo los campos recibidos.
-async function updateUser(id, { name, email, role, isActive }) {
+// Actualiza solo los campos recibidos. Los datos laborales enviados pueden pasar a null.
+async function updateUser(id, { name, email, role, isActive, employment = {} }) {
+  const sent = (key) => employment[key] !== undefined;
+
   try {
     const { rows } = await pool.query(
       `UPDATE public.users
        SET name = COALESCE($2, name),
            email = COALESCE($3, email),
            role = COALESCE($4, role),
-           is_active = COALESCE($5, is_active)
+           is_active = COALESCE($5, is_active),
+           employee_code = CASE WHEN $6::boolean THEN $7 ELSE employee_code END,
+           base = CASE WHEN $8::boolean THEN $9 ELSE base END,
+           shift = CASE WHEN $10::boolean THEN $11 ELSE shift END,
+           operational_status = CASE WHEN $12::boolean THEN $13 ELSE operational_status END
        WHERE id = $1
        RETURNING ${userColumns}`,
-      [id, name ?? null, email ?? null, role ?? null, isActive ?? null]
+      [
+        id,
+        name ?? null,
+        email ?? null,
+        role ?? null,
+        isActive ?? null,
+        sent('employeeCode'),
+        employment.employeeCode ?? null,
+        sent('base'),
+        employment.base ?? null,
+        sent('shift'),
+        employment.shift ?? null,
+        sent('operationalStatus'),
+        employment.operationalStatus ?? null,
+      ]
     );
 
     return rows[0] || null;
   } catch (cause) {
-    throw toDuplicateEmailError(cause);
+    // 23514 del CHECK: otra petición cambió el rol después de validar los datos laborales.
+    if (cause.code === '23514' && cause.constraint === EMPLOYMENT_CHECK) {
+      const error = new Error('El usuario cambió de rol; vuelve a intentarlo.');
+      error.status = 409;
+      throw error;
+    }
+    throw toDuplicateError(cause);
   }
 }
 
+// Perfil de Configuración: la fecha de la foto, nunca sus bytes.
+const profileColumns = `u.id, u.name, u.email, u.role, u.is_active, u.created_at,
+       u.phone, u.residence, u.password_changed_at,
+       u.notify_absence_reported, u.notify_absence_covered, u.notify_replacement_assigned,
+       u.employee_code, u.base, u.shift, u.operational_status,
+       p.updated_at AS photo_updated_at`;
+
+async function findProfileById(id) {
+  const { rows } = await pool.query(
+    `SELECT ${profileColumns}
+     FROM public.users u
+     LEFT JOIN public.user_photos p ON p.user_id = u.id
+     WHERE u.id = $1
+     LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+// Solo cambia los campos enviados; phone y residence pueden pasar a null.
+// Devuelve null si la cuenta no existe o está desactivada.
+async function updateProfile(id, { phone, residence, notifications = {} }) {
+  const { rows } = await pool.query(
+    `WITH u AS (
+       UPDATE public.users
+       SET phone = CASE WHEN $2::boolean THEN $3 ELSE phone END,
+           residence = CASE WHEN $4::boolean THEN $5 ELSE residence END,
+           notify_absence_reported = COALESCE($6, notify_absence_reported),
+           notify_absence_covered = COALESCE($7, notify_absence_covered),
+           notify_replacement_assigned = COALESCE($8, notify_replacement_assigned)
+       WHERE id = $1
+         AND is_active = true
+       RETURNING *
+     )
+     SELECT ${profileColumns}
+     FROM u
+     LEFT JOIN public.user_photos p ON p.user_id = u.id`,
+    [
+      id,
+      phone !== undefined,
+      phone ?? null,
+      residence !== undefined,
+      residence ?? null,
+      notifications.absence_reported ?? null,
+      notifications.absence_covered ?? null,
+      notifications.replacement_assigned ?? null,
+    ]
+  );
+
+  return rows[0] || null;
+}
+
+// Guarda o reemplaza la foto. Devuelve su fecha, o null si la cuenta no está activa.
+async function savePhoto(userId, { mimeType, sizeBytes, data }) {
+  const { rows } = await pool.query(
+    `INSERT INTO public.user_photos (user_id, mime_type, size_bytes, data, updated_at)
+     SELECT id, $2::text, $3::integer, $4::bytea, NOW()
+     FROM public.users
+     WHERE id = $1
+       AND is_active = true
+     ON CONFLICT (user_id) DO UPDATE
+     SET mime_type = EXCLUDED.mime_type,
+         size_bytes = EXCLUDED.size_bytes,
+         data = EXCLUDED.data,
+         updated_at = EXCLUDED.updated_at
+     RETURNING updated_at`,
+    [userId, mimeType, sizeBytes, data]
+  );
+
+  return rows[0] ? rows[0].updated_at : null;
+}
+
+async function findPhoto(userId) {
+  const { rows } = await pool.query(
+    `SELECT mime_type, data
+     FROM public.user_photos
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  return rows[0] || null;
+}
+
+async function deletePhoto(userId) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM public.user_photos
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  return rowCount > 0;
+}
+
 module.exports = {
+  findProfileById,
+  updateProfile,
+  savePhoto,
+  findPhoto,
+  deletePhoto,
   findUsers,
   findUsersByIds,
   updateUser,
@@ -329,6 +516,7 @@ module.exports = {
   findPendingActivationByToken,
   findByEmail,
   withPasswordResetLock,
+  findPasswordHash,
   countPasswordResetEvents,
   findByPasswordResetToken,
   resetPasswordByToken,

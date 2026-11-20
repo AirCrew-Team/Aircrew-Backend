@@ -3,7 +3,8 @@ info:
   title: AirCrew - Admin
   version: 1.0.0
   description: |
-    Autenticación, usuarios, roles, invitación de tripulantes y recuperación de contraseña.
+    Autenticación, usuarios, roles, invitación de tripulantes, recuperación de contraseña, perfil de la propia
+    cuenta, datos laborales de los supervisores y catálogos.
     Los JWT se firman con HS256 y el issuer `aircrew-admin`. Crew y Flights validan esos mismos tokens.
 servers:
   - url: http://localhost:3005
@@ -11,6 +12,7 @@ tags:
   - name: Salud
   - name: Autenticación
   - name: Usuarios
+  - name: Catálogos
   - name: Interno
     description: Endpoints para otros servicios, no para el frontend.
 
@@ -314,6 +316,58 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /auth/change-password:
+    post:
+      tags: [Autenticación]
+      summary: Cambiar la contraseña de la propia cuenta
+      description: |
+        Con sesión y para cualquier rol, solo sobre la propia cuenta. Comprueba la contraseña actual,
+        guarda la nueva, actualiza `password_changed_at` y registra el cambio. No toca la cookie: la
+        sesión sigue abierta. Comparte con la recuperación el límite de 3 cambios en 24 horas, así que
+        tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día.
+        La contraseña actual se comprueba antes que el límite: con las dos condiciones responde 400.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  description: Entre 12 y 72 bytes UTF-8, distinta de la actual.
+      responses:
+        '200':
+          description: Contraseña actualizada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  password_changed_at: { type: string, format: date-time }
+        '400':
+          description: |
+            «Se requieren la contraseña actual y una nueva de 12 a 72 bytes.»,
+            «La nueva contraseña debe ser distinta de la actual.» o
+            «La contraseña actual no es correcta.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: |
+            La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas. La contraseña no cambia.
+            `error`: «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /auth/bootstrap/super-admin:
     post:
       tags: [Autenticación]
@@ -382,7 +436,80 @@ paths:
     post:
       tags: [Usuarios]
       summary: Crear un supervisor o super_admin (solo super_admin)
-      description: Los tripulantes no se crean aquí; se registran con POST /crew/crew-members, que crea la cuenta y el perfil juntos.
+      description: |
+        Los tripulantes no se crean aquí; se registran con POST /crew/crew-members, que crea la cuenta y el perfil juntos.
+        Un supervisor puede traer sus datos laborales (`employee_code`, `base`, `shift`, `operational_status`);
+        `operational_status` vale `available` si no se envía. Para un super_admin, cualquiera de esos campos
+        responde 400 («Los datos laborales solo aplican a supervisores.»).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [name, email, password, role]
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    password:
+                      type: string
+                      format: password
+                      minLength: 12
+                      description: Entre 12 y 72 bytes UTF-8.
+                    role: { type: string, enum: [supervisor, super_admin] }
+                - $ref: '#/components/schemas/EmploymentInput'
+      responses:
+        '201':
+          description: Usuario creado. No incluye token; el usuario obtiene el suyo con POST /auth/login.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400':
+          description: |
+            Datos inválidos: faltan campos, rol o contraseña no válidos, datos laborales con otro formato,
+            o datos laborales para un super_admin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/DuplicateUser' }
+
+  /users/me:
+    get:
+      tags: [Usuarios]
+      summary: Consultar el perfil de la propia cuenta (Configuración)
+      description: |
+        Con sesión y para cualquier rol. `notifications` depende del rol: `{ replacement_assigned }`
+        para crew, `{ absence_reported, absence_covered }` para supervisor y `null` para super_admin,
+        que no tiene preferencias. `employment` trae los datos laborales del supervisor (los asigna un super_admin); es `null`
+        para crew y super_admin. Nunca incluye los bytes de la foto: solo `photo_updated_at`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        '401':
+          description: Sin sesión, o la cuenta ya no existe o está desactivada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [Usuarios]
+      summary: Editar el contacto y las preferencias de la propia cuenta
+      description: |
+        Con sesión y para cualquier rol. Solo se aplican los campos enviados; hay que enviar al menos uno.
+        `phone` se guarda sin espacios y debe cumplir `^\+?\d{7,15}$`. `residence` debe ser una ciudad de
+        `GET /catalogs/us-cities`: se compara sin distinguir mayúsculas y se guarda con la forma del catálogo.
+        `phone` y `residence` vacíos se guardan como `null`. `notifications` solo admite las claves del rol;
+        un super_admin no puede enviarlas (ni vacías ni `null`) y recibe `400`. Las preferencias se guardan, pero notification todavía no las aplica. Los datos laborales no se
+        cambian aquí. Responde lo mismo que `GET /users/me`.
       security:
         - bearerAuth: []
       requestBody:
@@ -391,26 +518,106 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, email, password, role]
+              minProperties: 1
               properties:
-                name: { type: string }
-                email: { type: string, format: email }
-                password:
-                  type: string
-                  format: password
-                  minLength: 12
-                  description: Entre 12 y 72 bytes UTF-8.
-                role: { type: string, enum: [supervisor, super_admin] }
+                phone: { type: string, nullable: true, example: '+57 300 123 4567' }
+                residence: { type: string, nullable: true, example: 'Atlanta, GA' }
+                notifications: { $ref: '#/components/schemas/Notifications' }
       responses:
-        '201':
-          description: Usuario creado. No incluye token; el usuario obtiene el suyo con POST /auth/login.
+        '200':
+          description: Perfil actualizado
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+              schema: { $ref: '#/components/schemas/Profile' }
+        '400':
+          description: |
+            Celular con otro formato, una residencia que no está en el catálogo («Elige una ciudad de
+            Estados Unidos de la lista.»), una preferencia que no corresponde al rol o que no es
+            booleana, o un body sin campos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Sin sesión, o la cuenta ya no existe o está desactivada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users/me/photo:
+    get:
+      tags: [Usuarios]
+      summary: Descargar la foto de la propia cuenta
+      description: |
+        Con sesión y para cualquier rol. Devuelve el binario con su `Content-Type`,
+        `X-Content-Type-Options: nosniff` y `Cache-Control: private, no-cache`.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Foto
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/DuplicateEmail' }
+        '404':
+          description: |
+            Sin foto. `error`: «No tienes foto de perfil.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [Usuarios]
+      summary: Subir o reemplazar la foto de la propia cuenta
+      description: |
+        PNG, JPEG o WEBP de hasta 2 MB ya decodificada, en base64 sin el prefijo `data:`.
+        Los primeros bytes deben coincidir con el tipo. Esta ruta acepta un body JSON de hasta
+        3 MB y lo lee después de comprobar la sesión; las demás rutas siguen con 100 kB.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mime_type, data_base64]
+              properties:
+                mime_type: { type: string, enum: [image/png, image/jpeg, image/webp] }
+                data_base64: { type: string, format: byte }
+      responses:
+        '200':
+          description: Foto guardada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photo_updated_at: { type: string, format: date-time }
+        '400':
+          description: Otro tipo, más de 2 MB, contenido que no está en base64 o firma que no coincide con el tipo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: El body supera 3 MB
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Usuarios]
+      summary: Quitar la foto de la propia cuenta
+      description: Responde 204 aunque no hubiera foto.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Foto eliminada
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /users/{id}:
     get:
@@ -445,6 +652,12 @@ paths:
         Solo se aplican los campos enviados. El rol solo cambia entre supervisor y super_admin
         (un tripulante sigue siendo crew). Un super_admin no puede quitarse su rol ni desactivarse.
         Una cuenta pendiente de activación no se puede activar aquí.
+
+        Los datos laborales (`employee_code`, `base`, `shift`, `operational_status`) solo se aceptan si la
+        cuenta es supervisor después del cambio; si no, responde 400 («Los datos laborales solo aplican a
+        supervisores.»). `null` o vacío quita el código, la base o el turno; el estado no se puede quitar.
+        Al pasar de supervisor a super_admin se borran sus datos laborales (su código queda libre), y al
+        pasar de super_admin a supervisor empieza `available`, salvo que se envíe otro estado.
       security:
         - bearerAuth: []
       parameters:
@@ -457,20 +670,28 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              minProperties: 1
-              properties:
-                name: { type: string }
-                email: { type: string, format: email }
-                role: { type: string, enum: [supervisor, super_admin] }
-                is_active: { type: boolean }
+              allOf:
+                - type: object
+                  minProperties: 1
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    role: { type: string, enum: [supervisor, super_admin] }
+                    is_active: { type: boolean }
+                - $ref: '#/components/schemas/EmploymentInput'
       responses:
         '200':
           description: Usuario actualizado
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Datos inválidos, body sin campos, datos laborales con otro formato o datos laborales para una
+            cuenta que no es supervisor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
@@ -479,7 +700,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Email duplicado, intento de quitarse el rol o desactivarse, o cuenta pendiente de activación
+          description: |
+            Email duplicado, código de empleado repetido («Ya existe un supervisor con ese código de
+            empleado.»), intento de quitarse el rol o desactivarse, o cuenta pendiente de activación.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -595,6 +818,27 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /catalogs/us-cities:
+    get:
+      tags: [Catálogos]
+      summary: Ciudades de EE. UU. para la residencia
+      description: |
+        Con sesión y para cualquier rol. Lista ordenada de unas 150 ciudades con el formato «Ciudad, ST»,
+        incluidas las de los hubs de Delta. Es la única fuente: `PATCH /users/me` solo acepta
+        una `residence` de esta lista.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ciudades
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+                example: ['Albany, NY', 'Albuquerque, NM', 'Atlanta, GA']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -631,6 +875,13 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    DuplicateUser:
+      description: |
+        Ya existe un usuario con ese email, o un supervisor con ese código de empleado
+        («Ya existe un supervisor con ese código de empleado.»).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
     Role:
@@ -660,6 +911,86 @@ components:
             is_active: { type: boolean }
             created_at: { type: string, format: date-time }
             pending_activation: { type: boolean, description: Tripulante invitado que todavía no activa su cuenta. }
+    Notifications:
+      type: object
+      description: Claves de crew `replacement_assigned`; de supervisor, `absence_reported` y `absence_covered`. El super_admin no tiene.
+      properties:
+        replacement_assigned: { type: boolean }
+        absence_reported: { type: boolean }
+        absence_covered: { type: boolean }
+    Profile:
+      allOf:
+        - $ref: '#/components/schemas/UserSummary'
+        - type: object
+          properties:
+            is_active: { type: boolean }
+            created_at: { type: string, format: date-time }
+            phone: { type: string, nullable: true, example: '+573001234567' }
+            residence: { type: string, nullable: true }
+            password_changed_at: { type: string, format: date-time, nullable: true }
+            photo_updated_at: { type: string, format: date-time, nullable: true }
+            notifications:
+              allOf:
+                - $ref: '#/components/schemas/Notifications'
+              nullable: true
+              description: Preferencias del rol; `null` para super_admin.
+            employment:
+              allOf:
+                - $ref: '#/components/schemas/Employment'
+              nullable: true
+              description: Datos laborales del supervisor; `null` para crew y super_admin.
+    SupervisorBase:
+      type: string
+      description: |
+        Hub de Delta: ATL Atlanta, BOS Boston, DTW Detroit, LAX Los Ángeles, MSP Minneapolis,
+        JFK Nueva York (JFK), LGA Nueva York (LaGuardia), SLC Salt Lake City y SEA Seattle.
+      enum: [ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC, SEA]
+    Shift:
+      type: string
+      description: morning (Mañana), afternoon (Tarde) o night (Noche).
+      enum: [morning, afternoon, night]
+    OperationalStatus:
+      type: string
+      description: available (Disponible), on_duty (En turno), off_duty (Fuera de turno) o leave (De licencia).
+      enum: [available, on_duty, off_duty, leave]
+    Employment:
+      type: object
+      description: Sin asignar, `employee_code`, `base` y `shift` son `null`.
+      properties:
+        employee_code: { type: string, nullable: true, example: SUP-001 }
+        base:
+          allOf:
+            - $ref: '#/components/schemas/SupervisorBase'
+          nullable: true
+        shift:
+          allOf:
+            - $ref: '#/components/schemas/Shift'
+          nullable: true
+        operational_status: { $ref: '#/components/schemas/OperationalStatus' }
+    EmploymentInput:
+      type: object
+      description: |
+        Datos laborales de un supervisor; ninguno es obligatorio. `employee_code` y `base` se guardan en
+        mayúsculas (`sup-001` → `SUP-001`, `atl` → `ATL`). `null` o vacío deja sin asignar el código, la
+        base o el turno.
+      properties:
+        employee_code:
+          type: string
+          nullable: true
+          pattern: '^[A-Za-z0-9-]{3,30}$'
+          description: |
+            Único entre los supervisores. De 3 a 30 caracteres: letras, números o guiones.
+            Si está repetido responde 409.
+          example: SUP-001
+        base:
+          allOf:
+            - $ref: '#/components/schemas/SupervisorBase'
+          nullable: true
+        shift:
+          allOf:
+            - $ref: '#/components/schemas/Shift'
+          nullable: true
+        operational_status: { $ref: '#/components/schemas/OperationalStatus' }
     AuthResult:
       type: object
       properties:

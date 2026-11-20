@@ -116,6 +116,39 @@ PASSWORD_RESET_URL=http://localhost:5173/restablecer-contrasena
 - Si falta `PASSWORD_RESET_URL` o la configuración del correo, responde 503 antes de buscar la cuenta. Si el envío falla, la respuesta no cambia y el error queda en el log.
 - Requiere las columnas `password_reset_*` y la tabla `password_reset_events` de `database/admin_db.sql`, que se puede volver a ejecutar sobre una base existente.
 
+### Perfil y configuración
+
+Rutas de la pantalla Configuración. Todas piden sesión, sirven a cualquier rol y solo actúan sobre la propia cuenta. Una cuenta que ya no existe o está desactivada recibe `401`, como en `/auth/me`. En `users.routes.js` van antes de `/users/:id`.
+
+- `GET /users/me` responde `{ id, name, email, role, is_active, created_at, phone, residence, password_changed_at, photo_updated_at, notifications, employment }`. `notifications` es `{ replacement_assigned }` para crew y `{ absence_reported, absence_covered }` para supervisor, y `null` para super_admin, que no tiene preferencias. `employment` es `{ employee_code, base, shift, operational_status }` para el supervisor y `null` para crew y super_admin. `photo_updated_at` es `null` si no hay foto, y la respuesta nunca incluye los bytes de la foto.
+- `PATCH /users/me` recibe `{ phone?, residence?, notifications? }` (al menos uno) y responde lo mismo que `GET /users/me`.
+  - `phone` se guarda sin espacios y debe cumplir `^\+?\d{7,15}$`. Vacíos se guardan como `null`.
+  - `residence` debe ser una ciudad de `GET /catalogs/us-cities`. Se compara sin distinguir mayúsculas y se guarda con la forma del catálogo (`atlanta, ga` → `Atlanta, GA`). Vacía se guarda como `null`, y una que no está en la lista responde `400` («Elige una ciudad de Estados Unidos de la lista.»). Las residencias guardadas antes se devuelven tal cual.
+  - `notifications` solo admite las claves del rol, con valores `true` o `false`. Si no, responde `400`. Un super_admin no puede enviarlas (ni vacías ni `null`): `400` «Hay una preferencia de notificaciones que no corresponde a tu rol.». Se guardan, pero notification todavía no las aplica.
+  - Los datos laborales no se cambian aquí: los asigna un super_admin.
+- `GET /catalogs/us-cities` (con sesión, cualquier rol) devuelve unas 150 ciudades de EE. UU. ordenadas, con el formato «Ciudad, ST» e incluidas las de los hubs de Delta. El catálogo vive en `src/domain/usCities.js` y es la única fuente: el frontend no tiene su copia.
+- `POST /auth/change-password` recibe `{ current_password, new_password }` y responde `{ password_changed_at }`. No toca la cookie, así que la sesión sigue abierta.
+  - La nueva tiene de 12 a 72 bytes y es distinta de la actual. Si la actual no es correcta responde `400` («La contraseña actual no es correcta.»), que se comprueba antes que el límite.
+  - Comparte el límite de la recuperación: con 3 cambios en 24 horas responde `429`, y tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día. La comprobación y el cambio van en una transacción con la cuenta bloqueada.
+- `PUT /users/me/photo` recibe `{ mime_type, data_base64 }` y responde `{ photo_updated_at }`. Admite PNG, JPEG o WEBP de hasta 2 MB ya decodificada, en base64 sin el prefijo `data:`, y los primeros bytes deben coincidir con el tipo. Esta ruta acepta un body JSON de hasta 3 MB y lo lee después de comprobar la sesión. Las demás rutas de admin siguen con 100 kB.
+- `GET /users/me/photo` devuelve el binario con su `Content-Type`, `X-Content-Type-Options: nosniff` y `Cache-Control: private, no-cache`, o `404` si no hay foto. `DELETE /users/me/photo` la borra y responde `204`, haya o no foto.
+- `password_changed_at` se fija al crear un usuario con contraseña (también el primer super_admin), al activar la cuenta, al restablecer la contraseña y al cambiarla con sesión. Las filas que ya existían quedan en `null`.
+- Requiere las columnas nuevas de `users` y la tabla `user_photos` de `database/admin_db.sql`, que se puede volver a ejecutar sobre una base existente.
+- Tests: `npm test -w @vuelos/admin`.
+
+### Datos laborales del supervisor
+
+Los asigna un super_admin con `POST /users` y `PATCH /users/:id` (por ahora desde Swagger). El supervisor los ve en `GET /users/me`, en `employment`.
+
+- `employee_code`: de 3 a 30 caracteres `[A-Z0-9-]`, guardado en mayúsculas (`sup-001` → `SUP-001`). Es único entre los supervisores: si está repetido responde `409` («Ya existe un supervisor con ese código de empleado.»).
+- `base`: un hub de Delta (`ATL`, `BOS`, `DTW`, `LAX`, `MSP`, `JFK`, `LGA`, `SLC` o `SEA`), guardado en mayúsculas.
+- `shift`: `morning`, `afternoon` o `night`.
+- `operational_status`: `available`, `on_duty`, `off_duty` o `leave`. Un supervisor nuevo empieza `available`, y no se puede dejar vacío.
+- En `PATCH /users/:id`, `null` o vacío quita el código, la base o el turno.
+- Cualquiera de esos campos para una cuenta que no es supervisor responde `400` («Los datos laborales solo aplican a supervisores.»). En `PATCH` cuenta el rol que tendrá la cuenta después del cambio.
+- Al pasar de supervisor a super_admin se borran sus datos laborales y su código queda libre. Al pasar de super_admin a supervisor empieza `available`, salvo que se envíe otro estado.
+- Requiere las columnas `employee_code`, `base`, `shift` y `operational_status` de `users` y el índice `users_employee_code_unique` de `database/admin_db.sql`. El script deja `available` a los supervisores que ya existían.
+
 ## Ausencias (servicio crew)
 
 Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en el Swagger de crew.

@@ -53,12 +53,19 @@ const bootstrapSuperAdminController = createBootstrapSuperAdminController(
 );
 
 const createManageUsers = require('../../../../application/use-cases/manageUsers');
+const createChangePassword = require('../../../../application/use-cases/changePassword');
 const { createManageUsersController } = require('../controllers/user.controller');
+const { createChangePasswordController } = require('../controllers/auth.controller');
 const { verifyJwt } = require('../middlewares/auth.middleware');
 
 const manageUsers = createManageUsersController(createManageUsers(userRepository));
+const changePasswordController = createChangePasswordController(
+  createChangePassword({ userRepository, passwordHasher })
+);
 
 router.get('/me', verifyJwt, manageUsers.me);
+// Con sesión, cualquier rol, sobre su propia cuenta. No toca la cookie.
+router.post('/change-password', verifyJwt, changePasswordController);
 router.post('/login', loginController);
 // Sin verifyJwt: cerrar sesión con un token vencido también debe borrar la cookie.
 router.post('/logout', logoutController);

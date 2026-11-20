@@ -58,9 +58,45 @@ function createManageUsersController(manageUsers) {
   };
 }
 
+// Perfil y foto de la propia cuenta: siempre sobre req.user.
+function createProfileController(manageProfile) {
+  async function photo(req, res, next) {
+    try {
+      const { mime_type: mimeType, data } = await manageProfile.getPhoto(req.user);
+      res.set({
+        'Content-Type': mimeType,
+        'X-Content-Type-Options': 'nosniff',
+        // El <img> vuelve a preguntar; la URL cambia con ?v= al subir otra.
+        'Cache-Control': 'private, no-cache',
+      });
+      return res.status(200).send(data);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function deletePhoto(req, res, next) {
+    try {
+      await manageProfile.deletePhoto(req.user);
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  return {
+    me: respond(200, (req) => manageProfile.getMyProfile(req.user)),
+    update: respond(200, (req) => manageProfile.updateMyProfile(req.user, req.body)),
+    savePhoto: respond(200, (req) => manageProfile.savePhoto(req.user, req.body)),
+    photo,
+    deletePhoto,
+  };
+}
+
 module.exports = {
   createGetUserByIdController,
   createCreateUserController,
   createCrewUserController,
   createManageUsersController,
+  createProfileController,
 };

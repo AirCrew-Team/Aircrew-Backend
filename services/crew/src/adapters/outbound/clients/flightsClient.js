@@ -1,5 +1,6 @@
 const { flightsServiceUrl } = require('../../../config/env');
 
+// Sin uso desde las ausencias por fechas; se queda para cuando se relacionen con vuelos.
 // Pide a Flights los vuelos del tripulante reenviando su propio token,
 // así Flights responde solo con los vuelos de esa persona.
 async function getMyAssignments(authorization) {

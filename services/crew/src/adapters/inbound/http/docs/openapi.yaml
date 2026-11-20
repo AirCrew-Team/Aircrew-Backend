@@ -143,8 +143,11 @@ paths:
       tags: [Ausencias]
       summary: Reportar una ausencia (crew)
       description: |
-        El tripulante reporta que no podrá cumplir un vuelo que tiene asignado.
-        Crew confirma con Flights que el vuelo sea suyo y que todavía no haya salido.
+        El tripulante reporta que no podrá trabajar entre dos fechas.
+        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y `end_date` es igual o posterior, con 30 días como máximo entre ambas.
+        - El comprobante es obligatorio si el motivo es `illness`. Va en base64: PDF, PNG o JPG de hasta 10 MB ya decodificado, y sus primeros bytes deben coincidir con `mime_type`.
+        - La ausencia y el comprobante se guardan en una sola transacción. Esta ruta acepta un body JSON de hasta 15 MB; las demás, 100 kB.
+        - Avisa en segundo plano a los supervisores conectados.
       security:
         - bearerAuth: []
       requestBody:
@@ -153,19 +156,28 @@ paths:
           application/json:
             schema:
               type: object
-              required: [flight_id, reason]
+              required: [start_date, end_date, reason]
               properties:
-                flight_id: { type: string, format: uuid, description: Id del vuelo asignado. }
+                start_date: { type: string, format: date, example: '2026-11-20' }
+                end_date: { type: string, format: date, example: '2026-11-22' }
                 reason: { $ref: '#/components/schemas/AbsenceReason' }
                 notes: { type: string, maxLength: 500, nullable: true, example: Fiebre alta desde la madrugada. }
+                attachment:
+                  type: object
+                  nullable: true
+                  required: [file_name, mime_type, data_base64]
+                  properties:
+                    file_name: { type: string, maxLength: 255, example: incapacidad.pdf }
+                    mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+                    data_base64: { type: string, format: byte, description: Contenido del archivo en base64. }
       responses:
         '201':
-          description: Ausencia reportada
+          description: Ausencia reportada, con los metadatos del comprobante y sin sus bytes
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Absence' }
         '400':
-          description: Datos inválidos
+          description: Fechas, motivo, observaciones o comprobante inválidos
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -179,18 +191,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '404':
-          description: El vuelo no está asignado al tripulante
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Ya reportó ausencia para ese vuelo, o el vuelo ya salió
+          description: Ya tiene una ausencia cuyas fechas se cruzan con estas
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '502':
-          description: No se pudo consultar el servicio de vuelos
+              example: { error: Ya tienes una ausencia reportada que se cruza con esas fechas. }
+        '413':
+          description: El body supera los 15 MB
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -260,6 +268,47 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '404':
           description: Ausencia no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/{id}/attachment:
+    get:
+      tags: [Ausencias]
+      summary: Descargar el comprobante de una ausencia (supervisor o super_admin)
+      description: |
+        Responde los bytes del archivo con su `Content-Type`, `Content-Disposition: attachment`
+        con el nombre saneado (solo ASCII, sin rutas, comillas ni saltos de línea) y
+        `X-Content-Type-Options: nosniff`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Comprobante
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: La ausencia no existe o no tiene comprobante
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -336,15 +385,28 @@ components:
       properties:
         id: { type: string, format: uuid }
         crew_user_id: { type: string, format: uuid }
-        flight_id: { type: string, format: uuid }
-        flight_number: { type: string, example: AC201 }
-        flight_departure_at: { type: string, format: date-time }
+        flight_id: { type: string, format: uuid, nullable: true, description: Solo en las ausencias antiguas por vuelo. }
+        flight_number: { type: string, nullable: true, example: AC201 }
+        flight_departure_at: { type: string, format: date-time, nullable: true }
+        start_date: { type: string, format: date, nullable: true, example: '2026-11-20', description: null en las ausencias antiguas por vuelo. }
+        end_date: { type: string, format: date, nullable: true, example: '2026-11-22' }
+        attachment:
+          allOf:
+            - $ref: '#/components/schemas/AbsenceAttachment'
+          nullable: true
+          description: Metadatos del comprobante, o null si no tiene. Nunca incluye los bytes. No viene en la respuesta de cubrir.
         reason: { $ref: '#/components/schemas/AbsenceReason' }
         notes: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/AbsenceStatus' }
         replacement_user_id: { type: string, format: uuid, nullable: true, description: Quién cubrió la ausencia. }
         covered_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
+    AbsenceAttachment:
+      type: object
+      properties:
+        file_name: { type: string, example: incapacidad.pdf }
+        mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+        size_bytes: { type: integer, example: 48213 }
     AbsenceStatus:
       type: string
       enum: [reported, covered]

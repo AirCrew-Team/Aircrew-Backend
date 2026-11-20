@@ -63,7 +63,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: La ausencia ya está cubierta, el vuelo ya no admite reemplazos o el ausente ya no está en el vuelo
+          description: 'La ausencia ya está cubierta, no tiene vuelo («Esta ausencia no tiene un vuelo asociado.»), el vuelo ya no admite reemplazos o el ausente ya no está en el vuelo'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -145,7 +145,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: El tripulante no es candidato, la ausencia ya está cubierta o el vuelo ya no admite reemplazos
+          description: 'El tripulante no es candidato, la ausencia ya está cubierta, no tiene vuelo («Esta ausencia no tiene un vuelo asociado.») o el vuelo ya no admite reemplazos'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

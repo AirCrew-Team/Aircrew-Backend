@@ -78,12 +78,23 @@ Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/opena
 Configura en `services/admin/.env`:
 
 ```env
-RESEND_API_KEY=...
-RESEND_FROM_EMAIL=...
-CREW_ACTIVATION_URL=http://localhost:3000/activar-cuenta
+CREW_ACTIVATION_URL=http://localhost:5173/activar-cuenta
 ACTIVATION_TOKEN_EXPIRES_MINUTES=1440
+# resend (por defecto) o smtp
+EMAIL_PROVIDER=smtp
 ```
 
-El remitente debe estar verificado en Resend. El enlace de activación debe llevar el token a la pantalla frontend, que envía `POST /auth/activate` con `token` y una contraseña de 12 a 72 bytes. Luego el tripulante inicia sesión en `POST /auth/login`. El token vence según la configuración y solo sirve una vez.
+`CREW_ACTIVATION_URL` es la pantalla del frontend que activa la cuenta: el correo le agrega `?token=...`. Esa pantalla envía `POST /auth/activate` con `token` y una contraseña de 12 a 72 bytes. El token vence según la configuración y solo sirve una vez.
 
-`CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña. Si el envío del correo falla, la cuenta pendiente permanece en Admin y requerirá limpieza manual antes de reintentar con el mismo correo.
+### Proveedor del correo
+
+- **`EMAIL_PROVIDER=smtp` (recomendado sin dominio propio):** envía desde una cuenta de Gmail a cualquier destinatario, hasta unos 500 correos al día.
+  1. En la cuenta de Google, activa la **verificación en 2 pasos**.
+  2. En **Seguridad → Contraseñas de aplicación**, crea una para «AirCrew» y copia los 16 caracteres sin espacios.
+  3. Rellena `SMTP_USER` (la dirección de Gmail), `SMTP_PASS` (la contraseña de aplicación, no la de la cuenta) y `SMTP_FROM` (p. ej. `AirCrew <tu dirección de Gmail>`). Gmail envía siempre desde la cuenta autenticada: si `SMTP_FROM` usa otra dirección, la reemplaza.
+  4. `SMTP_HOST`, `SMTP_PORT` y `SMTP_SECURE` ya traen los valores de Gmail en `.env.example`: 465 con `SMTP_SECURE=true`. Para el 587 (STARTTLS) usa `SMTP_SECURE=false`. Si `SMTP_SECURE` no está definido, se deduce del puerto.
+- **`EMAIL_PROVIDER=resend`:** usa `RESEND_API_KEY` y `RESEND_FROM_EMAIL`. Sin un dominio verificado en Resend, solo entrega al correo del dueño de la cuenta de Resend.
+
+Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y la cuenta pendiente se borra, así que se puede reintentar con el mismo correo.
+
+`CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña.

@@ -79,7 +79,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '502':
-          description: Admin o Resend fallaron al crear la cuenta o enviar el correo
+          description: Admin falló al crear la cuenta o no se pudo enviar el correo de invitación (Resend o SMTP)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

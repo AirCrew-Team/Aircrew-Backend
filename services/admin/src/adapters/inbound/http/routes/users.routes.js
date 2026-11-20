@@ -7,7 +7,7 @@ const createGetUserById = require('../../../../application/use-cases/getUserById
 const { createCreateUser } = require('../../../../application/use-cases/createUser');
 const createInviteCrewUser = require('../../../../application/use-cases/inviteCrewUser');
 const createManageUsers = require('../../../../application/use-cases/manageUsers');
-const emailClient = require('../../../outbound/clients/resendClient');
+const { emailClient } = require('../../../outbound/clients/emailClient');
 
 const {
   verifyJwt,

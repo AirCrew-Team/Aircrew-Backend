@@ -374,7 +374,8 @@ paths:
       summary: Crear cuenta pendiente de tripulante y enviar invitación
       description: |
         Lo llama Crew al registrar un tripulante. Crea la cuenta con rol `crew`, sin contraseña,
-        y envía el correo de activación con Resend.
+        y envía el correo de activación con Resend o por SMTP, según `EMAIL_PROVIDER`.
+        Si el correo no se puede enviar, la cuenta pendiente se borra y se puede reintentar.
       security:
         - serviceKey: []
       requestBody:
@@ -397,7 +398,14 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/DuplicateEmail' }
         '502':
-          description: Resend no pudo enviar el correo (la cuenta pendiente queda creada)
+          description: |
+            No se pudo enviar el correo de invitación. El mensaje es genérico y el detalle
+            queda en el log del servicio. La cuenta pendiente se borra.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Falta configuración del correo o EMAIL_PROVIDER no es válido. La cuenta pendiente se borra.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

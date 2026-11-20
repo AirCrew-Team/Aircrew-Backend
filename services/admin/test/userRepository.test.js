@@ -164,6 +164,26 @@ test('CF-B3: findPasswordHash lee el hash y el estado con el pool, sin abrir una
   assert.equal(result, USER_ROW);
 });
 
+// --- D4: la fecha del último cambio para comparar con el iat del token ---
+
+test('D4: findPasswordHash también lee el rol y password_changed_at', async (t) => {
+  const db = useFakeDb(t);
+
+  await userRepository.findPasswordHash(USER_ID);
+
+  assert.match(db.queries[0].sql, /SELECT password_hash, is_active, role, password_changed_at\s/);
+});
+
+test('D4: findById lee password_changed_at; la lista de usuarios no', async (t) => {
+  const db = useFakeDb(t);
+
+  await userRepository.findById(USER_ID);
+  await userRepository.findUsers({ search: null, role: null });
+
+  assert.match(db.queries[0].sql, /\bpassword_changed_at\b/);
+  assert.doesNotMatch(db.queries[1].sql, /\bpassword_changed_at\b/);
+});
+
 // --- Perfil y foto ---
 
 test('CF-B1: findProfileById trae photo_updated_at de user_photos sin leer los bytes', async (t) => {

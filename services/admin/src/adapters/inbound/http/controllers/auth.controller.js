@@ -101,12 +101,18 @@ function createCheckActivationTokenController(checkActivationToken) {
   };
 }
 
-// Cambio de contraseña con sesión. No toca la cookie: la sesión sigue abierta.
+// Cambio de contraseña con sesión. Los tokens anteriores dejan de valer, así que pone
+// una cookie de sesión nueva, igual que el login: esta sesión sigue abierta.
+// El body solo lleva la fecha, no el token.
 function createChangePasswordController(changePassword) {
   return async function handleChangePassword(req, res, next) {
     try {
-      const result = await changePassword(req.user, req.body);
-      return res.status(200).json(result);
+      const { password_changed_at: passwordChangedAt, token } = await changePassword(
+        req.user,
+        req.body
+      );
+      res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions(token));
+      return res.status(200).json({ password_changed_at: passwordChangedAt });
     } catch (error) {
       return next(error);
     }

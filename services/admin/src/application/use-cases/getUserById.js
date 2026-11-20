@@ -16,7 +16,9 @@ function createGetUserById(userRepository) {
       throw new DomainError('Usuario no encontrado.', 404);
     }
 
-    return user;
+    // findById trae password_changed_at para /auth/me; esta respuesta no lo incluye.
+    const { password_changed_at: _changedAt, ...account } = user;
+    return account;
   };
 }
 

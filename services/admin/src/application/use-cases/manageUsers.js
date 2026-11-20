@@ -1,4 +1,5 @@
 const {
+  isCurrentSession,
   isValidUserId,
   parseUserFilters,
   validateUserUpdate,
@@ -24,17 +25,20 @@ function createManageUsers(userRepository) {
   }
 
   // La cuenta del usuario del token, para restaurar la sesión al recargar.
-  // Si ya no existe o está desactivada, la sesión deja de valer (401).
+  // Si ya no existe, está desactivada o el token es anterior al último cambio de
+  // contraseña, la sesión deja de valer (401).
   async function getCurrentUser(requester) {
     const user = isValidUserId(requester.id)
       ? await userRepository.findById(requester.id)
       : null;
 
-    if (!user || user.is_active !== true) {
+    if (!isCurrentSession(user, requester)) {
       throw new DomainError('La sesión ya no es válida.', 401);
     }
 
-    return user;
+    // La fecha solo sirve para la comprobación: la respuesta no cambia.
+    const { password_changed_at: _changedAt, ...account } = user;
+    return account;
   }
 
   function listUsers(filters) {

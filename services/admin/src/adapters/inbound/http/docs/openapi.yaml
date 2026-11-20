@@ -81,7 +81,9 @@ paths:
     get:
       tags: [Autenticación]
       summary: Mi cuenta (cualquier rol)
-      description: La cuenta del usuario del token. Sirve para restaurar la sesión al recargar la página.
+      description: |
+        La cuenta del usuario del token. Sirve para restaurar la sesión al recargar la página.
+        Un token emitido antes del último cambio de contraseña (con sesión o por recuperación) ya no vale.
       security:
         - bearerAuth: []
       responses:
@@ -90,11 +92,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
-        '401':
-          description: Falta el token, no es válido o venció, o el usuario del token ya no existe o está desactivado
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
 
   /auth/activate:
     post:
@@ -322,8 +320,11 @@ paths:
       summary: Cambiar la contraseña de la propia cuenta
       description: |
         Con sesión y para cualquier rol, solo sobre la propia cuenta. Comprueba la contraseña actual,
-        guarda la nueva, actualiza `password_changed_at` y registra el cambio. No toca la cookie: la
-        sesión sigue abierta. Comparte con la recuperación el límite de 3 cambios en 24 horas, así que
+        guarda la nueva, actualiza `password_changed_at` y registra el cambio. Los tokens emitidos antes
+        del cambio dejan de valer en las rutas del admin que leen la cuenta (`/auth/me`, `/users/me*` y esta),
+        así que las demás sesiones se cierran. Esta sesión sigue abierta: la respuesta pone una cookie
+        `aircrew_token` nueva, igual que el login, con un token del mismo segundo del cambio o posterior.
+        Comparte con la recuperación el límite de 3 cambios en 24 horas, así que
         tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día.
         La contraseña actual se comprueba antes que el límite: con las dos condiciones responde 400.
       security:
@@ -344,7 +345,13 @@ paths:
                   description: Entre 12 y 72 bytes UTF-8, distinta de la actual.
       responses:
         '200':
-          description: Contraseña actualizada
+          description: Contraseña actualizada. El body no lleva el token; va en la cookie nueva.
+          headers:
+            Set-Cookie:
+              description: |
+                `aircrew_token=<JWT nuevo>; Max-Age=<segundos hasta el exp del JWT>; Path=/; HttpOnly; SameSite=Lax`,
+                con las mismas opciones que el login (`Secure` solo con `NODE_ENV=production`).
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -359,7 +366,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
         '429':
           description: |
             La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas. La contraseña no cambia.
@@ -495,11 +502,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Profile' }
-        '401':
-          description: Sin sesión, o la cuenta ya no existe o está desactivada
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
     patch:
       tags: [Usuarios]
       summary: Editar el contacto y las preferencias de la propia cuenta
@@ -537,11 +540,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401':
-          description: Sin sesión, o la cuenta ya no existe o está desactivada
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
 
   /users/me/photo:
     get:
@@ -562,7 +561,7 @@ paths:
               schema: { type: string, format: binary }
             image/webp:
               schema: { type: string, format: binary }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
         '404':
           description: |
             Sin foto. `error`: «No tienes foto de perfil.»
@@ -602,7 +601,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
         '413':
           description: El body supera 3 MB
           content:
@@ -617,7 +616,7 @@ paths:
       responses:
         '204':
           description: Foto eliminada
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401': { $ref: '#/components/responses/SessionUnauthorized' }
 
   /users/{id}:
     get:
@@ -862,6 +861,14 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     Unauthorized:
       description: Falta autenticación o no es válida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    SessionUnauthorized:
+      description: |
+        Falta el token, no es válido o venció, o la sesión ya no vale: la cuenta ya no existe, está
+        desactivada o el token se emitió antes del último cambio de contraseña (`iat` anterior al segundo
+        de `password_changed_at`). En esos tres casos, `error`: «La sesión ya no es válida.»
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

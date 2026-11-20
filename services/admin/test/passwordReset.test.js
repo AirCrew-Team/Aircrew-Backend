@@ -2,6 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
+// El cambio con sesión (PR-B7) firma un token nuevo (D4). Antes de cargar config/env:
+// dotenv no pisa una variable que ya existe.
+process.env.JWT_SECRET = 'prueba'.repeat(4);
+
 const createRequestPasswordReset = require('../src/application/use-cases/requestPasswordReset');
 const createResetPassword = require('../src/application/use-cases/resetPassword');
 const {
@@ -117,10 +121,27 @@ function createFakeRepository({ users = [USER], events = [], clock }) {
       );
       if (!user) return null;
       user.password_hash = passwordHash;
+      // Como el UPDATE real (password_changed_at = NOW(), CF-B4 de userRepository.test.js).
+      user.password_changed_at = clock.now();
       user.password_reset_token_hash = null;
       user.password_reset_expires_at = null;
       state.events.push({ userId: user.id, event: 'changed', createdAt: clock.now() });
       return { id: user.id, name: user.name, email: user.email, role: user.role };
+    },
+    // La cuenta de /auth/me (getCurrentUser).
+    async findById(id) {
+      record('findById');
+      const user = state.users.find((candidate) => candidate.id === id);
+      return user
+        ? {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            is_active: user.is_active,
+            password_changed_at: user.password_changed_at ?? null,
+          }
+        : null;
     },
     // Cambio con sesión: como el UPDATE real, también anula el token pendiente.
     async findPasswordHash(userId) {
@@ -645,6 +666,22 @@ test('PR-B7: después de cambiar la contraseña con sesión, el enlace pedido an
     context.userRepository.state.events.filter(({ event }) => event === 'changed').length,
     1
   );
+});
+
+test('D4-B3: tras restablecer la contraseña, un token emitido antes recibe 401 en /auth/me', async () => {
+  const createManageUsers = require('../src/application/use-cases/manageUsers');
+  const context = setup();
+  const { getCurrentUser } = createManageUsers(context.userRepository);
+  const issuedBefore = { id: USER.id, role: USER.role, iat: Math.floor(START / 1000) };
+  const token = await requestToken(context);
+  context.clock.advance(MINUTE);
+
+  await context.resetPassword({ token, password: VALID });
+
+  await assert.rejects(getCurrentUser(issuedBefore), rejectsWith(401, 'La sesión ya no es válida.'));
+  // El login que sigue a la recuperación emite un token posterior, que sí vale.
+  const issuedAfter = { ...issuedBefore, iat: Math.floor(context.clock.time / 1000) };
+  assert.equal((await getCurrentUser(issuedAfter)).id, USER.id);
 });
 
 for (const [label, input] of [

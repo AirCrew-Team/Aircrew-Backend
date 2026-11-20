@@ -265,7 +265,9 @@ test('CF-B8 (HTTP): PATCH /users/me con una ciudad del catálogo la guarda con l
 
   assert.equal(res.status, 200);
   assert.equal(res.body.residence, 'New York, NY');
-  assert.equal(calls[0].params[4], 'New York, NY');
+  // D4: antes de guardar lee la cuenta; el UPDATE es la segunda consulta.
+  const update = calls.find(({ sql }) => sql.includes('UPDATE public.users'));
+  assert.equal(update.params[4], 'New York, NY');
 });
 
 test('CF-B2 (HTTP): PATCH /users/me sin sesión responde 401', async (t) => {
@@ -391,7 +393,14 @@ test('CF-B5 (HTTP): PUT /users/me/photo responde 413 con un body de más de 3 MB
 
 test('CF-B5 (HTTP): PUT /users/me/photo guarda un PNG y responde 200 con photo_updated_at', async (t) => {
   const updatedAt = new Date('2026-11-20T12:00:00Z');
-  const calls = useDatabase(t, async () => ({ rows: [{ updated_at: updatedAt }], rowCount: 1 }));
+  // D4: antes de guardar lee la cuenta; responde según el SQL.
+  const calls = useDatabase(t, async (sql) => {
+    if (/FROM public\.users u/.test(sql)) return { rows: [{ ...PROFILE_ROW, role: 'supervisor' }] };
+    if (/INSERT INTO public\.user_photos/.test(sql)) {
+      return { rows: [{ updated_at: updatedAt }], rowCount: 1 };
+    }
+    throw new Error(`Consulta inesperada en el test: ${sql}`);
+  });
   const data = Buffer.concat([PNG, Buffer.from('contenido')]);
 
   const res = await request('/users/me/photo', {
@@ -402,7 +411,8 @@ test('CF-B5 (HTTP): PUT /users/me/photo guarda un PNG y responde 200 con photo_u
 
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { photo_updated_at: '2026-11-20T12:00:00.000Z' });
-  assert.deepEqual(calls[0].params, [USER_ID, 'image/png', data.length, data]);
+  const insert = calls.find(({ sql }) => /INSERT INTO public\.user_photos/.test(sql));
+  assert.deepEqual(insert.params, [USER_ID, 'image/png', data.length, data]);
 });
 
 // --- GET y DELETE /users/me/photo ---

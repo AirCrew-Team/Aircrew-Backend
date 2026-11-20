@@ -64,7 +64,7 @@ const changePasswordController = createChangePasswordController(
 );
 
 router.get('/me', verifyJwt, manageUsers.me);
-// Con sesión, cualquier rol, sobre su propia cuenta. No toca la cookie.
+// Con sesión, cualquier rol, sobre su propia cuenta. Pone una cookie de sesión nueva.
 router.post('/change-password', verifyJwt, changePasswordController);
 router.post('/login', loginController);
 // Sin verifyJwt: cerrar sesión con un token vencido también debe borrar la cookie.

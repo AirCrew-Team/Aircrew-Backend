@@ -122,6 +122,8 @@ function createFakeRepository(row) {
 }
 
 // El require va aquí para que, si el módulo falta, cada test falle por su cuenta.
+// D4: guardar el perfil o la foto primero lee la cuenta (findProfileById), así que
+// la escritura es calls[1].
 function setup(role = 'crew', row = rowFor(role)) {
   const createManageProfile = require('../src/application/use-cases/manageProfile');
   const userRepository = createFakeRepository(row);
@@ -224,7 +226,7 @@ test('CF-B7: PATCH /users/me de un supervisor responde con employment y no cambi
     base: 'SEA',
   });
 
-  assert.deepEqual(userRepository.calls[0], ['updateProfile', { residence: 'Boston, MA' }]);
+  assert.deepEqual(userRepository.calls[1], ['updateProfile', { residence: 'Boston, MA' }]);
   assert.deepEqual(result.employment, SUPERVISOR_EMPLOYMENT);
 });
 
@@ -274,7 +276,7 @@ test('CF-B2: guarda el celular sin espacios y la residencia sin espacios en los 
     residence: '  Atlanta, GA  ',
   });
 
-  assert.deepEqual(userRepository.calls[0], [
+  assert.deepEqual(userRepository.calls[1], [
     'updateProfile',
     { phone: '+573105550000', residence: 'Atlanta, GA' },
   ]);
@@ -298,7 +300,7 @@ for (const [label, value] of [
 
     const result = await profile.updateMyProfile(requester, { phone: value, residence: value });
 
-    assert.deepEqual(userRepository.calls[0], [
+    assert.deepEqual(userRepository.calls[1], [
       'updateProfile',
       { phone: null, residence: null },
     ]);
@@ -312,7 +314,7 @@ test('CF-B2: solo cambia los campos enviados', async () => {
 
   const result = await profile.updateMyProfile(requester, { residence: 'Seattle, WA' });
 
-  assert.deepEqual(userRepository.calls[0], ['updateProfile', { residence: 'Seattle, WA' }]);
+  assert.deepEqual(userRepository.calls[1], ['updateProfile', { residence: 'Seattle, WA' }]);
   assert.equal(result.phone, '+573001234567');
   assert.equal(result.residence, 'Seattle, WA');
 });
@@ -322,7 +324,7 @@ test('CF-B8: guarda la ciudad con la forma del catálogo aunque llegue con otras
 
   const result = await profile.updateMyProfile(requester, { residence: 'salt lake city, ut' });
 
-  assert.deepEqual(userRepository.calls[0], ['updateProfile', { residence: 'Salt Lake City, UT' }]);
+  assert.deepEqual(userRepository.calls[1], ['updateProfile', { residence: 'Salt Lake City, UT' }]);
   assert.equal(result.residence, 'Salt Lake City, UT');
 });
 
@@ -444,7 +446,7 @@ test('CF-B9: un super_admin sigue guardando su celular y su residencia', async (
 
   const result = await profile.updateMyProfile(requester, { residence: 'Seattle, WA' });
 
-  assert.deepEqual(userRepository.calls[0], ['updateProfile', { residence: 'Seattle, WA' }]);
+  assert.deepEqual(userRepository.calls[1], ['updateProfile', { residence: 'Seattle, WA' }]);
   assert.equal(result.residence, 'Seattle, WA');
   assert.equal(result.notifications, null);
 });
@@ -475,7 +477,7 @@ for (const [mimeType, bytes] of [
     });
 
     assert.deepEqual(result, { photo_updated_at: PHOTO_AT });
-    assert.deepEqual(userRepository.calls[0], [
+    assert.deepEqual(userRepository.calls[1], [
       'savePhoto',
       { mimeType, sizeBytes: data.length, data },
     ]);

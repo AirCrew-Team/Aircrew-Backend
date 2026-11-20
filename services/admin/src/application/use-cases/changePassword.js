@@ -1,4 +1,4 @@
-const { isValidUserId } = require('../../domain/entities/user');
+const { isCurrentSession, isValidUserId } = require('../../domain/entities/user');
 const { DomainError } = require('../../domain/errors');
 const { validatePasswordChange } = require('../../domain/profile');
 const {
@@ -7,6 +7,7 @@ const {
   MESSAGES,
   limitError,
 } = require('../../domain/passwordReset');
+const { signSessionToken } = require('./sessionToken');
 
 function invalidSession() {
   return new DomainError('La sesión ya no es válida.', 401);
@@ -18,7 +19,8 @@ function wrongPassword() {
 }
 
 // Cambio de contraseña con sesión. Comparte con la recuperación el límite de
-// 3 cambios en 24 h. No toca la cookie: la sesión sigue abierta.
+// 3 cambios en 24 h. Los tokens anteriores al cambio dejan de valer, así que devuelve
+// un token nuevo para la cookie de esta sesión.
 function createChangePassword({
   userRepository,
   passwordHasher,
@@ -34,7 +36,9 @@ function createChangePassword({
     // bcrypt fuera del bloqueo: no retiene un cliente del pool mientras calcula.
     const user = await userRepository.findPasswordHash(requester.id);
 
-    if (!user || user.is_active !== true) {
+    // Solo aquí se compara el iat: dentro del bloqueo, un envío doble de esta misma
+    // sesión daría 401 y la cerraría. Un cambio intermedio ya lo detecta el hash.
+    if (!isCurrentSession(user, requester)) {
       throw invalidSession();
     }
 
@@ -72,7 +76,16 @@ function createChangePassword({
         passwordHash,
       });
 
-      return { password_changed_at: passwordChangedAt };
+      // La fecha la pone PostgreSQL (NOW()). El iat nuevo no puede quedar antes de su
+      // segundo aunque el reloj del servicio vaya atrás. Se firma dentro de la
+      // transacción: si falla, el cambio se deshace.
+      const issuedAt = Math.max(
+        Math.floor(now().getTime() / 1000),
+        Math.floor(new Date(passwordChangedAt).getTime() / 1000)
+      );
+      const token = signSessionToken({ id: requester.id, role: current.role }, { issuedAt });
+
+      return { password_changed_at: passwordChangedAt, token };
     });
   };
 }

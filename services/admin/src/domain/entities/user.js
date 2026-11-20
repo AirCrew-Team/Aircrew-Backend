@@ -212,6 +212,18 @@ function canResetPassword(user) {
   return canLogIn(user) && !user.pending_activation;
 }
 
+// La sesión del token sigue valiendo: la cuenta existe, está activa y el token no es
+// anterior al último cambio de contraseña. El iat va en segundos, así que la fecha del
+// cambio se redondea hacia abajo: un token del mismo segundo que el cambio vale.
+// Sin password_changed_at no hay nada que comparar. verifyJwt exige un iat numérico.
+function isCurrentSession(account, requester) {
+  if (!account || account.is_active !== true) return false;
+  if (!account.password_changed_at) return true;
+
+  const changedAt = Math.floor(new Date(account.password_changed_at).getTime() / 1000);
+  return !(requester.iat < changedAt);
+}
+
 // super_admin ve cualquier usuario; los demás solo su propia cuenta.
 function canViewUser(requester, userId) {
   return requester.role === 'super_admin' || requester.id === userId;
@@ -355,4 +367,5 @@ module.exports = {
   canLogIn,
   canResetPassword,
   canViewUser,
+  isCurrentSession,
 };

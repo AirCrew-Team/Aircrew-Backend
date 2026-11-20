@@ -4,9 +4,11 @@ const pool = require('../pool');
 const userColumns = `id, name, email, role, is_active, created_at,
        activation_token_hash IS NOT NULL AS pending_activation`;
 
+// password_changed_at solo para comparar con el iat del token: los casos de uso lo
+// quitan de la respuesta.
 async function findById(id) {
   const { rows } = await pool.query(
-    `SELECT ${userColumns}
+    `SELECT ${userColumns}, password_changed_at
      FROM public.users
      WHERE id = $1
      LIMIT 1`,
@@ -136,7 +138,7 @@ async function findPendingActivationByToken(activationTokenHash) {
 
 async function findByEmail(email) {
   const { rows } = await pool.query(
-    `SELECT id, name, email, role, is_active, password_hash,
+    `SELECT id, name, email, role, is_active, password_hash, password_changed_at,
             activation_token_hash IS NOT NULL AS pending_activation
      FROM public.users
      WHERE LOWER(email) = LOWER($1)
@@ -218,10 +220,11 @@ async function withPasswordResetLock(userId, fn) {
   });
 }
 
-// Hash y estado de la cuenta. `db` es el pool o el cliente de una transacción.
+// Hash, estado, rol y fecha del último cambio de la cuenta.
+// `db` es el pool o el cliente de una transacción.
 async function findPasswordHash(userId, db = pool) {
   const { rows } = await db.query(
-    `SELECT password_hash, is_active
+    `SELECT password_hash, is_active, role, password_changed_at
      FROM public.users
      WHERE id = $1`,
     [userId]

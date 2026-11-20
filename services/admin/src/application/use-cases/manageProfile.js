@@ -1,4 +1,4 @@
-const { isValidUserId } = require('../../domain/entities/user');
+const { isCurrentSession, isValidUserId } = require('../../domain/entities/user');
 const { DomainError } = require('../../domain/errors');
 const {
   toProfile,
@@ -11,7 +11,8 @@ function invalidSession() {
 }
 
 // Perfil y foto de la propia cuenta (Configuración). Solo actúan sobre el
-// usuario del token. Una cuenta inexistente o desactivada responde 401, como /auth/me.
+// usuario del token. Una cuenta inexistente o desactivada, o un token anterior al
+// último cambio de contraseña, responde 401, como /auth/me.
 function createManageProfile(userRepository) {
   function sessionUserId(requester) {
     if (!isValidUserId(requester.id)) {
@@ -23,7 +24,7 @@ function createManageProfile(userRepository) {
   async function activeProfile(requester) {
     const row = await userRepository.findProfileById(sessionUserId(requester));
 
-    if (!row || row.is_active !== true) {
+    if (!isCurrentSession(row, requester)) {
       throw invalidSession();
     }
 
@@ -34,10 +35,12 @@ function createManageProfile(userRepository) {
     return toProfile(await activeProfile(requester));
   }
 
-  // Valida todo antes de tocar la base.
+  // Valida todo antes de tocar la base. Después comprueba la sesión: un token
+  // anterior al último cambio de contraseña no puede escribir.
   async function updateMyProfile(requester, input) {
     const changes = validateProfileUpdate(requester.role, input);
-    const row = await userRepository.updateProfile(sessionUserId(requester), changes);
+    const { id } = await activeProfile(requester);
+    const row = await userRepository.updateProfile(id, changes);
 
     if (!row) {
       throw invalidSession();
@@ -48,7 +51,8 @@ function createManageProfile(userRepository) {
 
   async function savePhoto(requester, input) {
     const photo = parsePhoto(input);
-    const updatedAt = await userRepository.savePhoto(sessionUserId(requester), photo);
+    const { id } = await activeProfile(requester);
+    const updatedAt = await userRepository.savePhoto(id, photo);
 
     if (!updatedAt) {
       throw invalidSession();

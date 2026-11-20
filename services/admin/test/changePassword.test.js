@@ -1,5 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const jwt = require('jsonwebtoken');
+
+// El cambio firma un token de sesión nuevo (D4). Antes de cargar config/env:
+// dotenv no pisa una variable que ya existe.
+process.env.JWT_SECRET = 'prueba'.repeat(4);
 
 const SESSION_MESSAGE = 'La sesión ya no es válida.';
 const DATA_MESSAGE = 'Se requieren la contraseña actual y una nueva de 12 a 72 bytes.';
@@ -159,7 +164,9 @@ test('CF-B3: con la contraseña actual correcta guarda el hash nuevo, actualiza 
     new_password: NEXT,
   });
 
-  assert.deepEqual(result, { password_changed_at: new Date(START) });
+  // D4: además devuelve el token de la sesión nueva para la cookie.
+  assert.deepEqual(result.password_changed_at, new Date(START));
+  assert.equal(typeof result.token, 'string');
   const { user, events } = context.userRepository.state;
   assert.equal(user.password_hash, `hash:${NEXT}`);
   assert.deepEqual(user.password_changed_at, new Date(START));
@@ -226,7 +233,9 @@ test('CF-B3: los cambios de hace más de 24 h no cuentan para el límite', async
     new_password: NEXT,
   });
 
-  assert.deepEqual(result, { password_changed_at: new Date(START) });
+  // D4: además devuelve el token de la sesión nueva para la cookie.
+  assert.deepEqual(result.password_changed_at, new Date(START));
+  assert.equal(typeof result.token, 'string');
 });
 
 test('CF-B3: con 2 cambios permite el tercero y el cuarto responde 429', async () => {
@@ -457,7 +466,8 @@ async function changeResponse(changePassword, body) {
   return res;
 }
 
-test('CF-B3 (HTTP): un cambio correcto responde 200 con { password_changed_at } y no toca la cookie', async () => {
+// D4-B2: antes no tocaba la cookie; ahora pone una de sesión nueva y el body no lleva el token.
+test('CF-B3 (HTTP): un cambio correcto responde 200 con { password_changed_at } y pone una cookie de sesión nueva', async () => {
   const context = setup();
 
   const res = await changeResponse(context.changePassword, {
@@ -467,7 +477,14 @@ test('CF-B3 (HTTP): un cambio correcto responde 200 con { password_changed_at } 
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, { password_changed_at: new Date(START) });
-  assert.deepEqual(res.cookieCalls, []);
+  assert.equal(res.cookieCalls.length, 1);
+  const [method, name, value, options] = res.cookieCalls[0];
+  assert.equal(method, 'cookie');
+  assert.equal(name, 'aircrew_token');
+  assert.equal(jwt.decode(value).sub, USER_ID);
+  assert.equal(options.httpOnly, true);
+  assert.equal(options.sameSite, 'lax');
+  assert.equal(options.path, '/');
 });
 
 test('CF-B3 (HTTP): la contraseña actual incorrecta responde 400 con { error } y el mensaje exacto', async (t) => {

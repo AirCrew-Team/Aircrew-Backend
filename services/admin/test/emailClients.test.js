@@ -171,3 +171,205 @@ test('SM-05: el 502 de Resend usa el mensaje genérico y registra el detalle', a
   });
   assert.equal(log.mock.callCount(), 1);
 });
+
+// --- Recuperación de contraseña ---
+
+const RESET_URL = 'http://localhost:5173/restablecer-contrasena';
+const RESEND_CONFIG = {
+  passwordResetUrl: RESET_URL,
+  resendApiKey: 'clave-de-prueba',
+  resendFromEmail: 'AirCrew <onboarding@resend.dev>',
+};
+const RESET_EMAIL = {
+  email: 'tripulante@aircrew.test',
+  name: '<b>Ana & "Co"</b>',
+  token: 'token-de-prueba',
+};
+
+// Resend falso: guarda lo que se envía.
+function createFakeResend() {
+  const sent = [];
+  return {
+    sent,
+    createResend: () => ({
+      emails: {
+        send: async (payload) => {
+          sent.push(payload);
+          return { data: { id: 'correo-1' }, error: null };
+        },
+      },
+    }),
+  };
+}
+
+function assertPasswordResetContent(message) {
+  assert.equal(message.subject, 'Restablece tu contraseña de AirCrew');
+  assert.match(
+    message.text,
+    /http:\/\/localhost:5173\/restablecer-contrasena\?token=token-de-prueba/
+  );
+  assert.ok(
+    message.text.includes(
+      'recibimos una solicitud para restablecer tu contraseña. Abre este enlace para crear una nueva (vence en 10 minutos):'
+    )
+  );
+  assert.ok(
+    message.text.includes('Si no la solicitaste, ignora este correo: tu contraseña no cambia.')
+  );
+  assert.ok(
+    message.html.includes(
+      '<a href="http://localhost:5173/restablecer-contrasena?token=token-de-prueba">Restablecer contraseña</a>'
+    )
+  );
+  assert.ok(message.html.includes('Hola &lt;b&gt;Ana &amp; &quot;Co&quot;&lt;/b&gt;,'));
+  assert.ok(!message.html.includes('<b>Ana'));
+  assert.ok(
+    message.html.includes('Si no la solicitaste, ignora este correo: tu contraseña no cambia.')
+  );
+}
+
+test('PR-B9: el cliente SMTP envía el correo de recuperación con el enlace y el nombre escapado', async () => {
+  const transport = createFakeTransport();
+  const client = createSmtpClient({
+    config: { ...SMTP_CONFIG, passwordResetUrl: RESET_URL },
+    createTransport: transport.createTransport,
+  });
+
+  await client.sendPasswordReset(RESET_EMAIL);
+
+  assert.equal(transport.sent.length, 1);
+  const [message] = transport.sent;
+  assert.equal(message.from, SMTP_CONFIG.smtp.from);
+  assert.deepEqual(message.to, { name: '', address: RESET_EMAIL.email });
+  assertPasswordResetContent(message);
+});
+
+test('PR-B9: el cliente de Resend envía el correo de recuperación con el enlace y el nombre escapado', async () => {
+  const resend = createFakeResend();
+  const client = createResendClient({
+    config: RESEND_CONFIG,
+    createResend: resend.createResend,
+  });
+
+  await client.sendPasswordReset(RESET_EMAIL);
+
+  assert.equal(resend.sent.length, 1);
+  const [payload] = resend.sent;
+  assert.equal(payload.from, RESEND_CONFIG.resendFromEmail);
+  assert.deepEqual(payload.to, [RESET_EMAIL.email]);
+  assertPasswordResetContent(payload);
+});
+
+test('PR-B9: la invitación sigue usando CREW_ACTIVATION_URL y su propio asunto', async () => {
+  const transport = createFakeTransport();
+  const client = createSmtpClient({
+    config: { ...SMTP_CONFIG, passwordResetUrl: RESET_URL },
+    createTransport: transport.createTransport,
+  });
+
+  await client.sendCrewInvitation(INVITATION);
+
+  assert.equal(transport.sent[0].subject, 'Activa tu cuenta de AirCrew');
+  assert.match(transport.sent[0].text, /activar-cuenta\?token=token-de-prueba/);
+});
+
+function assertConfigError(client, transportOrResend) {
+  assert.throws(
+    () => client.checkPasswordResetConfig(),
+    (error) => {
+      assert.equal(error.status, 503);
+      return true;
+    }
+  );
+  assert.equal(transportOrResend.sent.length, 0);
+}
+
+test('PR-B5: con la configuración completa, la comprobación no lanza ni envía nada', () => {
+  const transport = createFakeTransport();
+  const smtp = createSmtpClient({
+    config: { ...SMTP_CONFIG, passwordResetUrl: RESET_URL },
+    createTransport: transport.createTransport,
+  });
+  const resend = createFakeResend();
+  const resendClient = createResendClient({
+    config: RESEND_CONFIG,
+    createResend: resend.createResend,
+  });
+
+  smtp.checkPasswordResetConfig();
+  resendClient.checkPasswordResetConfig();
+
+  assert.equal(transport.options.length, 0);
+  assert.equal(transport.sent.length, 0);
+  assert.equal(resend.sent.length, 0);
+});
+
+for (const [label, passwordResetUrl] of [
+  ['sin PASSWORD_RESET_URL', undefined],
+  ['con una PASSWORD_RESET_URL que no es una URL', 'restablecer-contrasena'],
+  ['con una PASSWORD_RESET_URL que no es http ni https', 'ftp://localhost/restablecer'],
+]) {
+  test(`PR-B5: ${label}, la comprobación da 503 con los dos proveedores`, () => {
+    const transport = createFakeTransport();
+    const resend = createFakeResend();
+
+    assertConfigError(
+      createSmtpClient({
+        config: { ...SMTP_CONFIG, passwordResetUrl },
+        createTransport: transport.createTransport,
+      }),
+      transport
+    );
+    assertConfigError(
+      createResendClient({
+        config: { ...RESEND_CONFIG, passwordResetUrl },
+        createResend: resend.createResend,
+      }),
+      resend
+    );
+  });
+}
+
+for (const missing of ['user', 'pass', 'from']) {
+  test(`PR-B5: sin SMTP_${missing.toUpperCase()}, la comprobación da 503 sin enviar`, () => {
+    const transport = createFakeTransport();
+    const client = createSmtpClient({
+      config: {
+        ...SMTP_CONFIG,
+        passwordResetUrl: RESET_URL,
+        smtp: { ...SMTP_CONFIG.smtp, [missing]: undefined },
+      },
+      createTransport: transport.createTransport,
+    });
+
+    assertConfigError(client, transport);
+  });
+}
+
+for (const missing of ['resendApiKey', 'resendFromEmail']) {
+  test(`PR-B5: sin ${missing} en Resend, la comprobación da 503 sin enviar`, () => {
+    const resend = createFakeResend();
+    const client = createResendClient({
+      config: { ...RESEND_CONFIG, [missing]: undefined },
+      createResend: resend.createResend,
+    });
+
+    assertConfigError(client, resend);
+  });
+}
+
+test('PR-B5: un EMAIL_PROVIDER desconocido da 503 en la comprobación y al enviar', async () => {
+  const client = selectEmailClient('otro');
+
+  assert.throws(
+    () => client.checkPasswordResetConfig(),
+    (error) => {
+      assert.equal(error.status, 503);
+      return true;
+    }
+  );
+  await assert.rejects(client.sendPasswordReset(RESET_EMAIL), (error) => {
+    assert.equal(error.status, 503);
+    return true;
+  });
+});

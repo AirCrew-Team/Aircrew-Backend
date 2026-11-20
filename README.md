@@ -86,6 +86,8 @@ EMAIL_PROVIDER=smtp
 
 `CREW_ACTIVATION_URL` es la pantalla del frontend que activa la cuenta: el correo le agrega `?token=...`. Esa pantalla envía `POST /auth/activate` con `token` y una contraseña de 12 a 72 bytes. El token vence según la configuración y solo sirve una vez.
 
+`POST /auth/activate/check` recibe `{ token }` y solo consulta: responde 200 si el enlace sirve y 400 si no es válido, venció o la cuenta ya está activa. No gasta el token. El frontend lo usa al abrir el enlace.
+
 ### Proveedor del correo
 
 - **`EMAIL_PROVIDER=smtp` (recomendado sin dominio propio):** envía desde una cuenta de Gmail a cualquier destinatario, hasta unos 500 correos al día.
@@ -98,3 +100,18 @@ EMAIL_PROVIDER=smtp
 Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y la cuenta pendiente se borra, así que se puede reintentar con el mismo correo.
 
 `CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña.
+
+### Recuperación de contraseña
+
+Usa el mismo proveedor de correo. Configura en `services/admin/.env`:
+
+```env
+PASSWORD_RESET_URL=http://localhost:5173/restablecer-contrasena
+```
+
+- `POST /auth/forgot-password` recibe `{ email }` y responde siempre el mismo mensaje, exista o no la cuenta. Si es una cuenta activa, envía en segundo plano un enlace `PASSWORD_RESET_URL?token=...` que vence a los 10 minutos y sirve una sola vez. Pedir otro enlace anula el anterior. Las cuentas pendientes de activación o desactivadas no lo reciben.
+- `POST /auth/reset-password/check` recibe `{ token }` y solo consulta: responde 200 si el enlace sirve, 400 si no es válido o venció y 429 si se alcanzó el límite de cambios. No gasta el token. El frontend lo usa al abrir el enlace.
+- `POST /auth/reset-password` recibe `{ token, password }` (12 a 72 bytes) y cambia la contraseña. No inicia sesión.
+- Límites por cuenta en las últimas 24 horas: 3 cambios de contraseña, 2 minutos entre solicitudes y 5 solicitudes. Al superarlos responde 429 con un mensaje para la persona. Son reglas del producto, fijas en el código.
+- Si falta `PASSWORD_RESET_URL` o la configuración del correo, responde 503 antes de buscar la cuenta. Si el envío falla, la respuesta no cambia y el error queda en el log.
+- Requiere las columnas `password_reset_*` y la tabla `password_reset_events` de `database/admin_db.sql`, que se puede volver a ejecutar sobre una base existente.

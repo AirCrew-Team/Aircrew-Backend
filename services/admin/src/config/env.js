@@ -10,6 +10,8 @@ module.exports = {
   resendApiKey: process.env.RESEND_API_KEY,
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,
+  // Pantalla del frontend para restablecer la contraseña; el correo agrega ?token=.
+  passwordResetUrl: process.env.PASSWORD_RESET_URL,
   // Quién envía las invitaciones: resend (por defecto) o smtp.
   emailProvider: process.env.EMAIL_PROVIDER?.trim().toLowerCase(),
   smtp: {

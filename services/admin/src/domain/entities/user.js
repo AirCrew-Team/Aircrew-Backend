@@ -11,8 +11,90 @@ function normalizeEmail(email) {
   return email.trim().toLowerCase();
 }
 
+// Datos laborales del supervisor. Los asigna un super_admin; los demás roles no los tienen.
+const SUPERVISOR_BASES = ['ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'];
+const SHIFTS = ['morning', 'afternoon', 'night'];
+const OPERATIONAL_STATUSES = ['available', 'on_duty', 'off_duty', 'leave'];
+const EMPLOYMENT_FIELDS = ['employee_code', 'base', 'shift', 'operational_status'];
+const employeeCodePattern = /^[A-Z0-9-]{3,30}$/;
+
+// null, vacío o solo espacios → null. Si no, el texto sin espacios en los extremos.
+function optionalText(value, message) {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new DomainError(message);
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+// Se guarda en mayúsculas.
+function parseEmployeeCode(value) {
+  const message = 'employee_code debe tener de 3 a 30 caracteres: letras, números o guiones.';
+  const text = optionalText(value, message);
+  if (text === null) return null;
+
+  const code = text.toUpperCase();
+  if (!employeeCodePattern.test(code)) throw new DomainError(message);
+  return code;
+}
+
+// Código del hub en mayúsculas.
+function parseBase(value) {
+  const message = `base debe ser uno de: ${SUPERVISOR_BASES.join(', ')}.`;
+  const text = optionalText(value, message);
+  if (text === null) return null;
+
+  const base = text.toUpperCase();
+  if (!SUPERVISOR_BASES.includes(base)) throw new DomainError(message);
+  return base;
+}
+
+function parseShift(value) {
+  const message = `shift debe ser uno de: ${SHIFTS.join(', ')}.`;
+  const shift = optionalText(value, message);
+  if (shift !== null && !SHIFTS.includes(shift)) throw new DomainError(message);
+  return shift;
+}
+
+// El estado operativo de un supervisor siempre tiene valor: no se puede quitar.
+function parseOperationalStatus(value) {
+  if (!OPERATIONAL_STATUSES.includes(value)) {
+    throw new DomainError(
+      `operational_status debe ser uno de: ${OPERATIONAL_STATUSES.join(', ')}.`
+    );
+  }
+  return value;
+}
+
+function hasEmploymentFields(input) {
+  return EMPLOYMENT_FIELDS.some((field) => input[field] !== undefined);
+}
+
+// Se comprueba antes que los valores: a otro rol no le aplica ninguno.
+function assertEmploymentAllowed(role, input) {
+  if (role !== 'supervisor' && hasEmploymentFields(input)) {
+    throw new DomainError('Los datos laborales solo aplican a supervisores.');
+  }
+}
+
+// Solo los campos enviados, con los nombres que usa el repositorio.
+function parseEmployment(input) {
+  const employment = {};
+  if (input.employee_code !== undefined) {
+    employment.employeeCode = parseEmployeeCode(input.employee_code);
+  }
+  if (input.base !== undefined) employment.base = parseBase(input.base);
+  if (input.shift !== undefined) employment.shift = parseShift(input.shift);
+  if (input.operational_status !== undefined) {
+    employment.operationalStatus = parseOperationalStatus(input.operational_status);
+  }
+  return employment;
+}
+
 // Usuario creado por un super_admin, con contraseña y rol definidos.
-function createUser({ name, email, password, role }) {
+// Un supervisor puede traer sus datos laborales; empieza disponible.
+function createUser(input) {
+  const { name, email, password, role } = input;
+
   if (
     !isNonEmptyString(name) ||
     !isNonEmptyString(email) ||
@@ -34,15 +116,29 @@ function createUser({ name, email, password, role }) {
     );
   }
 
+  assertEmploymentAllowed(role.trim(), input);
+
   if (!isValidPassword(password)) {
     throw new DomainError('La contraseña debe tener entre 12 y 72 bytes.');
   }
+
+  const employment =
+    role.trim() === 'supervisor'
+      ? {
+          employeeCode: null,
+          base: null,
+          shift: null,
+          operationalStatus: 'available',
+          ...parseEmployment(input),
+        }
+      : null;
 
   return {
     name: name.trim(),
     email: normalizeEmail(email),
     password,
     role: role.trim(),
+    employment,
   };
 }
 
@@ -145,7 +241,8 @@ function parseUserFilters({ search, role } = {}) {
 // Cambios que un super_admin puede hacer a un usuario. Solo se aplican los
 // campos enviados. La contraseña no se cambia aquí.
 function validateUserUpdate(requester, target, input) {
-  const { name, email, role, is_active: isActive } = input || {};
+  const fields = input || {};
+  const { name, email, role, is_active: isActive } = fields;
   const changes = {};
 
   if (name !== undefined) {
@@ -186,9 +283,30 @@ function validateUserUpdate(requester, target, input) {
     changes.isActive = isActive;
   }
 
+  // Decide el rol que tendrá la cuenta después del cambio.
+  assertEmploymentAllowed(changes.role || target.role, fields);
+  if (hasEmploymentFields(fields)) {
+    changes.employment = parseEmployment(fields);
+  }
+
+  if (changes.role && changes.role !== target.role) {
+    if (target.role === 'supervisor') {
+      // Deja de ser supervisor: se borran sus datos laborales y su código queda libre.
+      changes.employment = {
+        employeeCode: null,
+        base: null,
+        shift: null,
+        operationalStatus: null,
+      };
+    } else if (changes.role === 'supervisor') {
+      // Nuevo supervisor: empieza disponible, salvo que se envíe otro estado.
+      changes.employment = { operationalStatus: 'available', ...changes.employment };
+    }
+  }
+
   if (Object.keys(changes).length === 0) {
     throw new DomainError(
-      'Envía al menos uno de: name, email, role, is_active.'
+      `Envía al menos uno de: name, email, role, is_active, ${EMPLOYMENT_FIELDS.join(', ')}.`
     );
   }
 

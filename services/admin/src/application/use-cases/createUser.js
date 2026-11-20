@@ -19,6 +19,7 @@ function createCreateUser({ userRepository, passwordHasher }) {
       email: newUser.email,
       passwordHash: await passwordHasher.hash(newUser.password),
       role: newUser.role,
+      employment: newUser.employment,
     });
   };
 }

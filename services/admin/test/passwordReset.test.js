@@ -122,6 +122,21 @@ function createFakeRepository({ users = [USER], events = [], clock }) {
       state.events.push({ userId: user.id, event: 'changed', createdAt: clock.now() });
       return { id: user.id, name: user.name, email: user.email, role: user.role };
     },
+    // Cambio con sesión: como el UPDATE real, también anula el token pendiente.
+    async findPasswordHash(userId) {
+      record('findPasswordHash');
+      const user = state.users.find((candidate) => candidate.id === userId);
+      return user ? { password_hash: user.password_hash, is_active: user.is_active } : null;
+    },
+    async savePasswordChange({ userId, passwordHash }) {
+      record('savePasswordChange');
+      const user = state.users.find((candidate) => candidate.id === userId);
+      user.password_hash = passwordHash;
+      user.password_reset_token_hash = null;
+      user.password_reset_expires_at = null;
+      state.events.push({ userId, event: 'changed', createdAt: clock.now() });
+      return clock.now();
+    },
   };
 
   return repository;
@@ -604,6 +619,31 @@ test('PR-B7: si el token se consume entre la consulta y el cambio, responde 400'
   await assert.rejects(
     context.resetPassword({ token, password: VALID }),
     rejectsWith(400, INVALID_LINK_MESSAGE)
+  );
+});
+
+test('PR-B7: después de cambiar la contraseña con sesión, el enlace pedido antes ya no sirve', async () => {
+  const createChangePassword = require('../src/application/use-cases/changePassword');
+  const context = setup({ users: [{ ...USER, password_hash: `hash:${VALID}` }] });
+  const token = await requestToken(context);
+  const changePassword = createChangePassword({
+    userRepository: context.userRepository,
+    passwordHasher: { ...passwordHasher, compare: async (value, hash) => hash === `hash:${value}` },
+    now: context.clock.now,
+  });
+  await changePassword(
+    { id: USER.id, role: USER.role },
+    { current_password: VALID, new_password: 'b'.repeat(12) }
+  );
+
+  await assert.rejects(
+    context.resetPassword({ token, password: 'c'.repeat(12) }),
+    rejectsWith(400, INVALID_LINK_MESSAGE)
+  );
+  assert.equal(savedUser(context).password_hash, `hash:${'b'.repeat(12)}`);
+  assert.equal(
+    context.userRepository.state.events.filter(({ event }) => event === 'changed').length,
+    1
   );
 });
 

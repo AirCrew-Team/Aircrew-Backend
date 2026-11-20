@@ -101,7 +101,20 @@ function createCheckActivationTokenController(checkActivationToken) {
   };
 }
 
+// Cambio de contraseña con sesión. No toca la cookie: la sesión sigue abierta.
+function createChangePasswordController(changePassword) {
+  return async function handleChangePassword(req, res, next) {
+    try {
+      const result = await changePassword(req.user, req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 module.exports = {
+  createChangePasswordController,
   createLoginController,
   createLogoutController,
   createBootstrapSuperAdminController,

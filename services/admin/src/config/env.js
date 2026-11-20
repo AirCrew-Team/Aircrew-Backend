@@ -10,6 +10,19 @@ module.exports = {
   resendApiKey: process.env.RESEND_API_KEY,
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,
+  // Quién envía las invitaciones: resend (por defecto) o smtp.
+  emailProvider: process.env.EMAIL_PROVIDER?.trim().toLowerCase(),
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT) || 465,
+    // Sin valor queda undefined y el cliente lo deduce del puerto (465 → true).
+    secure: process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE.trim().toLowerCase() === 'true'
+      : undefined,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM,
+  },
   activationTokenExpiresMinutes:
     Number(process.env.ACTIVATION_TOKEN_EXPIRES_MINUTES) || 1440,
   nameService: 'admin',

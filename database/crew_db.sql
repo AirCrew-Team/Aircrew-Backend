@@ -35,3 +35,79 @@ CREATE TABLE IF NOT EXISTS public.absences (
 -- Quién cubrió la ausencia y cuándo. ALTER para bases creadas antes de estas columnas.
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS replacement_user_id UUID;
 ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS covered_at TIMESTAMPTZ;
+
+-- Ausencias por fechas: el vuelo pasa a ser opcional. Las filas antiguas por
+-- vuelo siguen valiendo (sus fechas quedan en NULL y el CHECK las acepta).
+ALTER TABLE public.absences ALTER COLUMN flight_id DROP NOT NULL;
+ALTER TABLE public.absences ALTER COLUMN flight_number DROP NOT NULL;
+ALTER TABLE public.absences ALTER COLUMN flight_departure_at DROP NOT NULL;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE public.absences ADD COLUMN IF NOT EXISTS end_date DATE;
+
+-- Los ALTER de restricciones van en DO para poder ejecutar el script varias veces.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.absences'::regclass
+      AND conname = 'absences_dates_check'
+  ) THEN
+    ALTER TABLE public.absences
+      ADD CONSTRAINT absences_dates_check CHECK (end_date >= start_date);
+  END IF;
+END $$;
+
+-- Las dos fechas van juntas: ambas o ninguna.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.absences'::regclass
+      AND conname = 'absences_date_pair_check'
+  ) THEN
+    ALTER TABLE public.absences
+      ADD CONSTRAINT absences_date_pair_check
+      CHECK ((start_date IS NULL) = (end_date IS NULL));
+  END IF;
+END $$;
+
+-- Toda ausencia es por vuelo (las antiguas) o por fechas.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.absences'::regclass
+      AND conname = 'absences_flight_or_dates_check'
+  ) THEN
+    ALTER TABLE public.absences
+      ADD CONSTRAINT absences_flight_or_dates_check
+      CHECK (flight_id IS NOT NULL OR start_date IS NOT NULL);
+  END IF;
+END $$;
+
+-- Comprobante de la ausencia (PDF, PNG o JPG de hasta 10 MB). Se guarda en la
+-- base porque el despliegue no tiene disco persistente. Las consultas de la
+-- lista y del detalle solo leen los metadatos; data se lee al descargar.
+CREATE TABLE IF NOT EXISTS public.absence_attachments (
+  absence_id UUID        PRIMARY KEY REFERENCES public.absences(id) ON DELETE CASCADE,
+  file_name  TEXT        NOT NULL,
+  mime_type  TEXT        NOT NULL
+    CHECK (mime_type IN ('application/pdf', 'image/png', 'image/jpeg')),
+  size_bytes INTEGER     NOT NULL,
+  data       BYTEA       NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Tamaño entre 1 byte y 10 MB, el mismo límite que valida el servicio.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.absence_attachments'::regclass
+      AND conname = 'absence_attachments_size_check'
+  ) THEN
+    ALTER TABLE public.absence_attachments
+      ADD CONSTRAINT absence_attachments_size_check
+      CHECK (size_bytes BETWEEN 1 AND 10485760);
+  END IF;
+END $$;

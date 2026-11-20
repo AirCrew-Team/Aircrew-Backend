@@ -111,10 +111,15 @@ components:
       properties:
         absence:
           type: object
-          required: [id, flight_number]
-          description: La ausencia tal como la devuelve Crew.
+          required: [id]
+          description: |
+            La ausencia tal como la devuelve Crew. Necesita `flight_number` (ausencias antiguas por vuelo)
+            o `start_date` y `end_date` (por fechas). Por fechas, el mensaje queda así:
+            «EMP-004 no podrá trabajar del 20 nov al 22 nov (incapacidad).»
           properties:
             id: { type: string, format: uuid }
-            flight_number: { type: string, example: AC201 }
+            flight_number: { type: string, nullable: true, example: AC201 }
+            start_date: { type: string, format: date, nullable: true, example: '2026-11-20' }
+            end_date: { type: string, format: date, nullable: true, example: '2026-11-22' }
             employee_code: { type: string, nullable: true, example: EMP-004 }
             reason: { type: string, enum: [illness, fatigue, emergency, transfer] }

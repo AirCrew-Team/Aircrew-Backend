@@ -46,6 +46,7 @@ function createGetCandidates({ crewClient, flightsClient, suggestionRepository }
     return {
       absence: {
         id: absence.id,
+        code: absence.code || null,
         crew_user_id: absence.crew_user_id,
         crew_name: absence.crew_name || null,
         employee_code: absence.employee_code || null,

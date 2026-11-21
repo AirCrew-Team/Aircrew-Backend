@@ -1,6 +1,7 @@
 const pool = require('../pool');
 
-const absenceColumns = `id, crew_user_id, flight_id, flight_number,
+// code: número de solicitud legible para el supervisor (SOL-00042).
+const absenceColumns = `id, 'SOL-' || lpad(request_number::text, 5, '0') AS code, crew_user_id, flight_id, flight_number,
        flight_departure_at, flight_origin, flight_destination, slot_role,
        reason, notes, status, suggestions_state, replacement_user_id,
        approved_by, approved_at, deadline_at, candidate_count, replacement_option,
@@ -8,7 +9,8 @@ const absenceColumns = `id, crew_user_id, flight_id, flight_number,
 
 // Ausencia con el código, cargo y rango del tripulante que se ausentó.
 const absenceWithCrewMember = `
-  SELECT a.id, a.crew_user_id, a.flight_id, a.flight_number,
+  SELECT a.id, 'SOL-' || lpad(a.request_number::text, 5, '0') AS code,
+         a.crew_user_id, a.flight_id, a.flight_number,
          a.flight_departure_at, a.flight_origin, a.flight_destination,
          a.slot_role, a.reason, a.notes, a.status, a.suggestions_state,
          a.replacement_user_id, a.approved_by, a.approved_at, a.deadline_at,

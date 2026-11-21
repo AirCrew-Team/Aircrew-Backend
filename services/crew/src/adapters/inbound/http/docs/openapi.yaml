@@ -619,6 +619,7 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
         crew_user_id: { type: string, format: uuid }
         flight_id: { type: string, format: uuid }
         flight_number: { type: string, example: AC201 }
@@ -654,6 +655,7 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
         flight_id: { type: string, format: uuid }
         flight_number: { type: string, example: AV-9344 }
         origin: { type: string, example: BOG }

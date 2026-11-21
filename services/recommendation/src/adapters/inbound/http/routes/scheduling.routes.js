@@ -29,9 +29,9 @@ const supervisors = [verifyJwt, allowRoles('supervisor', 'super_admin')];
 
 const scheduleRouter = express.Router();
 scheduleRouter.get('/days', ...supervisors, respond(200, (req, auth) =>
-  scheduling.getScheduleDays({ from: req.query.from, days: req.query.days }, auth)));
+  scheduling.getScheduleDays({ from: req.query.from, days: req.query.days, base: req.query.base }, auth)));
 scheduleRouter.get('/', ...supervisors, respond(200, (req, auth) =>
-  scheduling.getSchedule({ date: req.query.date }, auth)));
+  scheduling.getSchedule({ date: req.query.date, base: req.query.base }, auth)));
 
 const flightRouter = express.Router();
 flightRouter.get('/:id/plan', ...supervisors, respond(200, (req, auth) =>

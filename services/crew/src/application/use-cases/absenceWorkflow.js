@@ -149,6 +149,7 @@ function createAbsenceWorkflow({ absenceRepository, attachUserNames, notificatio
 
     return named.sort(trackingOrder).map((absence) => ({
       id: absence.id,
+      code: absence.code,
       flight_id: absence.flight_id,
       flight_number: absence.flight_number,
       origin: absence.flight_origin,

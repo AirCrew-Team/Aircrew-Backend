@@ -192,6 +192,10 @@ paths:
           in: query
           description: De 1 a 14. Por defecto 7.
           schema: { type: integer, example: 7 }
+        - name: base
+          in: query
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
+          schema: { type: string, example: BOG }
       responses:
         '200':
           description: Un elemento por día
@@ -218,6 +222,10 @@ paths:
           in: query
           description: AAAA-MM-DD (hora de Colombia). Por defecto, hoy.
           schema: { type: string, example: '2026-11-20' }
+        - name: base
+          in: query
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
+          schema: { type: string, example: BOG }
       responses:
         '200':
           description: Vuelos programados
@@ -498,6 +506,7 @@ components:
           type: object
           properties:
             id: { type: string, format: uuid }
+            code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
             crew_user_id: { type: string, format: uuid }
             crew_name: { type: string, nullable: true }
             employee_code: { type: string, nullable: true }

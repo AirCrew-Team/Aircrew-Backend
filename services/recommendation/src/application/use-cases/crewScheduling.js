@@ -14,7 +14,22 @@ const {
 const { DomainError } = require('../../domain/errors');
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const basePattern = /^[A-Z]{3}$/;
 const MAX_DAYS = 14;
+
+// ?base=BOG: solo los vuelos que salen de esa base. Sin base, todos.
+function parseBase(base) {
+  if (base === undefined || base === '') return null;
+  const code = String(base).toUpperCase();
+  if (!basePattern.test(code)) {
+    throw new DomainError('base debe ser un código IATA de 3 letras, por ejemplo BOG.', 400, { field: 'base' });
+  }
+  return code;
+}
+
+function departingFrom(flights, base) {
+  return base ? flights.filter((flight) => flight.origin === base) : flights;
+}
 
 function todayInBogota() {
   return bogotaDate(new Date());
@@ -61,7 +76,8 @@ function createCrewScheduling({
   }
 
   // Resumen de los próximos días: cuántos vuelos y cuántos sin tripulación confirmada.
-  async function getScheduleDays({ from, days } = {}, authorization) {
+  async function getScheduleDays({ from, days, base } = {}, authorization) {
+    const origin = parseBase(base);
     const start = from || todayInBogota();
     const count = days === undefined ? 7 : Number(days);
     if (!datePattern.test(start)) {
@@ -72,9 +88,9 @@ function createCrewScheduling({
     }
 
     const end = addDays(start, count);
-    const flights = await flightsClient.listFlights(
-      { from: bogotaDayRange(start).from, to: bogotaDayRange(end).from },
-      authorization
+    const flights = departingFrom(
+      await flightsClient.listFlights({ from: bogotaDayRange(start).from, to: bogotaDayRange(end).from }, authorization),
+      origin
     );
 
     return Array.from({ length: count }, (_, index) => {
@@ -89,13 +105,14 @@ function createCrewScheduling({
   }
 
   // Vuelos de un día con sus puestos.
-  async function getSchedule({ date } = {}, authorization) {
+  async function getSchedule({ date, base } = {}, authorization) {
+    const origin = parseBase(base);
     const day = date || todayInBogota();
     if (!datePattern.test(day)) {
       throw new DomainError('date debe tener el formato AAAA-MM-DD.', 400, { field: 'date' });
     }
 
-    const flights = await flightsClient.listFlights(bogotaDayRange(day), authorization);
+    const flights = departingFrom(await flightsClient.listFlights(bogotaDayRange(day), authorization), origin);
     const [members, assignments] = await Promise.all([
       crewClient.getCrewMembers(authorization),
       flightsClient.getAssignments(monthWindowForDay(day), authorization),

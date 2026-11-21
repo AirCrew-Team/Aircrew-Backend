@@ -415,39 +415,56 @@ paths:
   /users:
     get:
       tags: [Usuarios]
-      summary: Listar usuarios (solo super_admin)
-      description: Ordenados por nombre. Sin paginación.
+      summary: Listar usuarios, paginado (solo super_admin)
+      description: |
+        Pantalla Usuarios. Ordenados por nombre. Cada fila trae el código, la base y el estado:
+        del supervisor salen de Admin y del tripulante, de su perfil en Crew. Si Crew no responde,
+        la lista sale igual con esos campos del tripulante en `null` (el detalle queda en el log).
       security:
         - bearerAuth: []
       parameters:
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page_size
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
         - name: search
           in: query
           required: false
-          description: Busca en nombre o email, sin importar mayúsculas.
-          schema: { type: string, example: samuel }
+          description: Busca en nombre, email, código, base y cargo, sin mayúsculas ni tildes.
+          schema: { type: string, example: benitez }
         - name: role
           in: query
           required: false
           schema: { $ref: '#/components/schemas/Role' }
       responses:
         '200':
-          description: Usuarios
+          description: Página de usuarios
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/UserListPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Usuarios]
-      summary: Crear un supervisor o super_admin (solo super_admin)
+      summary: Crear un usuario de cualquier rol (solo super_admin)
       description: |
-        Los tripulantes no se crean aquí; se registran con POST /crew/crew-members, que crea la cuenta y el perfil juntos.
-        Un supervisor puede traer sus datos laborales (`employee_code`, `base`, `shift`, `operational_status`);
-        `operational_status` vale `available` si no se envía. Para un super_admin, cualquiera de esos campos
-        responde 400 («Los datos laborales solo aplican a supervisores.»).
+        Todas las altas entran por aquí: tripulante (`crew`), supervisor o super_admin. No lleva
+        contraseña (enviar `password` responde 400): la cuenta nace pendiente y la persona recibe un
+        correo con `CREW_ACTIVATION_URL?token=...` para crear su contraseña con POST /auth/activate.
+
+        - **Supervisor:** puede traer sus datos laborales (`employee_code`, `base`, `shift`,
+          `operational_status`); `operational_status` vale `available` si no se envía.
+        - **Tripulante:** requiere `employee_code` y `position` (cargo, p. ej. «Comandante»); `base` y
+          `status` son opcionales. Admin le pide a Crew que guarde ese perfil.
+        - **super_admin:** sin datos laborales ni perfil.
+
+        Orden: cuenta pendiente → perfil en Crew (solo tripulante) → correo. Si un paso falla, se
+        deshacen los anteriores y no sale ningún correo, así que se puede reintentar con el mismo email.
       security:
         - bearerAuth: []
       requestBody:
@@ -457,33 +474,69 @@ paths:
             schema:
               allOf:
                 - type: object
-                  required: [name, email, password, role]
+                  required: [name, email, role]
                   properties:
-                    name: { type: string }
+                    name: { type: string, example: Diego Salcedo }
                     email: { type: string, format: email }
-                    password:
+                    role: { $ref: '#/components/schemas/Role' }
+                    phone:
                       type: string
-                      format: password
-                      minLength: 12
-                      description: Entre 12 y 72 bytes UTF-8.
-                    role: { type: string, enum: [supervisor, super_admin] }
+                      nullable: true
+                      description: 7 a 15 dígitos, puede empezar con +. Se guarda sin espacios.
+                      example: '+14045550142'
                 - $ref: '#/components/schemas/EmploymentInput'
+                - $ref: '#/components/schemas/CrewProfileInput'
       responses:
         '201':
-          description: Usuario creado. No incluye token; el usuario obtiene el suyo con POST /auth/login.
+          description: Cuenta pendiente creada (y perfil en Crew si es tripulante) y correo enviado.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/UserItem' }
         '400':
           description: |
-            Datos inválidos: faltan campos, rol o contraseña no válidos, datos laborales con otro formato,
-            o datos laborales para un super_admin.
+            Datos inválidos: faltan campos, se envió `password`, rol no válido, datos laborales para un
+            rol que no es supervisor, `position`/`status` para un rol que no es tripulante, o Crew
+            rechazó el perfil (su mensaje llega tal cual).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/DuplicateUser' }
+        '409':
+          description: |
+            Email repetido, código de supervisor repetido o código de tripulante repetido en Crew
+            («Ya existe un tripulante con ese código de empleado.»).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: No se pudo enviar el correo o Crew no respondió. No queda nada creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Falta configuración (correo, `ADMIN_SERVICE_KEY` o la duración del enlace). No queda nada creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users/stats:
+    get:
+      tags: [Usuarios]
+      summary: Indicadores de la pantalla Usuarios (solo super_admin)
+      description: |
+        `on_duty` cuenta tripulantes y supervisores en `on_duty`; `in_flight`, tripulantes en `in_flight`.
+        `medical_fitness_percent` es `null`: todavía no hay datos de aptitud médica.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /users/me:
     get:
@@ -622,7 +675,9 @@ paths:
     get:
       tags: [Usuarios]
       summary: Consultar un usuario
-      description: super_admin puede consultar cualquier usuario; los demás roles, solo su propia cuenta.
+      description: |
+        super_admin puede consultar cualquier usuario; los demás roles, solo su propia cuenta.
+        Mismos campos que una fila de GET /users.
       security:
         - bearerAuth: []
       parameters:
@@ -635,7 +690,7 @@ paths:
           description: Usuario encontrado
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/UserItem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
@@ -657,6 +712,12 @@ paths:
         supervisores.»). `null` o vacío quita el código, la base o el turno; el estado no se puede quitar.
         Al pasar de supervisor a super_admin se borran sus datos laborales (su código queda libre), y al
         pasar de super_admin a supervisor empieza `available`, salvo que se envíe otro estado.
+
+        **Tripulante:** `employee_code`, `position`, `base` y `status` se guardan en su perfil de Crew
+        (`shift` y `operational_status` responden 400). Crew se actualiza primero; si después falla
+        Admin, Crew vuelve a como estaba. `is_active` también se aplica en Crew.
+
+        `phone` se puede editar en cualquier rol; `null` o vacío lo quita.
       security:
         - bearerAuth: []
       parameters:
@@ -675,15 +736,17 @@ paths:
                   properties:
                     name: { type: string }
                     email: { type: string, format: email }
+                    phone: { type: string, nullable: true }
                     role: { type: string, enum: [supervisor, super_admin] }
                     is_active: { type: boolean }
                 - $ref: '#/components/schemas/EmploymentInput'
+                - $ref: '#/components/schemas/CrewProfileInput'
       responses:
         '200':
           description: Usuario actualizado
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/UserItem' }
         '400':
           description: |
             Datos inválidos, body sin campos, datos laborales con otro formato o datos laborales para una
@@ -710,8 +773,8 @@ paths:
       summary: Desactivar un usuario (solo super_admin)
       description: |
         No borra el registro (ausencias y asignaciones guardan su id): lo deja con
-        `is_active=false` y ya no puede iniciar sesión. Un token ya emitido sigue
-        siendo válido hasta que vence (1 h).
+        `is_active=false` y ya no puede iniciar sesión. Si es tripulante, su perfil en Crew
+        también queda inactivo. Un token ya emitido sigue siendo válido hasta que vence (1 h).
       security:
         - bearerAuth: []
       parameters:
@@ -724,7 +787,7 @@ paths:
           description: Usuario desactivado
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema: { $ref: '#/components/schemas/UserItem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
@@ -734,6 +797,11 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
           description: Un super_admin no puede desactivarse a sí mismo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Crew no respondió; no se cambió nada.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -917,7 +985,69 @@ components:
           properties:
             is_active: { type: boolean }
             created_at: { type: string, format: date-time }
-            pending_activation: { type: boolean, description: Tripulante invitado que todavía no activa su cuenta. }
+            pending_activation: { type: boolean, description: Usuario invitado que todavía no activa su cuenta. }
+    CrewStatus:
+      type: string
+      description: available (Disponible), on_duty (De guardia), in_flight (En vuelo) o medical_leave (Permiso médico).
+      enum: [available, on_duty, in_flight, medical_leave]
+    CrewProfileInput:
+      type: object
+      description: |
+        Solo para tripulantes; se guarda en Crew. Al crear, `employee_code` y `position` son obligatorios.
+        `employee_code` (3 a 30 letras, números o guiones) se guarda en mayúsculas y es único entre los
+        tripulantes. `base` es un hub de Delta.
+      properties:
+        employee_code: { type: string, example: AC-1108 }
+        position: { type: string, maxLength: 40, example: Comandante }
+        base:
+          allOf:
+            - $ref: '#/components/schemas/SupervisorBase'
+          nullable: true
+        status: { $ref: '#/components/schemas/CrewStatus' }
+    UserItem:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          description: |
+            Fila y ficha de la pantalla Usuarios. Tripulante: código, cargo, base y estado de su perfil en
+            Crew (`null` si Crew no respondió). Supervisor: sus datos laborales; `status` es su
+            `operational_status`. super_admin: todo en `null`.
+          properties:
+            phone: { type: string, nullable: true }
+            employee_code: { type: string, nullable: true }
+            position: { type: string, nullable: true, description: Solo tripulantes. }
+            base: { type: string, nullable: true }
+            status:
+              type: string
+              nullable: true
+              description: Tripulante, un CrewStatus; supervisor, un OperationalStatus.
+            shift:
+              allOf:
+                - $ref: '#/components/schemas/Shift'
+              nullable: true
+              description: Solo supervisores.
+    UserListPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/UserItem' }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer, description: Usuarios que cumplen los filtros, en todas las páginas. }
+    UserStats:
+      type: object
+      properties:
+        total: { type: integer }
+        by_role:
+          type: object
+          properties:
+            crew: { type: integer }
+            supervisor: { type: integer }
+            super_admin: { type: integer }
+        in_flight: { type: integer }
+        on_duty: { type: integer }
+        medical_fitness_percent: { type: number, nullable: true }
     Notifications:
       type: object
       description: Claves de crew `replacement_assigned`; de supervisor, `absence_reported` y `absence_covered`. El super_admin no tiene.

@@ -74,7 +74,28 @@ Admin, Crew y Flights publican su contrato OpenAPI con Swagger UI:
 
 Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/openapi.yaml`. Si cambias un endpoint, actualiza también ese archivo. Para probar rutas protegidas, inicia sesión en Admin (`POST /auth/login`), copia el `token` y pégalo en el botón **Authorize**.
 
-## Invitación de tripulantes
+## Usuarios (pantalla del super_admin)
+
+Todas las altas entran por Admin: tripulante, supervisor o super_admin. El super_admin no define contraseñas. La cuenta nace pendiente, la persona recibe un correo de invitación y crea su contraseña al activarla (ver «Invitación por correo»).
+
+- `POST /users` (solo super_admin) recibe `{ name, email, role, phone? }` y, según el rol:
+  - **Supervisor:** sus datos laborales, opcionales (ver «Datos laborales del supervisor»).
+  - **Tripulante (`crew`):** `employee_code` y `position` (el cargo, por ejemplo «Comandante»), obligatorios, y `base` (un hub de Delta) y `status`, opcionales. Admin le pide a Crew que guarde ese perfil.
+  - **super_admin:** sin datos laborales ni perfil.
+  - Enviar `password` responde `400`. `position` o `status` en otro rol responden `400`, igual que `shift` u `operational_status` en un tripulante.
+  - Orden: cuenta pendiente en Admin, perfil en Crew (solo tripulantes) y correo. Si un paso falla, se deshacen los anteriores y no sale ningún correo, así que se puede reintentar con el mismo email. Un código de tripulante repetido responde `409` («Ya existe un tripulante con ese código de empleado.»).
+- `GET /users` (solo super_admin) es paginado: `?page=1&page_size=10&search=&role=`, con `page_size` de 1 a 100, y responde `{ items, page, page_size, total }`. `search` busca en nombre, correo, código, base y cargo, sin mayúsculas ni tildes.
+  - Cada fila trae `phone`, `employee_code`, `position`, `base`, `status` y `shift`. Del tripulante salen de Crew; del supervisor, de sus datos laborales (`status` es su `operational_status`); al super_admin no le aplican y van en `null`.
+  - Si Crew no responde, la lista sale igual con los campos del tripulante en `null`.
+- `GET /users/stats` (solo super_admin) responde `{ total, by_role: { crew, supervisor, super_admin }, in_flight, on_duty, medical_fitness_percent }`. `on_duty` cuenta tripulantes y supervisores. `medical_fitness_percent` es `null` porque todavía no hay datos de aptitud médica.
+- `GET /users/:id` responde lo mismo que una fila de la lista.
+- `PATCH /users/:id` también recibe `phone`, para cualquier rol. En un tripulante, `employee_code`, `position`, `base` y `status` van a su perfil de Crew. Crew se actualiza primero; si después falla Admin, Crew vuelve a como estaba.
+- `DELETE /users/:id` desactiva la cuenta y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- Crew ya no tiene `POST /crew-members`. Admin usa las rutas internas `/internal/crew-members` de Crew con el header `x-service-key`, y `ADMIN_SERVICE_KEY` debe ser igual en `services/admin/.env` y `services/crew/.env`. Admin las encuentra en `CREW_SERVICE_URL` (por defecto `http://localhost:3002`).
+- Requiere la columna `base` de `crew_members` en `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
+- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`.
+
+### Invitación por correo
 
 Configura en `services/admin/.env`:
 
@@ -105,9 +126,9 @@ EMAIL_PROVIDER=smtp
   5. El plan gratis de Brevo tiene un límite diario de envíos.
   6. Si el log del admin muestra un 401 o 403 de Brevo, revisa en Brevo la lista de IP autorizadas (las IP de salida de Railway no son fijas, así que conviene desactivar ese bloqueo) y que la cuenta tenga activos los correos transaccionales.
 
-Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y la cuenta pendiente se borra, así que se puede reintentar con el mismo correo.
+Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y se borran la cuenta pendiente y, si es tripulante, su perfil en Crew, así que se puede reintentar con el mismo correo.
 
-`CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña.
+`CREW_SERVICE_KEY` debe coincidir en Admin y Crew: Crew la usa para pedirle a Admin los nombres de los usuarios (`POST /users/lookup`).
 
 ### Recuperación de contraseña
 
@@ -156,6 +177,18 @@ Los asigna un super_admin con `POST /users` y `PATCH /users/:id` (por ahora desd
 - Cualquiera de esos campos para una cuenta que no es supervisor responde `400` («Los datos laborales solo aplican a supervisores.»). En `PATCH` cuenta el rol que tendrá la cuenta después del cambio.
 - Al pasar de supervisor a super_admin se borran sus datos laborales y su código queda libre. Al pasar de super_admin a supervisor empieza `available`, salvo que se envíe otro estado.
 - Requiere las columnas `employee_code`, `base`, `shift` y `operational_status` de `users` y el índice `users_employee_code_unique` de `database/admin_db.sql`. El script deja `available` a los supervisores que ya existían.
+
+## Aeronaves (servicio flights)
+
+Pantalla Aeronaves del super_admin. El contrato completo está en el Swagger de flights.
+
+- Todo es solo para super_admin: el supervisor no tiene permisos sobre las aeronaves.
+- `GET /aircraft` (paginado: `page`, `page_size`, `search`, `status`), `GET /aircraft/stats`, `GET /aircraft/options` (modelos, bases y motivos de mantenimiento con sus tareas) y `GET /aircraft/manifest`.
+- `POST /aircraft`, `PUT /aircraft/:id` y `DELETE /aircraft/:id`. La capacidad y la tripulación mínima salen del modelo. Una aeronave con vuelos no se elimina (`409`).
+- Mantenimiento: al pasar a `maintenance` se abre una orden con las tareas del motivo. `PATCH /aircraft/:id/maintenance/tasks/:index` marca una tarea y `POST /aircraft/:id/release` la devuelve a servicio solo con todas hechas. El informe está en `GET /aircraft/:id/report`.
+- Foto: `GET`, `PUT` y `DELETE /aircraft/:id/photo`, con las mismas reglas que la foto de perfil.
+- Requiere volver a ejecutar `database/flights_db.sql`: agrega las columnas nuevas, quita `initial_destination` y `final_destination`, y crea `aircraft_photos` y `aircraft_maintenance_orders`.
+- Tests: `npm test -w @vuelos/flights`.
 
 ## Ausencias (servicio crew)
 

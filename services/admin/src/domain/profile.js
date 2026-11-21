@@ -214,6 +214,7 @@ function validatePasswordChange(input) {
 }
 
 module.exports = {
+  parsePhone,
   toProfile,
   validateProfileUpdate,
   parsePhoto,

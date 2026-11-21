@@ -1,5 +1,6 @@
 const { DomainError } = require('../errors');
 const { isValidPassword } = require('../value-objects/password');
+const { parsePhone } = require('../profile');
 
 const ROLES = ['crew', 'supervisor', 'super_admin'];
 
@@ -69,11 +70,49 @@ function hasEmploymentFields(input) {
   return EMPLOYMENT_FIELDS.some((field) => input[field] !== undefined);
 }
 
+// Campos del perfil de Crew que solo tiene un tripulante.
+const CREW_ONLY_FIELDS = ['position', 'status'];
+// El tripulante también tiene código y base, pero en su perfil de Crew.
+const CREW_PROFILE_FIELDS = ['employee_code', 'position', 'base', 'status'];
+
 // Se comprueba antes que los valores: a otro rol no le aplica ninguno.
 function assertEmploymentAllowed(role, input) {
-  if (role !== 'supervisor' && hasEmploymentFields(input)) {
+  const supervisorOnly =
+    role === 'crew' ? ['shift', 'operational_status'] : EMPLOYMENT_FIELDS;
+
+  if (role !== 'supervisor' && supervisorOnly.some((field) => input[field] !== undefined)) {
     throw new DomainError('Los datos laborales solo aplican a supervisores.');
   }
+
+  if (role !== 'crew' && CREW_ONLY_FIELDS.some((field) => input[field] !== undefined)) {
+    throw new DomainError('position y status solo aplican a tripulantes.');
+  }
+}
+
+// Perfil de Crew de un tripulante, con los nombres que espera Crew. Admin valida
+// el código y el hub; Crew valida el cargo y el estado, y es quien lo guarda.
+function parseCrewProfile(input, { required }) {
+  const profile = {};
+
+  if (required || input.employee_code !== undefined) {
+    const code = parseEmployeeCode(input.employee_code ?? null);
+    if (code === null) {
+      throw new DomainError('Un tripulante necesita employee_code.');
+    }
+    profile.employee_code = code;
+  }
+
+  if (required || input.position !== undefined) {
+    if (!isNonEmptyString(input.position)) {
+      throw new DomainError('Un tripulante necesita position (su cargo).');
+    }
+    profile.position = input.position.trim();
+  }
+
+  if (input.base !== undefined) profile.base = parseBase(input.base);
+  if (input.status !== undefined) profile.status = input.status;
+
+  return profile;
 }
 
 // Solo los campos enviados, con los nombres que usa el repositorio.
@@ -90,37 +129,28 @@ function parseEmployment(input) {
   return employment;
 }
 
-// Usuario creado por un super_admin, con contraseña y rol definidos.
+// Usuario invitado por un super_admin: la cuenta nace pendiente y cada persona
+// crea su contraseña al activarla desde el correo.
 // Un supervisor puede traer sus datos laborales; empieza disponible.
+// Un tripulante trae su perfil de Crew (código, cargo, base y estado).
 function createUser(input) {
-  const { name, email, password, role } = input;
+  const { name, email, password, role, phone } = input;
 
-  if (
-    !isNonEmptyString(name) ||
-    !isNonEmptyString(email) ||
-    typeof password !== 'string' ||
-    !password ||
-    !isNonEmptyString(role)
-  ) {
-    throw new DomainError('Se requieren name, email, password y role.');
+  if (!isNonEmptyString(name) || !isNonEmptyString(email) || !isNonEmptyString(role)) {
+    throw new DomainError('Se requieren name, email y role.');
   }
 
-  if (!ROLES.includes(role.trim())) {
-    throw new DomainError('role debe ser supervisor o super_admin.');
-  }
-
-  // Un tripulante necesita su perfil en Crew; Crew crea la cuenta y el perfil juntos.
-  if (role.trim() === 'crew') {
+  if (password !== undefined) {
     throw new DomainError(
-      'Los tripulantes se registran con POST /crew/crew-members.'
+      'No envíes password: cada usuario crea su contraseña al activar su cuenta.'
     );
   }
 
-  assertEmploymentAllowed(role.trim(), input);
-
-  if (!isValidPassword(password)) {
-    throw new DomainError('La contraseña debe tener entre 12 y 72 bytes.');
+  if (!ROLES.includes(role.trim())) {
+    throw new DomainError(`role debe ser uno de: ${ROLES.join(', ')}.`);
   }
+
+  assertEmploymentAllowed(role.trim(), input);
 
   const employment =
     role.trim() === 'supervisor'
@@ -136,9 +166,10 @@ function createUser(input) {
   return {
     name: name.trim(),
     email: normalizeEmail(email),
-    password,
+    phone: phone === undefined ? null : parsePhone(phone),
     role: role.trim(),
     employment,
+    crewProfile: role.trim() === 'crew' ? parseCrewProfile(input, { required: true }) : null,
   };
 }
 
@@ -159,19 +190,6 @@ function createSuperAdmin({ name, email, password }) {
     email: normalizeEmail(email),
     password,
     role: 'super_admin',
-  };
-}
-
-// Tripulante invitado: la cuenta nace inactiva y sin contraseña propia.
-function createCrewInvitation({ name, email }) {
-  if (!isNonEmptyString(name) || !isNonEmptyString(email)) {
-    throw new DomainError('Se requieren name y email.');
-  }
-
-  return {
-    name: name.trim(),
-    email: normalizeEmail(email),
-    role: 'crew',
   };
 }
 
@@ -250,6 +268,39 @@ function parseUserFilters({ search, role } = {}) {
   };
 }
 
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 100;
+
+// Sin mayúsculas ni tildes: «benitez» encuentra «Benítez».
+function normalizeSearchText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+// Página, búsqueda y rol de la lista de la pantalla Usuarios.
+function parseUserListParams({ page, page_size: pageSize, search, role } = {}) {
+  const pageNumber = page === undefined || page === '' ? 1 : Number(page);
+  const size = pageSize === undefined || pageSize === '' ? DEFAULT_PAGE_SIZE : Number(pageSize);
+
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    throw new DomainError('page debe ser un entero mayor o igual a 1.');
+  }
+
+  if (!Number.isInteger(size) || size < 1 || size > MAX_PAGE_SIZE) {
+    throw new DomainError(`page_size debe ser un entero de 1 a ${MAX_PAGE_SIZE}.`);
+  }
+
+  return {
+    page: pageNumber,
+    pageSize: size,
+    search: typeof search === 'string' ? normalizeSearchText(search) : '',
+    role: parseUserFilters({ role }).role,
+  };
+}
+
 // Cambios que un super_admin puede hacer a un usuario. Solo se aplican los
 // campos enviados. La contraseña no se cambia aquí.
 function validateUserUpdate(requester, target, input) {
@@ -271,6 +322,10 @@ function validateUserUpdate(requester, target, input) {
     changes.email = normalizeEmail(email);
   }
 
+  if (fields.phone !== undefined) {
+    changes.phone = parsePhone(fields.phone);
+  }
+
   if (role !== undefined) {
     // Un tripulante tiene perfil en Crew: su rol no se cambia desde aquí.
     if (target.role === 'crew' || !STAFF_ROLES.includes(role)) {
@@ -288,7 +343,7 @@ function validateUserUpdate(requester, target, input) {
     // Activarla aquí rompería su enlace de activación.
     if (isActive === true && target.pending_activation) {
       throw new DomainError(
-        'La cuenta está pendiente de activación: el tripulante debe activarla desde su correo.',
+        'La cuenta está pendiente de activación: la persona debe activarla desde su correo.',
         409
       );
     }
@@ -297,7 +352,12 @@ function validateUserUpdate(requester, target, input) {
 
   // Decide el rol que tendrá la cuenta después del cambio.
   assertEmploymentAllowed(changes.role || target.role, fields);
-  if (hasEmploymentFields(fields)) {
+  if (target.role === 'crew') {
+    // El rol de un tripulante no cambia: sus datos van a su perfil de Crew.
+    if (CREW_PROFILE_FIELDS.some((field) => fields[field] !== undefined)) {
+      changes.crewProfile = parseCrewProfile(fields, { required: false });
+    }
+  } else if (hasEmploymentFields(fields)) {
     changes.employment = parseEmployment(fields);
   }
 
@@ -318,7 +378,7 @@ function validateUserUpdate(requester, target, input) {
 
   if (Object.keys(changes).length === 0) {
     throw new DomainError(
-      `Envía al menos uno de: name, email, role, is_active, ${EMPLOYMENT_FIELDS.join(', ')}.`
+      `Envía al menos uno de: name, email, phone, role, is_active, ${EMPLOYMENT_FIELDS.join(', ')}, position, status.`
     );
   }
 
@@ -355,12 +415,13 @@ module.exports = {
   ROLES,
   isValidUserId,
   parseUserFilters,
+  parseUserListParams,
+  normalizeSearchText,
   validateUserUpdate,
   validateLookupIds,
   normalizeEmail,
   createUser,
   createSuperAdmin,
-  createCrewInvitation,
   validateActivation,
   validatePasswordResetRequest,
   validatePasswordReset,

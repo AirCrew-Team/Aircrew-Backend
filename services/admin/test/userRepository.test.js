@@ -97,9 +97,11 @@ test('CF-B4: crear el primer super_admin fija password_changed_at', async (t) =>
 test('CF-B4: la invitación de un tripulante deja password_changed_at vacío hasta que active la cuenta', async (t) => {
   const db = useFakeDb(t);
 
-  await userRepository.createPendingCrewUser({
+  await userRepository.createPendingUser({
     name: 'Ana Pérez',
     email: 'ana@aircrew.test',
+    role: 'crew',
+    employment: null,
     passwordHash: 'hash-temporal',
     activationTokenHash: 'hash-token',
     activationExpiresAt: CHANGED_AT,
@@ -319,9 +321,11 @@ test('CF-B7: updateUser cambia solo los datos laborales enviados y puede dejarlo
     sql,
     /operational_status = CASE WHEN \$12::boolean THEN \$13 ELSE operational_status END/
   );
-  // [id, name, email, role, is_active, ¿código?, código, ¿base?, base, ¿turno?, turno, ¿estado?, estado]
+  // [id, name, email, role, is_active, ¿código?, código, ¿base?, base, ¿turno?, turno,
+  //  ¿estado?, estado, ¿celular?, celular]
   assert.deepEqual(params, [
     USER_ID, null, null, null, null, true, null, false, null, true, 'morning', false, null,
+    false, null,
   ]);
 });
 
@@ -332,6 +336,7 @@ test('CF-B7: updateUser sin datos laborales no los toca', async (t) => {
 
   assert.deepEqual(db.queries[0].params, [
     USER_ID, null, null, null, false, false, null, false, null, false, null, false, null,
+    false, null,
   ]);
 });
 

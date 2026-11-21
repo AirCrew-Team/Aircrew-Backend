@@ -20,17 +20,6 @@ function createCreateUserController(createUser) {
   };
 }
 
-function createCrewUserController(inviteCrewUser) {
-  return async function createCrewUser(req, res, next) {
-    try {
-      const user = await inviteCrewUser(req.body);
-      return res.status(201).json(user);
-    } catch (error) {
-      return next(error);
-    }
-  };
-}
-
 // Envuelve un caso de uso: lo ejecuta y responde con el status indicado.
 function respond(status, run) {
   return async function handle(req, res, next) {
@@ -46,8 +35,14 @@ function createManageUsersController(manageUsers) {
   return {
     me: respond(200, (req) => manageUsers.getCurrentUser(req.user)),
     list: respond(200, (req) =>
-      manageUsers.listUsers({ search: req.query.search, role: req.query.role })
+      manageUsers.listUsers({
+        page: req.query.page,
+        page_size: req.query.page_size,
+        search: req.query.search,
+        role: req.query.role,
+      })
     ),
+    stats: respond(200, () => manageUsers.getUserStats()),
     update: respond(200, (req) =>
       manageUsers.updateUser(req.user, req.params.id, req.body)
     ),
@@ -96,7 +91,6 @@ function createProfileController(manageProfile) {
 module.exports = {
   createGetUserByIdController,
   createCreateUserController,
-  createCrewUserController,
   createManageUsersController,
   createProfileController,
 };

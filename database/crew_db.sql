@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS public.crew_members (
     CHECK (status IN ('available', 'on_duty', 'in_flight', 'medical_leave'))
 );
 
+-- Base (hub) del tripulante, código IATA. No es current_location: esa es dónde
+-- está ahora y la usa recommendation; la base es fija y la asigna Admin.
+ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS base VARCHAR(3);
+
 -- Ausencias reportadas por los tripulantes. flight_id es el vuelo en flights_db;
 -- se guarda una copia del número y la hora para mostrar la lista sin consultar Flights.
 CREATE TABLE IF NOT EXISTS public.absences (

@@ -7,6 +7,9 @@ module.exports = {
   jwtIssuer: 'aircrew-admin',
   superAdminBootstrapKey: process.env.SUPER_ADMIN_BOOTSTRAP_KEY,
   crewServiceKey: process.env.CREW_SERVICE_KEY,
+  // Admin la usa para crear, editar y desactivar perfiles de tripulante en Crew.
+  adminServiceKey: process.env.ADMIN_SERVICE_KEY,
+  crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
   resendApiKey: process.env.RESEND_API_KEY,
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,

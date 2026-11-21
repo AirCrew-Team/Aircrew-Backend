@@ -1,8 +1,13 @@
 const pool = require('../pool');
 
-// pending_activation: tripulante invitado que todavía no define su contraseña.
+// pending_activation: usuario invitado que todavía no define su contraseña.
 const userColumns = `id, name, email, role, is_active, created_at,
        activation_token_hash IS NOT NULL AS pending_activation`;
+
+// Lista y ficha de la pantalla Usuarios: también el celular y los datos laborales
+// del supervisor (null en los demás roles).
+const listColumns = `${userColumns}, phone,
+       employee_code, base, shift, operational_status`;
 
 // password_changed_at solo para comparar con el iat del token: los casos de uso lo
 // quitan de la respuesta.
@@ -12,6 +17,18 @@ async function findById(id) {
      FROM public.users
      WHERE id = $1
      LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+// Ficha de la pantalla Usuarios (GET /users/:id). Sin password_changed_at.
+async function findUserDetailById(id) {
+  const { rows } = await pool.query(
+    `SELECT ${listColumns}
+     FROM public.users
+     WHERE id = $1`,
     [id]
   );
 
@@ -66,20 +83,42 @@ async function create({ name, email, passwordHash, role, employment }) {
   }
 }
 
-async function createPendingCrewUser({
+// Cuenta invitada: nace inactiva, con el enlace de activación y una contraseña que
+// nadie conoce. password_changed_at queda vacío hasta que la persona la active.
+// employment: datos laborales de un supervisor; null para los demás roles.
+async function createPendingUser({
   name,
   email,
+  phone = null,
+  role,
+  employment,
   passwordHash,
   activationTokenHash,
   activationExpiresAt,
 }) {
+  const job = employment || {};
+
   try {
     const { rows } = await pool.query(
       `INSERT INTO public.users
-         (name, email, password_hash, role, is_active, activation_token_hash, activation_expires_at)
-       VALUES ($1, $2, $3, 'crew', false, $4, $5)
-       RETURNING id, name, email, role, is_active, created_at`,
-      [name, email, passwordHash, activationTokenHash, activationExpiresAt]
+         (name, email, phone, password_hash, role, is_active,
+          activation_token_hash, activation_expires_at,
+          employee_code, base, shift, operational_status)
+       VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8, $9, $10, $11)
+       RETURNING ${listColumns}`,
+      [
+        name,
+        email,
+        phone,
+        passwordHash,
+        role,
+        activationTokenHash,
+        activationExpiresAt,
+        job.employeeCode ?? null,
+        job.base ?? null,
+        job.shift ?? null,
+        job.operationalStatus ?? null,
+      ]
     );
 
     return rows[0];
@@ -88,13 +127,12 @@ async function createPendingCrewUser({
   }
 }
 
-// Borra una invitación cuyo correo no se pudo enviar. Solo toca cuentas crew
-// pendientes de activación: nunca una cuenta activa.
-async function deletePendingCrewUser(id) {
+// Deshace un alta que no se pudo terminar (falló Crew o el correo). Solo toca
+// cuentas pendientes de activación: nunca una cuenta activa.
+async function deletePendingUser(id) {
   const { rowCount } = await pool.query(
     `DELETE FROM public.users
      WHERE id = $1
-       AND role = 'crew'
        AND is_active = false
        AND activation_token_hash IS NOT NULL`,
     [id]
@@ -340,7 +378,7 @@ async function createFirstSuperAdmin({ name, email, passwordHash }) {
 // Busca por nombre o email (sin importar mayúsculas) y filtra por rol.
 async function findUsers({ search, role }) {
   const { rows } = await pool.query(
-    `SELECT ${userColumns}
+    `SELECT ${listColumns}
      FROM public.users
      WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%')
        AND ($2::text IS NULL OR role = $2)
@@ -363,7 +401,7 @@ async function findUsersByIds(ids) {
 }
 
 // Actualiza solo los campos recibidos. Los datos laborales enviados pueden pasar a null.
-async function updateUser(id, { name, email, role, isActive, employment = {} }) {
+async function updateUser(id, { name, email, phone, role, isActive, employment = {} }) {
   const sent = (key) => employment[key] !== undefined;
 
   try {
@@ -376,9 +414,10 @@ async function updateUser(id, { name, email, role, isActive, employment = {} }) 
            employee_code = CASE WHEN $6::boolean THEN $7 ELSE employee_code END,
            base = CASE WHEN $8::boolean THEN $9 ELSE base END,
            shift = CASE WHEN $10::boolean THEN $11 ELSE shift END,
-           operational_status = CASE WHEN $12::boolean THEN $13 ELSE operational_status END
+           operational_status = CASE WHEN $12::boolean THEN $13 ELSE operational_status END,
+           phone = CASE WHEN $14::boolean THEN $15 ELSE phone END
        WHERE id = $1
-       RETURNING ${userColumns}`,
+       RETURNING ${listColumns}`,
       [
         id,
         name ?? null,
@@ -393,6 +432,8 @@ async function updateUser(id, { name, email, role, isActive, employment = {} }) 
         employment.shift ?? null,
         sent('operationalStatus'),
         employment.operationalStatus ?? null,
+        phone !== undefined,
+        phone ?? null,
       ]
     );
 
@@ -503,6 +544,7 @@ async function deletePhoto(userId) {
 }
 
 module.exports = {
+  findUserDetailById,
   findProfileById,
   updateProfile,
   savePhoto,
@@ -513,8 +555,8 @@ module.exports = {
   updateUser,
   findById,
   create,
-  createPendingCrewUser,
-  deletePendingCrewUser,
+  createPendingUser,
+  deletePendingUser,
   activateUser,
   findPendingActivationByToken,
   findByEmail,

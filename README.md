@@ -102,7 +102,7 @@ Configura en `services/admin/.env`:
 ```env
 CREW_ACTIVATION_URL=http://localhost:5173/activar-cuenta
 ACTIVATION_TOKEN_EXPIRES_MINUTES=1440
-# resend (por defecto) o smtp
+# resend (por defecto), smtp o brevo
 EMAIL_PROVIDER=smtp
 ```
 
@@ -118,6 +118,13 @@ EMAIL_PROVIDER=smtp
   3. Rellena `SMTP_USER` (la dirección de Gmail), `SMTP_PASS` (la contraseña de aplicación, no la de la cuenta) y `SMTP_FROM` (p. ej. `AirCrew <tu dirección de Gmail>`). Gmail envía siempre desde la cuenta autenticada: si `SMTP_FROM` usa otra dirección, la reemplaza.
   4. `SMTP_HOST`, `SMTP_PORT` y `SMTP_SECURE` ya traen los valores de Gmail en `.env.example`: 465 con `SMTP_SECURE=true`. Para el 587 (STARTTLS) usa `SMTP_SECURE=false`. Si `SMTP_SECURE` no está definido, se deduce del puerto.
 - **`EMAIL_PROVIDER=resend`:** usa `RESEND_API_KEY` y `RESEND_FROM_EMAIL`. Sin un dominio verificado en Resend, solo entrega al correo del dueño de la cuenta de Resend.
+- **`EMAIL_PROVIDER=brevo` (el de producción en Railway):** envía con la API HTTPS de Brevo, así que funciona donde el SMTP está bloqueado. Llega a cualquier destinatario.
+  1. En Brevo, verifica el remitente en **Senders, Domains & Dedicated IPs → Senders**.
+  2. Crea una clave en **SMTP & API → API Keys**. Es la API key (empieza por `xkeysib-`), no la clave SMTP (`xsmtpsib-`) de la misma página.
+  3. Rellena `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` (el remitente verificado) y, si quieres, `BREVO_SENDER_NAME` (por defecto, `AirCrew`).
+  4. Si el remitente es una dirección de Gmail, algunos correos pueden llegar a spam, porque el dominio no autoriza a Brevo.
+  5. El plan gratis de Brevo tiene un límite diario de envíos.
+  6. Si el log del admin muestra un 401 o 403 de Brevo, revisa en Brevo la lista de IP autorizadas (las IP de salida de Railway no son fijas, así que conviene desactivar ese bloqueo) y que la cuenta tenga activos los correos transaccionales.
 
 Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y se borran la cuenta pendiente y, si es tripulante, su perfil en Crew, así que se puede reintentar con el mismo correo.
 
@@ -197,3 +204,98 @@ Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en e
 - Recommendation responde `409` («Esta ausencia no tiene un vuelo asociado.») si se piden reemplazos para una ausencia sin vuelo.
 - El comprobante se guarda en la tabla `absence_attachments` (`BYTEA`) de `database/crew_db.sql`. El script también deja opcionales las columnas del vuelo y añade `start_date` y `end_date`, y se puede volver a ejecutar sobre una base existente.
 - Tests: `npm test -w @vuelos/crew`, y lo mismo con `@vuelos/notification` y `@vuelos/recommendation`.
+
+## Despliegue en Railway
+
+Todo el sistema vive en un solo proyecto de Railway: el frontend, los seis servicios y PostgreSQL. **Solo el frontend tiene dominio público.** Sirve la app y reenvía `/api/*` al gateway por la red privada, así que el navegador ve un único dominio y la cookie `SameSite=Lax` funciona en todos los navegadores. El despliegue del frontend está en el README del repositorio del frontend.
+
+### 1. Servicios
+
+| Servicio en Railway | Origen | Comando de inicio | `PORT` |
+| --- | --- | --- | ---: |
+| `Postgres` | plantilla PostgreSQL | — | — |
+| `gateway` | este repositorio | `npm run start:gateway` | 3000 |
+| `flights` | este repositorio | `npm run start:flights` | 3001 |
+| `crew` | este repositorio | `npm run start:crew` | 3002 |
+| `recommendation` | este repositorio | `npm run start:recommendation` | 3003 |
+| `notification` | este repositorio | `npm run start:notification` | 3004 |
+| `admin` | este repositorio | `npm run start:admin` | 3005 |
+
+En cada servicio del backend:
+
+- **Root directory:** la raíz del repositorio, no `services/<servicio>`. Los servicios usan `@vuelos/shared` por workspaces, y `npm ci` debe instalarse desde la raíz.
+- **Start command:** el de la tabla.
+- **Watch paths:** `services/<servicio>/**`, `shared/**`, `package.json` y `package-lock.json`, para que un cambio en un servicio no redepliegue los demás.
+- **Healthcheck path:** `/health`.
+- **Sin dominio público.**
+- La versión de Node sale de `engines` en el `package.json` raíz (24.x).
+
+### 2. Variables
+
+`${{servicio.VARIABLE}}` es una referencia de Railway a la variable de otro servicio. Los secretos de producción se generan nuevos; no reutilices los del `.env` local.
+
+- **En los seis servicios:** `PORT`, el de la tabla anterior. Debe ser fijo, porque las URL internas llevan el puerto.
+- **En admin, crew, flights, notification y recommendation:** `JWT_SECRET`, con **el mismo valor** en todos. Conviene crearlo como variable compartida del proyecto. El gateway no lo usa.
+- **admin y crew:** `CREW_SERVICE_KEY`, con **el mismo valor** en los dos.
+- **admin, crew y flights (base de datos):**
+  - `DB_HOST=${{Postgres.PGHOST}}`, `DB_PORT=${{Postgres.PGPORT}}`, `DB_USER=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}`;
+  - `DB_NAME`: `admin_db`, `crew_db` o `flights_db`, según el servicio.
+- **URL internas:** `http://${{<servicio>.RAILWAY_PRIVATE_DOMAIN}}:<puerto>`.
+  - gateway: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
+  - crew: `ADMIN_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
+  - recommendation: `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`.
+- **admin (además):**
+  - `NODE_ENV=production`, para que la cookie lleve `Secure`;
+  - `CREW_ACTIVATION_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}/activar-cuenta` y `PASSWORD_RESET_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}/restablecer-contrasena`. Llevan `https://` delante, porque `RAILWAY_PUBLIC_DOMAIN` no incluye el esquema; sin él, invitar y recuperar la contraseña responden 503;
+  - `SUPER_ADMIN_BOOTSTRAP_KEY`: una clave larga, solo para crear el primer `super_admin`;
+  - correo: `EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y, opcional, `BREVO_SENDER_NAME`. Railway bloquea el SMTP en los planes Free, Trial y Hobby, así que Gmail por SMTP no funciona allí (ver «Proveedor del correo»);
+  - `JWT_EXPIRES_IN`: opcional, por defecto `1h`.
+- **gateway y notification:** `CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`, sin barra final. Es opcional, porque las peticiones llegan del mismo origen a través del proxy.
+
+### 3. Bases de datos
+
+Una sola instancia de PostgreSQL con tres bases. La carga inicial se hace una vez desde tu equipo, con Docker, sin instalar `psql`:
+
+1. En el servicio `Postgres`, activa temporalmente el **TCP proxy** (Settings → Networking) y copia los datos de conexión pública: host, puerto, usuario y contraseña.
+2. En PowerShell, desde la raíz de este repositorio, pon esos datos en variables de entorno de tu terminal. La contraseña se pide con `Read-Host`, así no se ve en pantalla ni queda en el historial de PowerShell (`ConsoleHost_history.txt`):
+
+   ```powershell
+   $env:PGHOST = "<host público>"
+   $env:PGPORT = "<puerto público>"
+   $env:PGUSER = "<usuario>"
+   $env:PGPASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host -AsSecureString 'Contraseña de Postgres')).Password
+   ```
+
+3. Crea las bases y carga cada script:
+
+   ```powershell
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:17-alpine psql -d railway -c "CREATE DATABASE admin_db;" -c "CREATE DATABASE crew_db;" -c "CREATE DATABASE flights_db;"
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d admin_db -f /sql/admin_db.sql
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d crew_db -f /sql/crew_db.sql
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d flights_db -f /sql/flights_db.sql
+   ```
+
+   Con `ON_ERROR_STOP=1`, psql se detiene en el primer error y lo muestra. Los scripts se pueden volver a ejecutar sin error; los `CREATE DATABASE`, no: al repetirlos, el «already exists» es esperable. Si la base `railway` tiene otro nombre en tu proyecto, usa el de `PGDATABASE`.
+4. Desactiva el TCP proxy y cierra la terminal, para borrar las variables.
+
+La base arranca limpia: no se copian los datos locales.
+
+### 4. Primer `super_admin`
+
+Con todo en verde, crea la primera cuenta desde PowerShell. La clave de arranque y la contraseña se piden con `Read-Host`, para que no queden en el historial:
+
+```powershell
+function Read-Secret($texto) { [System.Net.NetworkCredential]::new('', (Read-Host -AsSecureString $texto)).Password }
+$body = @{ name = '<nombre>'; email = '<correo>'; password = (Read-Secret 'Contraseña del super_admin') } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri 'https://<dominio del frontend>/api/admin/auth/bootstrap/super-admin' -Headers @{ 'x-bootstrap-key' = (Read-Secret 'SUPER_ADMIN_BOOTSTRAP_KEY') } -ContentType 'application/json; charset=utf-8' -Body $body
+```
+
+Si ya existe un `super_admin`, responde `409`. Después:
+- los supervisores se crean con `POST /api/admin/users`;
+- los tripulantes, por invitación con `POST /api/crew/crew-members`.
+
+### 5. Comprobación
+
+- Los seis servicios y el frontend en verde, con `/health` respondiendo 200.
+- Iniciar sesión en el dominio público y recargar con F5 sin perder la sesión. La cookie `aircrew_token` lleva `Secure`.
+- Una invitación y un correo de recuperación llegan por Brevo, y sus enlaces abren el dominio público.

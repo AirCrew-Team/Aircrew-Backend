@@ -74,7 +74,28 @@ Admin, Crew y Flights publican su contrato OpenAPI con Swagger UI:
 
 Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/openapi.yaml`. Si cambias un endpoint, actualiza también ese archivo. Para probar rutas protegidas, inicia sesión en Admin (`POST /auth/login`), copia el `token` y pégalo en el botón **Authorize**.
 
-## Invitación de tripulantes
+## Usuarios (pantalla del super_admin)
+
+Todas las altas entran por Admin: tripulante, supervisor o super_admin. El super_admin no define contraseñas. La cuenta nace pendiente, la persona recibe un correo de invitación y crea su contraseña al activarla (ver «Invitación por correo»).
+
+- `POST /users` (solo super_admin) recibe `{ name, email, role, phone? }` y, según el rol:
+  - **Supervisor:** sus datos laborales, opcionales (ver «Datos laborales del supervisor»).
+  - **Tripulante (`crew`):** `employee_code` y `position` (el cargo, por ejemplo «Comandante»), obligatorios, y `base` (un hub de Delta) y `status`, opcionales. Admin le pide a Crew que guarde ese perfil.
+  - **super_admin:** sin datos laborales ni perfil.
+  - Enviar `password` responde `400`. `position` o `status` en otro rol responden `400`, igual que `shift` u `operational_status` en un tripulante.
+  - Orden: cuenta pendiente en Admin, perfil en Crew (solo tripulantes) y correo. Si un paso falla, se deshacen los anteriores y no sale ningún correo, así que se puede reintentar con el mismo email. Un código de tripulante repetido responde `409` («Ya existe un tripulante con ese código de empleado.»).
+- `GET /users` (solo super_admin) es paginado: `?page=1&page_size=10&search=&role=`, con `page_size` de 1 a 100, y responde `{ items, page, page_size, total }`. `search` busca en nombre, correo, código, base y cargo, sin mayúsculas ni tildes.
+  - Cada fila trae `phone`, `employee_code`, `position`, `base`, `status` y `shift`. Del tripulante salen de Crew; del supervisor, de sus datos laborales (`status` es su `operational_status`); al super_admin no le aplican y van en `null`.
+  - Si Crew no responde, la lista sale igual con los campos del tripulante en `null`.
+- `GET /users/stats` (solo super_admin) responde `{ total, by_role: { crew, supervisor, super_admin }, in_flight, on_duty, medical_fitness_percent }`. `on_duty` cuenta tripulantes y supervisores. `medical_fitness_percent` es `null` porque todavía no hay datos de aptitud médica.
+- `GET /users/:id` responde lo mismo que una fila de la lista.
+- `PATCH /users/:id` también recibe `phone`, para cualquier rol. En un tripulante, `employee_code`, `position`, `base` y `status` van a su perfil de Crew. Crew se actualiza primero; si después falla Admin, Crew vuelve a como estaba.
+- `DELETE /users/:id` desactiva la cuenta y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- Crew ya no tiene `POST /crew-members`. Admin usa las rutas internas `/internal/crew-members` de Crew con el header `x-service-key`, y `ADMIN_SERVICE_KEY` debe ser igual en `services/admin/.env` y `services/crew/.env`. Admin las encuentra en `CREW_SERVICE_URL` (por defecto `http://localhost:3002`).
+- Requiere la columna `base` de `crew_members` en `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
+- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`.
+
+### Invitación por correo
 
 Configura en `services/admin/.env`:
 
@@ -98,9 +119,9 @@ EMAIL_PROVIDER=smtp
   4. `SMTP_HOST`, `SMTP_PORT` y `SMTP_SECURE` ya traen los valores de Gmail en `.env.example`: 465 con `SMTP_SECURE=true`. Para el 587 (STARTTLS) usa `SMTP_SECURE=false`. Si `SMTP_SECURE` no está definido, se deduce del puerto.
 - **`EMAIL_PROVIDER=resend`:** usa `RESEND_API_KEY` y `RESEND_FROM_EMAIL`. Sin un dominio verificado en Resend, solo entrega al correo del dueño de la cuenta de Resend.
 
-Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y la cuenta pendiente se borra, así que se puede reintentar con el mismo correo.
+Si el envío falla, la API responde 502 con un mensaje genérico, y si falta configuración del correo responde 503. En los dos casos, el detalle queda en el log del servicio admin y se borran la cuenta pendiente y, si es tripulante, su perfil en Crew, así que se puede reintentar con el mismo correo.
 
-`CREW_SERVICE_KEY` debe coincidir en Admin y Crew. El registro `POST /crew-members` recibe `name`, `email`, `employeeCode` y `position`, sin contraseña.
+`CREW_SERVICE_KEY` debe coincidir en Admin y Crew: Crew la usa para pedirle a Admin los nombres de los usuarios (`POST /users/lookup`).
 
 ### Recuperación de contraseña
 

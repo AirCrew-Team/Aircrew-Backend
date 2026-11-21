@@ -8,6 +8,7 @@ const signingKey = 'prueba'.repeat(4);
 process.env.JWT_SECRET = signingKey;
 const app = require('../src/app');
 const pool = require('../src/adapters/outbound/persistence/pool');
+const { emailClient } = require('../src/adapters/outbound/clients/emailClient');
 
 const USER_ID = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
 const KB = 1024;
@@ -493,7 +494,6 @@ function newSupervisorBody(overrides = {}) {
   return JSON.stringify({
     name: 'Laura Gómez',
     email: 'laura@aircrew.test',
-    password: 'c'.repeat(12),
     role: 'supervisor',
     ...overrides,
   });
@@ -521,8 +521,10 @@ function updateQueries(targetRole, { onUpdate } = {}) {
 }
 
 test('CF-B7 (HTTP): POST /users crea un supervisor con sus datos laborales normalizados', async (t) => {
+  // El alta envía la invitación por correo: aquí no sale nada.
+  t.mock.method(emailClient, 'sendCrewInvitation', async () => ({}));
   const calls = useDatabase(t, async (sql, params) => ({
-    rows: [{ id: TARGET_ID, name: params[0], email: params[1], role: params[3], is_active: true }],
+    rows: [{ id: TARGET_ID, name: params[0], email: params[1], role: params[4], is_active: false }],
   }));
 
   const res = await request('/users', {
@@ -533,7 +535,8 @@ test('CF-B7 (HTTP): POST /users crea un supervisor con sus datos laborales norma
 
   assert.equal(res.status, 201);
   const insert = calls.find(({ sql }) => sql.includes('INSERT INTO public.users'));
-  assert.deepEqual(insert.params.slice(4), ['SUP-001', 'ATL', 'afternoon', 'available']);
+  // [nombre, email, celular, hash, rol, token, vence, código, base, turno, estado]
+  assert.deepEqual(insert.params.slice(7), ['SUP-001', 'ATL', 'afternoon', 'available']);
 });
 
 test('CF-B7 (HTTP): POST /users de un super_admin con datos laborales responde 400 sin consultar la base', async (t) => {
@@ -591,11 +594,17 @@ test('CF-B7 (HTTP): PATCH /users/:id guarda los datos laborales de un supervisor
 
   assert.equal(res.status, 200);
   const update = calls.find(({ sql }) => sql.includes('UPDATE public.users'));
-  // ¿código?, código, ¿base?, base, ¿turno?, turno, ¿estado?, estado
-  assert.deepEqual(update.params.slice(5), [false, null, true, 'MSP', true, null, true, 'leave']);
+  // ¿código?, código, ¿base?, base, ¿turno?, turno, ¿estado?, estado, ¿celular?, celular
+  assert.deepEqual(update.params.slice(5), [
+    false, null, true, 'MSP', true, null, true, 'leave', false, null,
+  ]);
 });
 
-for (const role of ['crew', 'super_admin']) {
+// Un tripulante sí tiene código, pero en Crew; el turno es solo de supervisores.
+for (const [role, body] of [
+  ['crew', { shift: 'night' }],
+  ['super_admin', { employee_code: 'SUP-001' }],
+]) {
   test(`CF-B7 (HTTP): PATCH /users/:id con datos laborales de un ${role} responde 400 sin actualizar`, async (t) => {
     t.mock.method(console, 'error', () => {});
     const calls = useDatabase(t, updateQueries(role));
@@ -603,7 +612,7 @@ for (const role of ['crew', 'super_admin']) {
     const res = await request(`/users/${TARGET_ID}`, {
       method: 'PATCH',
       role: 'super_admin',
-      body: JSON.stringify({ employee_code: 'SUP-001' }),
+      body: JSON.stringify(body),
     });
 
     assert.equal(res.status, 400);

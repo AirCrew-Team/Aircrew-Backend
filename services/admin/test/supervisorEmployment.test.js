@@ -12,11 +12,10 @@ const SHIFT_MESSAGE = 'shift debe ser uno de: morning, afternoon, night.';
 const STATUS_MESSAGE =
   'operational_status debe ser uno de: available, on_duty, off_duty, leave.';
 const EMPTY_UPDATE_MESSAGE =
-  'Envía al menos uno de: name, email, role, is_active, employee_code, base, shift, operational_status.';
+  'Envía al menos uno de: name, email, phone, role, is_active, employee_code, base, shift, operational_status, position, status.';
 
 const ADMIN_ID = '1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d';
 const USER_ID = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
-const PASSWORD = 'c'.repeat(12);
 
 const EMPLOYMENT_FIELDS = ['employee_code', 'base', 'shift', 'operational_status'];
 const VALID_EMPLOYMENT = {
@@ -40,21 +39,25 @@ function rejectsWith(status, message) {
 function setupCreate() {
   const { createCreateUser } = require('../src/application/use-cases/createUser');
   const calls = [];
+  // El alta es una invitación: cuenta pendiente y correo (falso aquí).
   const userRepository = {
-    async create(data) {
+    async createPendingUser(data) {
       calls.push(data);
       return { id: USER_ID, name: data.name, email: data.email, role: data.role };
     },
   };
   const passwordHasher = { hash: async (value) => `hash:${value}` };
-  return { calls, createUser: createCreateUser({ userRepository, passwordHasher }) };
+  const emailClient = { sendCrewInvitation: async () => ({}) };
+  return {
+    calls,
+    createUser: createCreateUser({ userRepository, passwordHasher, emailClient }),
+  };
 }
 
 function supervisorInput(overrides = {}) {
   return {
     name: 'Laura Gómez',
     email: 'laura@aircrew.test',
-    password: PASSWORD,
     role: 'supervisor',
     ...overrides,
   };
@@ -220,8 +223,10 @@ test('CF-B7: editar un supervisor con null quita el código, la base y el turno'
   assert.deepEqual(calls[0], { employment: { employeeCode: null, base: null, shift: null } });
 });
 
+// Un tripulante sí tiene código y base, en su perfil de Crew (ver usersManagement.test.js).
 for (const role of ['crew', 'super_admin']) {
-  for (const field of EMPLOYMENT_FIELDS) {
+  const fields = role === 'crew' ? ['shift', 'operational_status'] : EMPLOYMENT_FIELDS;
+  for (const field of fields) {
     test(`CF-B7: editar ${field} de un ${role} responde 400 sin guardar nada`, async () => {
       const { calls, requester, manageUsers } = setupUpdate(targetWith(role));
 

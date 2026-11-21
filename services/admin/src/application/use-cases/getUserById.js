@@ -1,24 +1,32 @@
-const { canViewUser } = require('../../domain/entities/user');
+const { canViewUser, isValidUserId } = require('../../domain/entities/user');
 const { DomainError } = require('../../domain/errors');
+const { toUserItem } = require('./manageUsers');
 
-const uuidPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function createGetUserById(userRepository) {
+// Ficha de un usuario: los mismos campos que la fila de la lista. Si es
+// tripulante, su perfil viene de Crew (null si Crew no responde).
+function createGetUserById(userRepository, { crewClient } = {}) {
   return async function getUserById(requester, id) {
     if (!canViewUser(requester, id)) {
       throw new DomainError('No tienes permisos para esta acción.', 403);
     }
 
-    const user = uuidPattern.test(id) ? await userRepository.findById(id) : null;
+    const user = isValidUserId(id) ? await userRepository.findUserDetailById(id) : null;
 
     if (!user) {
       throw new DomainError('Usuario no encontrado.', 404);
     }
 
-    // findById trae password_changed_at para /auth/me; esta respuesta no lo incluye.
-    const { password_changed_at: _changedAt, ...account } = user;
-    return account;
+    let crewProfile = null;
+
+    if (user.role === 'crew' && crewClient) {
+      try {
+        crewProfile = await crewClient.getProfile(user.id);
+      } catch (error) {
+        console.error(`No se pudo cargar el perfil de Crew de ${user.id}: ${error.message}`);
+      }
+    }
+
+    return toUserItem(user, crewProfile);
   };
 }
 

@@ -32,58 +32,43 @@ paths:
   /aircraft:
     get:
       tags: [Aeronaves]
-      summary: Listar todas las aeronaves (supervisor o super_admin)
-      description: Ordenadas por matrícula; filtro opcional por estado.
+      summary: Listar la flota, paginado (solo super_admin)
+      description: Las más recientes primero. `search` busca en matrícula, modelo, número de serie y base, sin mayúsculas ni tildes.
       security:
         - bearerAuth: []
       parameters:
-        - name: status
-          in: query
-          required: false
-          schema: { $ref: '#/components/schemas/AircraftStatus' }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - { name: search, in: query, schema: { type: string, example: los angeles } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AircraftStatus' } }
       responses:
         '200':
-          description: Aeronaves
+          description: Página de aeronaves
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/Aircraft' }
+              schema: { $ref: '#/components/schemas/AircraftPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Aeronaves]
-      summary: Crear una aeronave (supervisor o super_admin)
+      summary: Registrar una aeronave (solo super_admin)
+      description: |
+        `name`, `capacity` y la tripulación mínima salen del modelo. `flight_hours` y `cycles` empiezan en 0.
+        Si se registra en mantenimiento, se abre su orden de taller con las tareas del motivo.
       security:
         - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, registration, capacity, minimum_crew, initial_destination, final_destination]
-              properties:
-                name: { type: string, example: Airbus A320 }
-                registration: { type: string, example: HK-5000, description: Se guarda en mayúsculas y debe ser única. }
-                capacity: { type: integer, minimum: 1, example: 180 }
-                minimum_crew: { type: integer, minimum: 0, example: 4 }
-                initial_destination: { type: string, example: BOG }
-                final_destination: { type: string, example: MDE }
-                status: { $ref: '#/components/schemas/AircraftStatus' }
+            schema: { $ref: '#/components/schemas/AircraftInput' }
       responses:
         '201':
-          description: Aeronave creada
+          description: Aeronave registrada
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Aircraft'
-                  - type: object
-                    properties:
-                      created_at: { type: string, format: date-time }
-                      updated_at: { type: string, format: date-time }
+              schema: { $ref: '#/components/schemas/Aircraft' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -96,12 +81,12 @@ paths:
   /aircraft/operating:
     get:
       tags: [Aeronaves]
-      summary: Listar aeronaves en estado operating (supervisor o super_admin)
+      summary: Aeronaves operativas (solo super_admin)
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Aeronaves operativas ordenadas por matrícula
+          description: Aeronaves operativas, por matrícula
           content:
             application/json:
               schema:
@@ -110,25 +95,323 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /aircraft/summary:
+  /aircraft/stats:
     get:
       tags: [Aeronaves]
-      summary: Contar aeronaves por estado (supervisor o super_admin)
+      summary: Indicadores de la flota (solo super_admin)
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Resumen por estado
+          description: Indicadores
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  operating: { type: integer, example: 5 }
-                  maintenance: { type: integer, example: 2 }
-                  inactive: { type: integer, example: 1 }
+                  total: { type: integer }
+                  operational: { type: integer }
+                  maintenance: { type: integer }
+                  total_seats: { type: integer, description: Suma de la capacidad de toda la flota. }
+                  models_in_service:
+                    type: array
+                    description: Modelos de las aeronaves operativas, sin repetir. Para la tarjeta de flota del inicio.
+                    items: { type: string, example: Airbus A321neo }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/options:
+    get:
+      tags: [Aeronaves]
+      summary: Catálogos del formulario (solo super_admin)
+      description: Modelos, bases y motivos de mantenimiento con sus tareas. Son la única fuente; el frontend no tiene copia.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catálogos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items: { $ref: '#/components/schemas/AircraftModel' }
+                  bases:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string, example: ATL }
+                        name: { type: string, example: Atlanta (ATL) }
+                  maintenance_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { $ref: '#/components/schemas/MaintenanceType' }
+                        label: { type: string }
+                        tasks: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/manifest:
+    get:
+      tags: [Aeronaves]
+      summary: Toda la flota sin paginar, para el manifiesto (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aeronaves
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Aircraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/{id}:
+    put:
+      tags: [Aeronaves]
+      summary: Editar una aeronave (solo super_admin)
+      description: |
+        Se envían todos los datos. Pasar a mantenimiento abre una orden; cambiar el motivo abre otra sin tareas
+        hechas (la anterior no pasa al historial). Una aeronave en mantenimiento no vuelve a `operating` por aquí:
+        responde 409 y se usa POST /aircraft/{id}/release.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AircraftInput' }
+      responses:
+        '200':
+          description: Aeronave actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Aircraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Matrícula repetida o la aeronave está en mantenimiento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Aeronaves]
+      summary: Eliminar una aeronave (solo super_admin)
+      description: Borra también su foto y sus órdenes. Una aeronave con vuelos no se puede eliminar.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Aeronave eliminada
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La aeronave tiene vuelos registrados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/report:
+    get:
+      tags: [Aeronaves]
+      summary: Informe de una aeronave (solo super_admin)
+      description: Sus datos, el mantenimiento en curso (`null` si está operativa) y las reparaciones terminadas, la más reciente primero.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Informe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aircraft: { $ref: '#/components/schemas/Aircraft' }
+                  maintenance:
+                    allOf:
+                      - $ref: '#/components/schemas/MaintenanceRecord'
+                    nullable: true
+                  history:
+                    type: array
+                    items: { $ref: '#/components/schemas/MaintenanceHistoryEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/maintenance/tasks/{index}:
+    patch:
+      tags: [Aeronaves]
+      summary: Marcar o desmarcar una tarea del mantenimiento (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: index, in: path, required: true, description: Posición de la tarea, desde 0., schema: { type: integer, minimum: 0 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [done]
+              properties:
+                done: { type: boolean }
+      responses:
+        '200':
+          description: Mantenimiento actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceRecord' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave o tarea no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La aeronave no está en mantenimiento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/release:
+    post:
+      tags: [Aeronaves]
+      summary: Liberar a servicio (solo super_admin)
+      description: Solo con todas las tareas hechas. Queda `operating` y la orden pasa al historial.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Aeronave operativa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Aircraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: No está en mantenimiento o faltan tareas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/photo:
+    get:
+      tags: [Aeronaves]
+      summary: Foto de la aeronave (solo super_admin)
+      description: El binario con su Content-Type, `X-Content-Type-Options` nosniff y `Cache-Control` private, no-cache.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Foto
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada o sin foto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [Aeronaves]
+      summary: Subir o reemplazar la foto (solo super_admin)
+      description: |
+        Como la foto de perfil de Admin: PNG, JPEG o WEBP de hasta 2 MB ya decodificada, en base64 sin el prefijo
+        `data:`. Los primeros bytes deben coincidir con el tipo. Esta ruta acepta un body de hasta 3 MB y lo lee
+        después de comprobar la sesión.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mime_type, data_base64]
+              properties:
+                mime_type: { type: string, enum: [image/png, image/jpeg, image/webp] }
+                data_base64: { type: string }
+      responses:
+        '200':
+          description: Foto guardada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photo_updated_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: El body supera 3 MB
+    delete:
+      tags: [Aeronaves]
+      summary: Quitar la foto (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Foto quitada (o no había)
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /flights:
     post:
@@ -465,8 +748,76 @@ components:
             registration: { type: string, example: HK-5000 }
     AircraftStatus:
       type: string
-      enum: [operating, maintenance, inactive]
+      description: operating (Operativa) o maintenance (En mantenimiento).
+      enum: [operating, maintenance]
       default: operating
+    MaintenanceType:
+      type: string
+      enum: [motor, ala, tren_aterrizaje, fuselaje, electrico, hidraulico, revision_programada]
+    MinimumCrew:
+      type: object
+      properties:
+        pilots: { type: integer }
+        cabin: { type: integer }
+    AircraftModel:
+      type: object
+      properties:
+        id: { type: string, example: a321neo }
+        name: { type: string, example: Airbus A321neo }
+        category: { type: string, enum: [narrow_body, wide_body, regional] }
+        capacity: { type: integer, example: 194 }
+        minimum_crew: { $ref: '#/components/schemas/MinimumCrew' }
+        engines: { type: string, example: 2 × Pratt & Whitney PW1100G }
+    AircraftInput:
+      type: object
+      required: [registration, msn, model_id, base, manufacture_year, in_fleet_since]
+      properties:
+        registration: { type: string, description: Matrícula FAA; se guarda en mayúsculas y sin espacios., example: N391DN }
+        msn: { type: string, pattern: '^\d{3,8}$', example: '10342' }
+        model_id: { type: string, description: Un id de GET /aircraft/options., example: a321neo }
+        base: { type: string, description: Un código de GET /aircraft/options., example: ATL }
+        manufacture_year: { type: integer, minimum: 1980, example: 2021 }
+        in_fleet_since: { type: string, format: date, description: No futura ni anterior al año de fabricación. }
+        status: { $ref: '#/components/schemas/AircraftStatus' }
+        maintenance_type:
+          allOf:
+            - $ref: '#/components/schemas/MaintenanceType'
+          nullable: true
+          description: Obligatorio en mantenimiento; no se envía si está operativa.
+        maintenance_note: { type: string, nullable: true, maxLength: 300 }
+    AircraftPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Aircraft' }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+    MaintenanceRecord:
+      type: object
+      properties:
+        order_number: { type: string, example: OT-2026-0001 }
+        type: { $ref: '#/components/schemas/MaintenanceType' }
+        description: { type: string, nullable: true }
+        hangar: { type: string, example: Hangar 1 · ATL }
+        opened_on: { type: string, format: date }
+        tasks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              done: { type: boolean }
+    MaintenanceHistoryEntry:
+      type: object
+      properties:
+        order_number: { type: string }
+        type: { $ref: '#/components/schemas/MaintenanceType' }
+        description: { type: string, nullable: true }
+        hangar: { type: string }
+        opened_on: { type: string, format: date }
+        closed_on: { type: string, format: date }
     FlightStatus:
       type: string
       enum: [scheduled, delayed, in_flight, completed, cancelled]
@@ -490,12 +841,32 @@ components:
         error: { type: string }
     Aircraft:
       type: object
+      description: Aeronave con los datos de su modelo y su base. Las filas antiguas sin modelo traen `model_id`, `category`, `minimum_crew` y `engines` en `null`.
       properties:
         id: { type: string, format: uuid }
-        name: { type: string }
-        registration: { type: string }
+        registration: { type: string, example: N391DN }
+        msn: { type: string, nullable: true }
+        model_id: { type: string, nullable: true }
+        model_name: { type: string, example: Airbus A321neo }
+        category: { type: string, nullable: true }
         capacity: { type: integer }
-        minimum_crew: { type: integer }
-        initial_destination: { type: string }
-        final_destination: { type: string }
+        minimum_crew:
+          allOf:
+            - $ref: '#/components/schemas/MinimumCrew'
+          nullable: true
+        engines: { type: string, nullable: true }
+        base: { type: string, nullable: true }
+        base_name: { type: string, nullable: true }
+        manufacture_year: { type: integer, nullable: true }
+        in_fleet_since: { type: string, format: date, nullable: true }
+        flight_hours: { type: integer }
+        cycles: { type: integer }
         status: { $ref: '#/components/schemas/AircraftStatus' }
+        maintenance_type:
+          allOf:
+            - $ref: '#/components/schemas/MaintenanceType'
+          nullable: true
+        maintenance_note: { type: string, nullable: true }
+        photo_updated_at: { type: string, format: date-time, nullable: true, description: null si no tiene foto. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }

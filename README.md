@@ -150,6 +150,18 @@ Los asigna un super_admin con `POST /users` y `PATCH /users/:id` (por ahora desd
 - Al pasar de supervisor a super_admin se borran sus datos laborales y su código queda libre. Al pasar de super_admin a supervisor empieza `available`, salvo que se envíe otro estado.
 - Requiere las columnas `employee_code`, `base`, `shift` y `operational_status` de `users` y el índice `users_employee_code_unique` de `database/admin_db.sql`. El script deja `available` a los supervisores que ya existían.
 
+## Aeronaves (servicio flights)
+
+Pantalla Aeronaves del super_admin. El contrato completo está en el Swagger de flights.
+
+- Todo es solo para super_admin: el supervisor no tiene permisos sobre las aeronaves.
+- `GET /aircraft` (paginado: `page`, `page_size`, `search`, `status`), `GET /aircraft/stats`, `GET /aircraft/options` (modelos, bases y motivos de mantenimiento con sus tareas) y `GET /aircraft/manifest`.
+- `POST /aircraft`, `PUT /aircraft/:id` y `DELETE /aircraft/:id`. La capacidad y la tripulación mínima salen del modelo. Una aeronave con vuelos no se elimina (`409`).
+- Mantenimiento: al pasar a `maintenance` se abre una orden con las tareas del motivo. `PATCH /aircraft/:id/maintenance/tasks/:index` marca una tarea y `POST /aircraft/:id/release` la devuelve a servicio solo con todas hechas. El informe está en `GET /aircraft/:id/report`.
+- Foto: `GET`, `PUT` y `DELETE /aircraft/:id/photo`, con las mismas reglas que la foto de perfil.
+- Requiere volver a ejecutar `database/flights_db.sql`: agrega las columnas nuevas, quita `initial_destination` y `final_destination`, y crea `aircraft_photos` y `aircraft_maintenance_orders`.
+- Tests: `npm test -w @vuelos/flights`.
+
 ## Ausencias (servicio crew)
 
 Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en el Swagger de crew.

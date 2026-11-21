@@ -53,7 +53,9 @@ function matchesSearch(item, search) {
 
 // Casos de uso de la administración de usuarios. Reciben el repositorio y el
 // cliente de Crew por parámetro, así que no dependen de PostgreSQL ni de HTTP.
-function createManageUsers(userRepository, { crewClient } = {}) {
+// resendInvitation: si se corrige el correo de una cuenta pendiente, la invitación se
+// reenvía al correo nuevo y el enlace enviado al anterior deja de servir.
+function createManageUsers(userRepository, { crewClient, resendInvitation } = {}) {
   async function findExisting(id) {
     const user = isValidUserId(id) ? await userRepository.findById(id) : null;
 
@@ -120,8 +122,10 @@ function createManageUsers(userRepository, { crewClient } = {}) {
     };
   }
 
-  // Indicadores de la pantalla Usuarios. «De guardia» suma tripulantes y
-  // supervisores on_duty. La aptitud médica no tiene datos todavía: null.
+  // Indicadores de la pantalla Usuarios y de la tarjeta «Gestión de Usuarios» del
+  // inicio. «De guardia» suma tripulantes y supervisores on_duty; crew_available son
+  // los tripulantes activos disponibles para un reemplazo. La aptitud médica no tiene
+  // datos todavía: null.
   async function getUserStats() {
     const items = await loadItems();
     const byRole = { crew: 0, supervisor: 0, super_admin: 0 };
@@ -135,6 +139,9 @@ function createManageUsers(userRepository, { crewClient } = {}) {
       by_role: byRole,
       in_flight: items.filter((item) => item.role === 'crew' && item.status === 'in_flight').length,
       on_duty: items.filter((item) => item.status === 'on_duty').length,
+      crew_available: items.filter(
+        (item) => item.role === 'crew' && item.is_active && item.status === 'available'
+      ).length,
       medical_fitness_percent: null,
     };
   }
@@ -196,7 +203,25 @@ function createManageUsers(userRepository, { crewClient } = {}) {
   async function updateUser(requester, id, input) {
     const target = await findExisting(id);
     const changes = validateUserUpdate(requester, target, input);
-    return applyChanges(target, changes);
+    const updated = await applyChanges(target, changes);
+
+    if (target.pending_activation && changes.email && changes.email !== target.email) {
+      if (!resendInvitation) {
+        throw new Error('Falta resendInvitation para reenviar la invitación al correo nuevo.');
+      }
+      try {
+        await resendInvitation(target.id);
+      } catch (cause) {
+        const error = new Error(
+          'Se cambió el correo, pero no se pudo enviar la invitación al correo nuevo. Usa «Reenviar invitación».',
+          { cause }
+        );
+        error.status = 502;
+        throw error;
+      }
+    }
+
+    return updated;
   }
 
   // No se borra: ausencias y asignaciones guardan su id. Se desactiva, ya no

@@ -1,6 +1,7 @@
 const { DomainError } = require('../errors');
 const { isValidPassword } = require('../value-objects/password');
 const { parsePhone } = require('../profile');
+const { USER_BASES, CREW_POSITIONS, findCrewPosition } = require('../userCatalog');
 
 const ROLES = ['crew', 'supervisor', 'super_admin'];
 
@@ -13,7 +14,8 @@ function normalizeEmail(email) {
 }
 
 // Datos laborales del supervisor. Los asigna un super_admin; los demás roles no los tienen.
-const SUPERVISOR_BASES = ['ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'];
+// Hubs de Delta, del catálogo del formulario (userCatalog.js).
+const SUPERVISOR_BASES = USER_BASES.map((base) => base.code);
 const SHIFTS = ['morning', 'afternoon', 'night'];
 const OPERATIONAL_STATUSES = ['available', 'on_duty', 'off_duty', 'leave'];
 const EMPLOYMENT_FIELDS = ['employee_code', 'base', 'shift', 'operational_status'];
@@ -90,23 +92,26 @@ function assertEmploymentAllowed(role, input) {
 }
 
 // Perfil de Crew de un tripulante, con los nombres que espera Crew. Admin valida
-// el código y el hub; Crew valida el cargo y el estado, y es quien lo guarda.
+// el código, el cargo (del catálogo) y el hub; Crew valida el estado y lo guarda.
+// Sin employee_code al crear, Crew le asigna el siguiente (AC-0001, AC-0002…).
 function parseCrewProfile(input, { required }) {
   const profile = {};
 
-  if (required || input.employee_code !== undefined) {
-    const code = parseEmployeeCode(input.employee_code ?? null);
-    if (code === null) {
-      throw new DomainError('Un tripulante necesita employee_code.');
+  if (input.employee_code !== undefined) {
+    const code = parseEmployeeCode(input.employee_code);
+    if (code === null && !required) {
+      // Al editar, el código no se puede quitar.
+      throw new DomainError('El código de empleado de un tripulante no se puede quitar.');
     }
-    profile.employee_code = code;
+    if (code !== null) profile.employee_code = code;
   }
 
   if (required || input.position !== undefined) {
-    if (!isNonEmptyString(input.position)) {
-      throw new DomainError('Un tripulante necesita position (su cargo).');
+    const position = findCrewPosition(input.position);
+    if (!position) {
+      throw new DomainError(`position debe ser uno de: ${CREW_POSITIONS.join(', ')}.`);
     }
-    profile.position = input.position.trim();
+    profile.position = position;
   }
 
   if (input.base !== undefined) profile.base = parseBase(input.base);

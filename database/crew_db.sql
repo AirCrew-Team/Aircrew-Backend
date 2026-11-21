@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS public.crew_members (
 -- está ahora y la usa recommendation; la base es fija y la asigna Admin.
 ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS base VARCHAR(3);
 
+-- Código de empleado que Crew asigna cuando Admin crea un tripulante sin código:
+-- AC-0001, AC-0002… Si uno ya existe (asignado a mano), se usa el siguiente.
+CREATE SEQUENCE IF NOT EXISTS public.crew_employee_code_seq;
+
 -- Ausencias reportadas por los tripulantes. flight_id es el vuelo en flights_db;
 -- se guarda una copia del número y la hora para mostrar la lista sin consultar Flights.
 CREATE TABLE IF NOT EXISTS public.absences (

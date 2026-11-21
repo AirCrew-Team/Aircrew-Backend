@@ -12,7 +12,7 @@ module.exports = {
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,
   // Pantalla del frontend para restablecer la contraseña; el correo agrega ?token=.
   passwordResetUrl: process.env.PASSWORD_RESET_URL,
-  // Quién envía las invitaciones: resend (por defecto) o smtp.
+  // Quién envía los correos: resend (por defecto), smtp o brevo.
   emailProvider: process.env.EMAIL_PROVIDER?.trim().toLowerCase(),
   smtp: {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -24,6 +24,12 @@ module.exports = {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM,
+  },
+  // Brevo (API HTTPS): para donde el SMTP está bloqueado, como Railway en Hobby.
+  brevo: {
+    apiKey: process.env.BREVO_API_KEY,
+    senderEmail: process.env.BREVO_SENDER_EMAIL,
+    senderName: process.env.BREVO_SENDER_NAME,
   },
   activationTokenExpiresMinutes:
     Number(process.env.ACTIVATION_TOKEN_EXPIRES_MINUTES) || 1440,

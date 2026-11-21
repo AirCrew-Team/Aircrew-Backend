@@ -781,7 +781,7 @@ paths:
       summary: Crear cuenta pendiente de tripulante y enviar invitación
       description: |
         Lo llama Crew al registrar un tripulante. Crea la cuenta con rol `crew`, sin contraseña,
-        y envía el correo de activación con Resend o por SMTP, según `EMAIL_PROVIDER`.
+        y envía el correo de activación con Resend, por SMTP o con Brevo, según `EMAIL_PROVIDER`.
         Si el correo no se puede enviar, la cuenta pendiente se borra y se puede reintentar.
       security:
         - serviceKey: []

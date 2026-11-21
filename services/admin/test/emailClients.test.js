@@ -373,3 +373,193 @@ test('PR-B5: un EMAIL_PROVIDER desconocido da 503 en la comprobación y al envia
     return true;
   });
 });
+
+// --- Brevo (API HTTPS: Railway bloquea el SMTP en los planes Free, Trial y Hobby) ---
+
+const { createBrevoClient } = require('../src/adapters/outbound/clients/brevoClient');
+
+const BREVO_CONFIG = {
+  crewActivationUrl: 'http://localhost:5173/activar-cuenta',
+  passwordResetUrl: RESET_URL,
+  brevo: {
+    apiKey: 'clave-de-prueba',
+    senderEmail: 'remitente@aircrew.test',
+    senderName: 'AirCrew Pruebas',
+  },
+};
+
+// fetch falso: guarda las peticiones y responde con el estado indicado, o falla.
+function createFakeFetch({ status = 201, body = { messageId: 'mensaje-1' }, error } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async fetch(url, options) {
+      calls.push({ url, options, body: JSON.parse(options.body) });
+      if (error) throw error;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        async json() {
+          return body;
+        },
+        async text() {
+          return JSON.stringify(body);
+        },
+      };
+    },
+  };
+}
+
+test('BR-01: EMAIL_PROVIDER=brevo elige el cliente de Brevo', () => {
+  assert.equal(selectEmailClient('brevo').provider, 'brevo');
+});
+
+test('BR-02: la invitación hace un POST a Brevo con api-key, remitente, destinatario, asunto y enlace', async () => {
+  const fake = createFakeFetch();
+  const client = createBrevoClient({ config: BREVO_CONFIG, fetchImpl: fake.fetch });
+
+  await client.sendCrewInvitation(INVITATION);
+
+  assert.equal(fake.calls.length, 1);
+  const [{ url, options, body }] = fake.calls;
+  assert.equal(url, 'https://api.brevo.com/v3/smtp/email');
+  assert.equal(options.method, 'POST');
+  assert.equal(options.headers['api-key'], 'clave-de-prueba');
+  assert.equal(options.headers['content-type'], 'application/json');
+  assert.equal(options.headers.accept, 'application/json');
+  assert.ok(options.signal instanceof AbortSignal);
+  assert.deepEqual(body.sender, { name: 'AirCrew Pruebas', email: 'remitente@aircrew.test' });
+  assert.deepEqual(body.to, [{ email: INVITATION.email }]);
+  assert.equal(body.subject, 'Activa tu cuenta de AirCrew');
+  assert.match(body.textContent, /http:\/\/localhost:5173\/activar-cuenta\?token=token-de-prueba/);
+  assert.match(body.htmlContent, /activar-cuenta\?token=token-de-prueba/);
+});
+
+for (const missing of ['apiKey', 'senderEmail']) {
+  test(`BR-03: sin ${missing} en Brevo da 503 y no llama a fetch`, async () => {
+    const fake = createFakeFetch();
+    const client = createBrevoClient({
+      config: { ...BREVO_CONFIG, brevo: { ...BREVO_CONFIG.brevo, [missing]: undefined } },
+      fetchImpl: fake.fetch,
+    });
+
+    await assert.rejects(client.sendCrewInvitation(INVITATION), (error) => {
+      assert.equal(error.status, 503);
+      return true;
+    });
+    assert.throws(
+      () => client.checkPasswordResetConfig(),
+      (error) => {
+        assert.equal(error.status, 503);
+        return true;
+      }
+    );
+    assert.equal(fake.calls.length, 0);
+  });
+}
+
+test('BR-03: con la configuración completa, la comprobación de la recuperación no lanza ni envía', () => {
+  const fake = createFakeFetch();
+  const client = createBrevoClient({ config: BREVO_CONFIG, fetchImpl: fake.fetch });
+
+  client.checkPasswordResetConfig();
+
+  assert.equal(fake.calls.length, 0);
+});
+
+for (const [label, fakeOptions] of [
+  ['Brevo responde 401', { status: 401, body: { code: 'unauthorized', message: 'Key not found detalle interno' } }],
+  ['Brevo responde 500', { status: 500, body: { message: 'detalle interno' } }],
+  ['fetch falla', { error: new Error('getaddrinfo ENOTFOUND detalle interno') }],
+]) {
+  test(`BR-04: si ${label}, la invitación da 502 con el mensaje genérico y registra el detalle`, async (t) => {
+    const log = t.mock.method(console, 'error', () => {});
+    const fake = createFakeFetch(fakeOptions);
+    const client = createBrevoClient({ config: BREVO_CONFIG, fetchImpl: fake.fetch });
+
+    await assert.rejects(client.sendCrewInvitation(INVITATION), (error) => {
+      assert.equal(error.status, 502);
+      assert.equal(error.message, GENERIC_MESSAGE);
+      return true;
+    });
+    assert.equal(log.mock.callCount(), 1);
+    assert.match(String(log.mock.calls[0].arguments.join(' ')), /detalle interno/);
+  });
+}
+
+test('BR-04: si Brevo rechaza el correo de recuperación, el error sube', async () => {
+  const fake = createFakeFetch({ status: 400, body: { message: 'detalle interno' } });
+  const client = createBrevoClient({ config: BREVO_CONFIG, fetchImpl: fake.fetch });
+
+  await assert.rejects(client.sendPasswordReset(RESET_EMAIL));
+});
+
+test('BR-05: el cliente de Brevo envía el correo de recuperación con el enlace y el nombre escapado', async () => {
+  const fake = createFakeFetch();
+  const client = createBrevoClient({ config: BREVO_CONFIG, fetchImpl: fake.fetch });
+
+  await client.sendPasswordReset(RESET_EMAIL);
+
+  assert.equal(fake.calls.length, 1);
+  const [{ body }] = fake.calls;
+  assert.deepEqual(body.to, [{ email: RESET_EMAIL.email }]);
+  assertPasswordResetContent({
+    subject: body.subject,
+    text: body.textContent,
+    html: body.htmlContent,
+  });
+});
+
+test('BR-06: sin BREVO_SENDER_NAME, el remitente se llama AirCrew', async () => {
+  const fake = createFakeFetch();
+  const client = createBrevoClient({
+    config: { ...BREVO_CONFIG, brevo: { ...BREVO_CONFIG.brevo, senderName: undefined } },
+    fetchImpl: fake.fetch,
+  });
+
+  await client.sendCrewInvitation(INVITATION);
+
+  assert.deepEqual(fake.calls[0].body.sender, {
+    name: 'AirCrew',
+    email: 'remitente@aircrew.test',
+  });
+});
+
+test('BR-07: el mensaje de proveedor inválido menciona brevo', async () => {
+  const client = selectEmailClient('otro');
+
+  await assert.rejects(client.sendCrewInvitation(INVITATION), (error) => {
+    assert.match(error.message, /resend, smtp o brevo/);
+    return true;
+  });
+});
+
+test('BR-08: una BREVO_API_KEY con saltos de línea da 503 sin llamar a fetch (no acaba en el log)', async () => {
+  const fake = createFakeFetch();
+  const client = createBrevoClient({
+    config: { ...BREVO_CONFIG, brevo: { ...BREVO_CONFIG.brevo, apiKey: 'clave\nde-prueba' } },
+    fetchImpl: fake.fetch,
+  });
+
+  await assert.rejects(client.sendCrewInvitation(INVITATION), (error) => {
+    assert.equal(error.status, 503);
+    assert.doesNotMatch(error.message, /clave/);
+    return true;
+  });
+  assert.equal(fake.calls.length, 0);
+});
+
+test('BR-09: si Brevo acepta el correo pero su respuesta no se puede leer, la invitación no falla', async () => {
+  const client = createBrevoClient({
+    config: BREVO_CONFIG,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 201,
+      async json() {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    }),
+  });
+
+  await client.sendCrewInvitation(INVITATION);
+});

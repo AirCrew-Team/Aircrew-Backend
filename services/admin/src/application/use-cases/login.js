@@ -8,8 +8,18 @@ const {
 } = require('../../domain/failedAttempts');
 const { signSessionToken } = require('./sessionToken');
 
-// Con 5 fallos de un correo en 15 min responde 429 sin buscar la cuenta, con el mismo
-// mensaje exista o no. Un login correcto no borra los fallos anteriores.
+// Largo máximo de un correo (RFC 5321): uno más largo no se cuenta ni se guarda.
+const MAX_EMAIL_LENGTH = 254;
+
+// Hash bcrypt (coste 10, como passwordHasher) de un texto aleatorio que nadie conoce.
+// Sin cuenta, o con una cuenta que no puede entrar, se compara contra él: la respuesta
+// tarda lo mismo y no revela si el correo existe.
+const TIMING_HASH = '$2a$10$hY16sWwG1qlCeIZaFRg8KOvniXpufGEGwjreX6bh3BDkudqrVjcGe';
+
+// Cada intento se registra como fallo ANTES de comparar y se cuenta incluyéndolo: con
+// más de 5 en 15 min responde 429 sin buscar la cuenta, con el mismo mensaje exista o
+// no. Así, intentos simultáneos no pasan todos el límite antes de que se guarde alguno.
+// El 429 y el login correcto borran su propio registro; los fallos anteriores quedan.
 function createLogin({ userRepository, passwordHasher, now = () => new Date() }) {
   return async function login(input) {
     const { email, password } = input || {};
@@ -17,6 +27,7 @@ function createLogin({ userRepository, passwordHasher, now = () => new Date() })
     if (
       typeof email !== 'string' ||
       !email.trim() ||
+      email.trim().length > MAX_EMAIL_LENGTH ||
       typeof password !== 'string' ||
       !password
     ) {
@@ -32,26 +43,28 @@ function createLogin({ userRepository, passwordHasher, now = () => new Date() })
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const attemptId = await userRepository.recordLoginFailure(normalizedEmail);
     const failures = await userRepository.countLoginFailures({
       email: normalizedEmail,
       since: new Date(now().getTime() - FAILED_ATTEMPTS_WINDOW_MS),
     });
 
-    if (failures >= MAX_FAILED_ATTEMPTS) {
+    if (failures > MAX_FAILED_ATTEMPTS) {
+      await userRepository.deleteLoginFailure(attemptId);
       throw tooManyAttempts(MESSAGES.login);
     }
 
     const user = await userRepository.findByEmail(email.trim());
+    const allowed = canLogIn(user);
+    const matches = await passwordHasher.compare(password, allowed ? user.password_hash : TIMING_HASH);
 
-    if (
-      !canLogIn(user) ||
-      !(await passwordHasher.compare(password, user.password_hash))
-    ) {
-      await userRepository.recordLoginFailure(normalizedEmail);
+    if (!allowed || !matches) {
       const error = new Error('Email o contraseña incorrectos.');
       error.status = 401;
       throw error;
     }
+
+    await userRepository.deleteLoginFailure(attemptId);
 
     // El iat no puede quedar antes del último cambio de contraseña (lo fija PostgreSQL):
     // si el reloj del servicio va atrás, la sesión recién abierta daría 401 en /auth/me.
@@ -74,3 +87,4 @@ function createLogin({ userRepository, passwordHasher, now = () => new Date() })
 }
 
 module.exports = createLogin;
+module.exports.TIMING_HASH = TIMING_HASH;

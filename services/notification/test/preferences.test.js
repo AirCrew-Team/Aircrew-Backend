@@ -57,7 +57,7 @@ test('lee las preferencias de admin con el token de la persona', async () => {
   assert.ok(calls[0][1].signal, 'la llamada lleva un timeout');
 });
 
-test('las preferencias se guardan 60 s por persona', async () => {
+test('las preferencias se guardan 60 s por sesión (token)', async () => {
   const clock = { time: 1_000_000 };
   const calls = [];
   let reported = false;
@@ -259,7 +259,10 @@ function fakePublisher() {
         connection.removed = true;
       };
     },
-    writeEvent() {},
+    events: [],
+    writeEvent(res, type, data) {
+      this.events.push({ type, data });
+    },
   };
 }
 
@@ -348,4 +351,108 @@ test('GET /stream: si la persona se va mientras se leen las preferencias, no que
 
   assert.equal(publisher.connections.length, 0);
   assert.equal(res.statusCode, null);
+});
+
+// --------------------------------------- revisión final: sesión anulada en el SSE
+
+test('Revisión: un 401 de admin llama a onUnauthorized y no se guarda; sigue sin filtrar', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let unauthorized = 0;
+  const load = createPreferencesLoader({
+    baseUrl: 'http://admin.test',
+    fetchImpl: async () => jsonResponse(401, { error: 'La sesión ya no es válida.', code: 'session_revoked' }),
+  });
+  const user = { id: USER_ID, role: 'supervisor' };
+
+  assert.deepEqual(await load(user, 'tok', { onUnauthorized: () => (unauthorized += 1) }), []);
+  assert.deepEqual(await load(user, 'tok'), [], 'sin onUnauthorized (la campana) no falla');
+  assert.equal(unauthorized, 1);
+});
+
+test('Revisión: otro estado distinto de 200 no llama a onUnauthorized', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let unauthorized = 0;
+  const load = createPreferencesLoader({
+    baseUrl: 'http://admin.test',
+    fetchImpl: async () => jsonResponse(503, {}),
+  });
+
+  await load({ id: USER_ID, role: 'supervisor' }, 'tok', { onUnauthorized: () => (unauthorized += 1) });
+
+  assert.equal(unauthorized, 0);
+});
+
+test('Revisión: la caché es por token: la sesión nueva de la persona no tapa el 401 de la anulada', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const asked = [];
+  const load = createPreferencesLoader({
+    baseUrl: 'http://admin.test',
+    fetchImpl: async (url, options) => {
+      asked.push(options.headers.Authorization);
+      return options.headers.Authorization === 'Bearer nuevo'
+        ? jsonResponse(200, { notifications: {} })
+        : jsonResponse(401, { error: 'La sesión ya no es válida.' });
+    },
+  });
+  const user = { id: USER_ID, role: 'supervisor' };
+  let unauthorized = 0;
+
+  await load(user, 'nuevo');
+  await load(user, 'anulado', { onUnauthorized: () => (unauthorized += 1) });
+
+  assert.deepEqual(asked, ['Bearer nuevo', 'Bearer anulado']);
+  assert.equal(unauthorized, 1);
+});
+
+test('Revisión: GET /stream: si al refrescar las preferencias admin responde 401, envía auth:expired y cierra', async () => {
+  let calls = 0;
+  const publisher = fakePublisher();
+  const stream = createStreamController({
+    publisher,
+    preferencesMs: 20,
+    loadDisabledTypes: async (user, token, options = {}) => {
+      calls += 1;
+      if (calls > 1 && options.onUnauthorized) options.onUnauthorized();
+      return [];
+    },
+  });
+  const req = fakeStreamRequest({ authorization: `Bearer ${tokenFor('supervisor')}` });
+  const res = fakeStreamResponse();
+
+  await stream(req, res, assert.fail);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  try {
+    assert.equal(res.ended, true);
+    const expired = publisher.events.filter(({ type }) => type === 'auth:expired');
+    assert.equal(expired.length, 1, 'un solo aviso aunque haya más refrescos');
+    assert.equal(expired[0].data.message, 'Tu sesión ya no es válida. Inicia sesión de nuevo.');
+    assert.equal(publisher.connections[0].removed, true, 'deja de recibir avisos enseguida');
+    const before = calls;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(calls, before, 'no vuelve a preguntar a admin');
+  } finally {
+    req.emit('close');
+  }
+});
+
+test('Revisión: la caché por token no crece sin límite: con 5000 entradas sale la más antigua', async () => {
+  const asked = [];
+  const load = createPreferencesLoader({
+    baseUrl: 'http://admin.test',
+    fetchImpl: async (url, options) => {
+      asked.push(options.headers.Authorization);
+      return jsonResponse(200, { notifications: {} });
+    },
+  });
+  const user = { id: USER_ID, role: 'supervisor' };
+
+  for (let index = 0; index < 5000; index += 1) await load(user, `t-${index}`);
+  await load(user, 't-0');
+  assert.equal(asked.length, 5000, 'con 5000 siguen todas');
+  await load(user, 't-5000');
+  await load(user, 't-1');
+  assert.equal(asked.length, 5001, 't-1 sigue en caché');
+  await load(user, 't-0');
+  assert.equal(asked.length, 5002, 't-0, la más antigua, salió');
 });

@@ -9,11 +9,13 @@ const RETRY_MS = 5000;
 // Con la conexión abierta, las preferencias se vuelven a leer (pasando por la caché
 // de 60 s): un cambio en Configuración se aplica sin reconectar.
 const PREFERENCES_MS = 60000;
+const EXPIRED_MESSAGE = 'Tu sesión venció. Inicia sesión de nuevo.';
+const REVOKED_MESSAGE = 'Tu sesión ya no es válida. Inicia sesión de nuevo.';
 
 // GET /stream: conexión SSE de la persona con sesión. Recibe sus avisos y, si es
 // supervisor, las alertas operativas, menos los tipos que apagó en sus preferencias
 // (loadDisabledTypes). El super_admin no recibe notificaciones: 403. Antes de que
-// venza el token se envía auth:expired y se cierra.
+// venza el token, o si admin anula la sesión, se envía auth:expired y se cierra.
 function createStreamController({
   publisher,
   loadDisabledTypes,
@@ -74,26 +76,39 @@ function createStreamController({
     const removeConnection = publisher.addConnection(user, res, preferences);
     publisher.writeEvent(res, 'connected', { message: 'Conectado a las notificaciones de AirCrew.' });
 
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), heartbeatMs);
-    // loadDisabledTypes nunca falla: si admin no responde, deja de filtrar.
-    const refresh = setInterval(async () => {
-      preferences.disabledTypes = await loadDisabledTypes(user, token);
-    }, preferencesMs);
-    const expiry = expiresAt
-      ? setTimeout(() => {
-          publisher.writeEvent(res, 'auth:expired', {
-            message: 'Tu sesión venció. Inicia sesión de nuevo.',
-          });
-          res.end();
-        }, Math.max(0, expiresAt - now()))
-      : null;
+    let closed = false;
+    let expiry = null;
 
-    req.on('close', () => {
+    // Deja de escribir, de preguntar a admin y de recibir avisos. Una sola vez.
+    function stop() {
+      if (closed) return;
+      closed = true;
       clearInterval(heartbeat);
       clearInterval(refresh);
       if (expiry) clearTimeout(expiry);
       removeConnection();
-    });
+    }
+
+    // auth:expired y fin de la conexión: el token venció o admin anuló la sesión.
+    function expire(message) {
+      if (closed) return;
+      publisher.writeEvent(res, 'auth:expired', { message });
+      stop();
+      res.end();
+    }
+
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), heartbeatMs);
+    // loadDisabledTypes nunca falla: si admin no responde, deja de filtrar. Si responde
+    // 401 (sesión anulada, p. ej. tras un cambio de contraseña), se cierra la conexión.
+    const refresh = setInterval(async () => {
+      const types = await loadDisabledTypes(user, token, { onUnauthorized: () => expire(REVOKED_MESSAGE) });
+      if (!closed) preferences.disabledTypes = types;
+    }, preferencesMs);
+    if (expiresAt) {
+      expiry = setTimeout(() => expire(EXPIRED_MESSAGE), Math.max(0, expiresAt - now()));
+    }
+
+    req.on('close', stop);
 
     return undefined;
   };

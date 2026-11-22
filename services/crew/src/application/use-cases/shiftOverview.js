@@ -1,4 +1,10 @@
-const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
+const {
+  hubTimezone,
+  localDate,
+  localDayRange,
+  MAX_MONTH_FLIGHT_HOURS,
+  crewMonth,
+} = require('@vuelos/shared');
 const {
   currentShift,
   crewMemberShiftState,
@@ -9,8 +15,6 @@ const { parseBase } = require('../../domain/value-objects/baseCode');
 const { DomainError } = require('../../domain/errors');
 
 const HOUR = 3600000;
-// 14 CFR 117.23: máximo 100 horas de vuelo en 672 horas consecutivas (se aplica al mes).
-const MAX_MONTH_HOURS = 100;
 const REGULATION = 'FAA 14 CFR Part 117';
 const monthPattern = /^\d{4}-\d{2}$/;
 
@@ -86,12 +90,13 @@ function createShiftOverview({
       findCrewMemberByUserId(user.id),
       flightsClient.getMyAssignments(authorization),
     ]);
-    const zone = hubTimezone(member && member.base);
-    const period = month || localDate(now, zone).slice(0, 7);
+    // El mes local de la base (crewMonth), el mismo que usa la regla de horas de recommendation.
+    const base = member && member.base;
+    const period = month || crewMonth(now, base);
 
     const flights = assignments.map((item) => item.flight).filter((flight) => flight.status !== 'cancelled');
     const time = (value) => new Date(value).getTime();
-    const inMonth = flights.filter((flight) => localDate(flight.departure_at, zone).slice(0, 7) === period);
+    const inMonth = flights.filter((flight) => crewMonth(flight.departure_at, base) === period);
     const completed = inMonth.filter((flight) => time(flight.arrival_at) < now);
     const usedHours = inMonth.reduce((total, flight) => total + (time(flight.arrival_at) - time(flight.departure_at)) / HOUR, 0);
     const lastDuty = flights
@@ -103,7 +108,8 @@ function createShiftOverview({
       month: period,
       fdp: {
         used_hours: Math.round(usedHours * 10) / 10,
-        max_hours: MAX_MONTH_HOURS,
+        // 14 CFR 117.23: máximo 100 horas de vuelo (tope común con recommendation).
+        max_hours: MAX_MONTH_FLIGHT_HOURS,
         regulation: REGULATION,
         cycle_closes_on: new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10),
       },

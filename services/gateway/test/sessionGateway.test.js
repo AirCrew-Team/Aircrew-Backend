@@ -76,16 +76,20 @@ after(async () => {
   await close(adminServer);
 });
 
+// Los tokens del test tienen forma de JWT (tres partes): sessionCheck no pregunta a
+// admin por un Authorization que no la tenga.
+const jwtLike = (name) => `${name}.e30.firma`;
+
 const sessionChecks = (token) =>
-  adminHits.filter((hit) => hit.url === '/auth/me' && hit.authorization === `Bearer ${token}`)
+  adminHits.filter((hit) => hit.url === '/auth/me' && hit.authorization === `Bearer ${jwtLike(token)}`)
     .length;
 const reachedService = (token) =>
-  serviceHits.filter((hit) => hit.authorization === `Bearer ${token}`).length;
+  serviceHits.filter((hit) => hit.authorization === `Bearer ${jwtLike(token)}`).length;
 
 async function call(path, { token, cookie, method = 'GET', body } = {}) {
   const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (cookie) headers.Cookie = `aircrew_token=${cookie}`;
+  if (token) headers.Authorization = `Bearer ${jwtLike(token)}`;
+  if (cookie) headers.Cookie = `aircrew_token=${jwtLike(cookie)}`;
   if (body) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${gatewayUrl}${path}`, { method, headers, body });
   return { status: response.status, body: await response.json() };
@@ -150,7 +154,7 @@ test('BE-2: un POST con body pasa la validación y llega intacto al servicio', a
   const res = await call('/api/crew/absences', { token: 'valido-post', method: 'POST', body });
 
   assert.equal(res.status, 200);
-  const hit = serviceHits.find((candidate) => candidate.authorization === 'Bearer valido-post');
+  const hit = serviceHits.find((candidate) => candidate.authorization === `Bearer ${jwtLike('valido-post')}`);
   assert.equal(hit.body, body);
 });
 
@@ -161,7 +165,7 @@ for (const path of [
   '/api/admin/auth/bootstrap/super-admin',
 ]) {
   test(`BE-2: POST ${path} no pasa por la validación de la sesión`, async () => {
-    const token = `anulado-${path}`;
+    const token = `anulado${path.replace(/\//g, '-')}`;
 
     const res = await call(path, { token, method: 'POST', body: '{}' });
 
@@ -205,17 +209,39 @@ test('BE-2: las rutas bloqueadas de BE-1 siguen dando 404 aunque lleven token', 
 });
 
 // Notification lee la cookie aircrew_token si el Authorization no es Bearer (el SSE):
-// con otro esquema en el header, la cookie anulada no debe llegar a /stream.
+// con otro esquema en el header, se valida la cookie, y si está anulada no llega a /stream.
 test('BE-2: con Authorization no Bearer y una cookie anulada, /api/notification/stream no llega al servicio', async () => {
   const before = serviceHits.length;
   const response = await fetch(`${gatewayUrl}/api/notification/stream`, {
-    headers: { Authorization: 'Basic eA==', Cookie: 'aircrew_token=anulado-sse' },
+    headers: { Authorization: 'Basic eA==', Cookie: `aircrew_token=${jwtLike('anulado-sse')}` },
   });
 
   assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), {
-    error: 'Se requiere autenticación.',
-    code: 'auth_required',
+  assert.deepEqual(await response.json(), REVOKED_BODY);
+  assert.equal(serviceHits.length, before);
+  assert.equal(sessionChecks('anulado-sse'), 1);
+});
+
+// Revisión final: un Authorization sin forma de JWT (Bearer x.y.z) no se consulta a
+// admin; el servicio responde 401 como siempre.
+test('Revisión: un Authorization sin forma de JWT llega al servicio sin preguntar a admin', async () => {
+  const before = adminHits.length;
+  const response = await fetch(`${gatewayUrl}/api/crew/crew-members/me`, {
+    headers: { Authorization: 'Bearer basura' },
   });
+
+  assert.equal(response.status, 200);
+  assert.equal(adminHits.length, before);
+  assert.equal(serviceHits.at(-1).authorization, 'Bearer basura');
+});
+
+test('Revisión: una cookie anulada con un espacio codificado delante no llega a /api/notification/stream', async () => {
+  const before = serviceHits.length;
+  const response = await fetch(`${gatewayUrl}/api/notification/stream`, {
+    headers: { Cookie: `aircrew_token=%20${jwtLike('anulado-espacio')}` },
+  });
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), REVOKED_BODY);
   assert.equal(serviceHits.length, before);
 });

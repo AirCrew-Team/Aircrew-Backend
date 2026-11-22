@@ -57,11 +57,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthResult'
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Falta el email o la contraseña, o el email tiene más de 254 caracteres (no se cuenta ni se
+            guarda). `error`: «Se requieren email y password.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
           description: |
             Credenciales inválidas o cuenta sin activar. Cada 401 cuenta como un fallo del correo
-            (normalizado: sin espacios y en minúsculas), exista o no la cuenta.
+            (normalizado: sin espacios y en minúsculas), exista o no la cuenta. Sin cuenta, la contraseña
+            se compara igual contra un hash ficticio: tarda lo mismo exista o no.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -69,7 +76,9 @@ paths:
           description: |
             El correo ya tiene 5 fallos en los últimos 15 minutos: no se busca la cuenta ni se compara la
             contraseña hasta que salgan de la ventana. Responde lo mismo exista o no la cuenta. Un login
-            correcto no borra los fallos anteriores.
+            correcto no borra los fallos anteriores. Cada intento se registra antes de comparar y cuenta
+            para el límite (más de 5 → 429), así que intentos simultáneos no pasan todos; el 429 no
+            queda registrado.
             `error`: «Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.»
           content:
             application/json:
@@ -344,7 +353,8 @@ paths:
         tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día.
         La contraseña actual se comprueba antes que ese límite: con las dos condiciones responde 400.
         Cada contraseña actual incorrecta se registra; con 5 en los últimos 15 minutos responde 429
-        antes de compararla.
+        antes de compararla. El intento se registra antes de comparar (cuenta para el límite aunque
+        lleguen varios a la vez) y se borra si la contraseña actual es correcta o si responde 429.
       security:
         - bearerAuth: []
       requestBody:

@@ -18,9 +18,8 @@ router.get('/health', (req, res) => {
 const TIMEOUTS = { recommendation: 120000 };
 
 // Rutas que solo usan los servicios entre sí (por la red privada) o que no deben
-// verse desde Internet. Se comparan sin mayúsculas, decodificadas y sin barras
-// repetidas, porque Express las enrutaría igual al servicio. Una ruta con
-// segmentos «.» o «..» (que ningún cliente legítimo envía) se rechaza entera.
+// verse desde Internet. Se comparan contra la ruta canónica: decodificada, sin
+// mayúsculas y sin barras repetidas, porque Express las enrutaría igual al servicio.
 const PRIVATE_ROUTES = [
   /^\/api\/[^/]+\/internal(\/|$)/,
   /^\/api\/admin\/users\/lookup(\/|$)/,
@@ -28,23 +27,36 @@ const PRIVATE_ROUTES = [
 ];
 const DOCS_ROUTE = /^\/api\/[^/]+\/docs(\/|$)/;
 const DOT_SEGMENT = /(^|\/)\.{1,2}(\/|$)/;
+// http-proxy reenvía `url.parse(req.url).path`, que cambia «\» por «/» y corta en «#»:
+// la ruta que llega al servicio no sería la que se revisó aquí.
+const UNSAFE_RAW = /[\\#]/;
+const UNSAFE_DECODED = /[\\#\u0000-\u001f\u007f]/;
 
-function normalizedPath(url) {
+// Ruta canónica de la petición, o null si no tiene una inequívoca: no empieza por «/»
+// (forma absoluta, `GET http://host/ruta`), lleva «\» o «#» (tal cual en la URL, o
+// codificados o de control en la ruta), segmentos «.» o «..», o no se puede
+// decodificar. Ningún cliente legítimo envía algo así: se rechaza entera.
+function canonicalPath(url) {
+  if (typeof url !== 'string' || !url.startsWith('/') || UNSAFE_RAW.test(url)) return null;
   try {
-    const path = decodeURIComponent(url.split('?')[0]).replace(/\/{2,}/g, '/').toLowerCase();
-    return DOT_SEGMENT.test(path) ? null : path;
+    const path = decodeURIComponent(url.split('?')[0]);
+    if (UNSAFE_DECODED.test(path)) return null;
+    const canonical = path.replace(/\/{2,}/g, '/').toLowerCase();
+    return DOT_SEGMENT.test(canonical) ? null : canonical;
   } catch {
     return null;
   }
 }
 
+// Se calcula una sola vez: el filtro y la exención de sesión usan la misma ruta.
 router.use((req, res, next) => {
-  const path = normalizedPath(req.url);
+  const path = canonicalPath(req.url);
   const blocked =
     path === null ||
     PRIVATE_ROUTES.some((route) => route.test(path)) ||
     (!docsPublic && DOCS_ROUTE.test(path));
   if (blocked) return res.status(404).json({ error: 'Ruta no encontrada.' });
+  res.locals.canonicalPath = path;
   return next();
 });
 
@@ -55,7 +67,7 @@ router.use(cookieToAuthorization);
 const SESSION_FREE_ROUTE = /^\/api\/admin\/auth(\/|$)/;
 const sessionCheck = createSessionCheck({ adminUrl: services.admin });
 router.use((req, res, next) =>
-  SESSION_FREE_ROUTE.test(normalizedPath(req.url)) ? next() : sessionCheck(req, res, next)
+  SESSION_FREE_ROUTE.test(res.locals.canonicalPath) ? next() : sessionCheck(req, res, next)
 );
 
 // Notification: GET /stream es una conexión SSE que queda abierta (avisos en vivo),

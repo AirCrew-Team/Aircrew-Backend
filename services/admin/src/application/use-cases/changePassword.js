@@ -49,20 +49,26 @@ function createChangePassword({
       throw invalidSession();
     }
 
+    // El intento se registra como fallo ANTES de comparar y se cuenta incluyéndolo:
+    // cambios simultáneos no pasan todos el límite antes de que se guarde alguno. El
+    // 429 y la contraseña actual correcta borran su propio registro.
+    const attemptId = await userRepository.recordPasswordChangeFailure(requester.id);
     const failures = await userRepository.countPasswordResetEvents({
       userId: requester.id,
       event: 'change_failed',
       since: new Date(now().getTime() - FAILED_ATTEMPTS_WINDOW_MS),
     });
 
-    if (failures >= MAX_FAILED_ATTEMPTS) {
+    if (failures > MAX_FAILED_ATTEMPTS) {
+      await userRepository.deletePasswordChangeFailure(attemptId);
       throw tooManyAttempts(ATTEMPT_MESSAGES.changePassword);
     }
 
     if (!(await passwordHasher.compare(currentPassword, user.password_hash))) {
-      await userRepository.recordPasswordChangeFailure(requester.id);
       throw wrongPassword();
     }
+
+    await userRepository.deletePasswordChangeFailure(attemptId);
 
     const passwordHash = await passwordHasher.hash(newPassword);
 

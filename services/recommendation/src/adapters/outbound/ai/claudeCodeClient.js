@@ -13,7 +13,7 @@ const config = require('../../../config/env');
 //
 // Seguridad: Claude Code no recibe acceso a la base de datos ni al proyecto.
 // El backend le entrega los datos ya consultados y filtrados por las reglas;
-// corre en una carpeta temporal, sin herramientas (--tools "") y con un
+// corre en una carpeta privada (mkdtemp, 0700), sin herramientas (--tools "") y con un
 // entorno mínimo: ningún secreto del backend llega al proceso.
 
 const SAFE_MODEL = /^[a-z0-9.-]+$/i;
@@ -43,17 +43,25 @@ function isWritableDir(dir) {
   }
 }
 
+// Carpeta privada del proceso (0700, nombre aleatorio con mkdtemp): cwd de la CLI y
+// carpeta personal de respaldo. Una ruta fija en el temporal la podría crear antes
+// otro usuario de la máquina y leer o plantar la configuración de Claude Code.
+function createPrivateDir(tmpdir = os.tmpdir()) {
+  const dir = fs.mkdtempSync(path.join(tmpdir, 'aircrew-claude-'));
+  fs.chmodSync(dir, 0o700);
+  return dir;
+}
+
 // Solo lo que la CLI necesita: PATH, la carpeta personal (guarda ahí su
 // configuración, así que debe poder escribirse), la carpeta temporal y el token.
 // Nunca JWT_SECRET, DB_PASSWORD, claves de servicio ni ANTHROPIC_API_KEY (con
-// ella Claude Code cobraría a la API en vez de usar la suscripción).
-function buildChildEnv({ env = process.env, platform = process.platform, tmpdir = os.tmpdir() } = {}) {
+// ella Claude Code cobraría a la API en vez de usar la suscripción). Sin
+// actualizaciones automáticas ni tráfico que no sea la propia consulta.
+// privateDir(): la carpeta privada del proceso; solo se pide si falta HOME.
+function buildChildEnv({ env = process.env, platform = process.platform, privateDir = createPrivateDir } = {}) {
   const isWindows = platform === 'win32';
   let home = isWindows ? env.USERPROFILE || env.HOME : env.HOME;
-  if (!home || !isWritableDir(home)) {
-    home = path.join(tmpdir, 'aircrew-claude-home');
-    fs.mkdirSync(home, { recursive: true });
-  }
+  if (!home || !isWritableDir(home)) home = privateDir();
 
   const child = { PATH: env.PATH, HOME: home };
   if (isWindows) child.USERPROFILE = home;
@@ -61,6 +69,8 @@ function buildChildEnv({ env = process.env, platform = process.platform, tmpdir 
     if (env[name]) child[name] = env[name];
   }
   if (env.CLAUDE_CODE_OAUTH_TOKEN) child.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_CODE_OAUTH_TOKEN;
+  child.DISABLE_AUTOUPDATER = '1';
+  child.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   return child;
 }
 
@@ -110,6 +120,12 @@ function createClaudeCodeClient({
   // un .cmd necesitan shell, y ahí el comando y los argumentos van entre comillas.
   const useShell = platform === 'win32' && !/\.exe$/i.test(command);
   const quote = (value) => (useShell && /[\s"]|^$/.test(value) ? `"${value}"` : value);
+  // Se crea en la primera llamada (el módulo arma su cliente al cargarse) y se reutiliza.
+  let workDir = null;
+  const privateDir = () => {
+    workDir = workDir || createPrivateDir(tmpdir);
+    return workDir;
+  };
 
   function runClaudeCode(prompt) {
     const args = [
@@ -129,8 +145,8 @@ function createClaudeCodeClient({
       // Los argumentos son fijos; el contenido variable (el prompt) va por la
       // entrada estándar, nunca en la línea de comandos.
       const child = spawnImpl(quote(command), args.map(quote), {
-        cwd: tmpdir,
-        env: buildChildEnv({ env, platform, tmpdir }),
+        cwd: privateDir(),
+        env: buildChildEnv({ env, platform, privateDir }),
         shell: useShell,
         windowsHide: true,
       });
@@ -204,4 +220,5 @@ module.exports = {
   createClaudeCodeClient,
   resolveClaudeCodePath,
   buildChildEnv,
+  createPrivateDir,
 };

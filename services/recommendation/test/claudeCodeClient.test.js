@@ -8,6 +8,7 @@ const {
   createClaudeCodeClient,
   resolveClaudeCodePath,
   buildChildEnv,
+  createPrivateDir,
 } = require('../src/adapters/outbound/ai/claudeCodeClient');
 
 // Sin ejecutar Claude Code de verdad: el spawn es falso y el entorno se pasa
@@ -84,45 +85,66 @@ describe('Ruta de Claude Code', () => {
   });
 });
 
+// Revisión final: el hijo recibe además DISABLE_AUTOUPDATER y
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC (sin actualizaciones ni tráfico extra).
+const QUIET = { DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
+const noPrivateDir = () => assert.fail('no debería crear la carpeta privada');
+
 describe('Entorno del proceso de Claude Code', () => {
-  it('en Linux solo pasa PATH, HOME, TMPDIR y el token: ningún secreto del backend', () => {
+  it('en Linux solo pasa PATH, HOME, TMPDIR, el token y las dos variables de silencio: ningún secreto del backend', () => {
     const home = tempDir();
     const env = buildChildEnv({
       env: { PATH: '/usr/bin', HOME: home, TMPDIR: '/tmp/x', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...SECRETS },
       platform: 'linux',
-      tmpdir: tempDir(),
+      privateDir: noPrivateDir,
     });
-    assert.deepEqual(env, { PATH: '/usr/bin', HOME: home, TMPDIR: '/tmp/x', CLAUDE_CODE_OAUTH_TOKEN: 'tok' });
+    assert.deepEqual(env, { PATH: '/usr/bin', HOME: home, TMPDIR: '/tmp/x', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...QUIET });
   });
 
   it('en Windows la carpeta personal va en HOME y USERPROFILE, con TEMP y TMP', () => {
     const home = tempDir();
     const env = buildChildEnv({
-      env: { PATH: 'C:\\bin', USERPROFILE: home, TEMP: 'C:\\t', TMP: 'C:\\t', APPDATA: 'C:\\a', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...SECRETS },
+      env: { PATH: 'C:\bin', USERPROFILE: home, TEMP: 'C:\t', TMP: 'C:\t', APPDATA: 'C:\a', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...SECRETS },
       platform: 'win32',
-      tmpdir: tempDir(),
+      privateDir: noPrivateDir,
     });
-    assert.deepEqual(env, { PATH: 'C:\\bin', HOME: home, USERPROFILE: home, TEMP: 'C:\\t', TMP: 'C:\\t', CLAUDE_CODE_OAUTH_TOKEN: 'tok' });
+    assert.deepEqual(env, { PATH: 'C:\bin', HOME: home, USERPROFILE: home, TEMP: 'C:\t', TMP: 'C:\t', CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...QUIET });
   });
 
   it('no inventa variables que no existen en el entorno', () => {
     const home = tempDir();
-    assert.deepEqual(buildChildEnv({ env: { PATH: '/usr/bin', HOME: home }, platform: 'linux', tmpdir: tempDir() }), {
+    assert.deepEqual(buildChildEnv({ env: { PATH: '/usr/bin', HOME: home }, platform: 'linux', privateDir: noPrivateDir }), {
       PATH: '/usr/bin',
       HOME: home,
+      ...QUIET,
     });
   });
 
-  it('si HOME no existe, usa una carpeta dentro del directorio temporal y la crea', () => {
+  it('si HOME no existe, usa la carpeta privada del proceso', () => {
     const tmpdir = tempDir();
-    const env = buildChildEnv({ env: { PATH: '/usr/bin', HOME: path.join(tmpdir, 'no-existe') }, platform: 'linux', tmpdir });
-    assert.equal(env.HOME, path.join(tmpdir, 'aircrew-claude-home'));
-    assert.ok(fs.statSync(env.HOME).isDirectory());
+    const dir = tempDir();
+    const env = buildChildEnv({ env: { PATH: '/usr/bin', HOME: path.join(tmpdir, 'no-existe') }, platform: 'linux', privateDir: () => dir });
+    assert.equal(env.HOME, dir);
   });
 
-  it('si no hay HOME, también usa la carpeta temporal', () => {
+  it('si no hay HOME, también usa la carpeta privada', () => {
+    const dir = tempDir();
+    assert.equal(buildChildEnv({ env: { PATH: '/usr/bin' }, platform: 'linux', privateDir: () => dir }).HOME, dir);
+  });
+
+  it('la carpeta privada no es predecible: mkdtemp con el prefijo aircrew-claude- y permisos 0700', () => {
     const tmpdir = tempDir();
-    assert.equal(buildChildEnv({ env: { PATH: '/usr/bin' }, platform: 'linux', tmpdir }).HOME, path.join(tmpdir, 'aircrew-claude-home'));
+    const first = createPrivateDir(tmpdir);
+    const second = createPrivateDir(tmpdir);
+
+    assert.notEqual(first, second);
+    for (const dir of [first, second]) {
+      assert.equal(path.dirname(dir), tmpdir);
+      assert.match(path.basename(dir), /^aircrew-claude-.{6}$/);
+      assert.ok(fs.statSync(dir).isDirectory());
+      // En Windows los permisos POSIX no aplican.
+      if (process.platform !== 'win32') assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    }
   });
 });
 
@@ -153,9 +175,12 @@ describe('Llamada a Claude Code', () => {
       '--model',
       'sonnet',
     ]);
-    assert.deepEqual(calls[0].options, {
-      cwd: tmpdir,
-      env: { PATH: '/usr/bin', HOME: home, CLAUDE_CODE_OAUTH_TOKEN: 'tok' },
+    // Revisión final: corre en una carpeta privada (mkdtemp) dentro de tmpdir, no en tmpdir.
+    const { cwd, ...options } = calls[0].options;
+    assert.equal(path.dirname(cwd), tmpdir);
+    assert.match(path.basename(cwd), /^aircrew-claude-/);
+    assert.deepEqual(options, {
+      env: { PATH: '/usr/bin', HOME: home, CLAUDE_CODE_OAUTH_TOKEN: 'tok', ...QUIET },
       shell: false,
       windowsHide: true,
     });
@@ -242,5 +267,33 @@ describe('Llamada a Claude Code', () => {
     await assert.rejects(client.decide({ system: 'S', data: {}, schema: {} }), {
       message: 'Claude Code terminó con código 1: Failed to authenticate. API Error: 401 OAuth access token is invalid.',
     });
+  });
+});
+
+describe('Carpeta privada de Claude Code (revisión final)', () => {
+  it('se crea una sola vez por proceso y sirve de cwd y de HOME de respaldo', async () => {
+    const { spawnImpl, calls } = fakeSpawn({ stdout: envelope('{}') });
+    const tmpdir = tempDir();
+    const client = createClaudeCodeClient({
+      ai: enabledAi(),
+      spawnImpl,
+      env: { PATH: '/usr/bin' },
+      platform: 'linux',
+      tmpdir,
+    });
+
+    await client.decide({ system: 'S', data: {}, schema: {} });
+    await client.decide({ system: 'S', data: {}, schema: {} });
+
+    assert.equal(calls[0].options.cwd, calls[1].options.cwd);
+    assert.equal(calls[0].options.env.HOME, calls[0].options.cwd);
+    assert.deepEqual(fs.readdirSync(tmpdir), [path.basename(calls[0].options.cwd)]);
+  });
+
+  it('no se crea hasta la primera llamada (el módulo crea su cliente al cargarse)', () => {
+    const tmpdir = tempDir();
+    createClaudeCodeClient({ ai: enabledAi(), spawnImpl: fakeSpawn().spawnImpl, env: { PATH: '/usr/bin' }, platform: 'linux', tmpdir });
+
+    assert.deepEqual(fs.readdirSync(tmpdir), []);
   });
 });

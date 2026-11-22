@@ -11,7 +11,8 @@ info:
     2. **Reglas (código):** se descarta a quien no cumple alguna de las 8 reglas: rango del puesto,
        habilitación en la familia del avión, certificado médico vigente, disponibilidad
        (no ausente, incapacitado ni de vacaciones), sin vuelos que se crucen, 10 h de descanso,
-       máximo 90 h de vuelo en el mes e inglés OACI 4 para pilotos en vuelos internacionales.
+       máximo 100 h de vuelo en el mes local de su base (14 CFR 117.23, el mismo tope de Mis Vuelos)
+       e inglés OACI 4 para pilotos en vuelos internacionales.
     3. **Prioridad:** de guardia en la base de salida → libre en la base → otra base (si alcanza a llegar).
     4. **IA (Claude):** ordena de 3 a 5 candidatos y explica en español por qué. Proveedor
        configurable: Claude Code (`AI_PROVIDER=claude_code`, suscripción) o la API (`AI_PROVIDER=api`).
@@ -523,7 +524,7 @@ components:
         checks:
           type: array
           items: { type: string }
-          example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', Margen de 90 h en el mes]
+          example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', 10 h de margen este mes]
         rationale: { type: string, example: 'Es el más rápido en llegar: 12 min a la rampa frente a 174 min hasta la salida...' }
         source: { type: string, enum: [ai], description: 'Siempre ai: ordenado por Claude.' }
         status: { type: string, enum: [proposed, offered, missed, accepted, discarded] }

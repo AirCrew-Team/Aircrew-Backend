@@ -19,7 +19,7 @@ jobs:
 
       - name: Buscar secretos (Gitleaks)
         run: |
-          docker run --rm -v "${{ github.workspace }}:/repo" \
+          docker run --rm -v "${{ github.workspace }}:/repo:ro" \
             ghcr.io/gitleaks/gitleaks:latest git --redact -v /repo
 
   test:

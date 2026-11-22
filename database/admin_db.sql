@@ -143,8 +143,10 @@ ALTER TABLE public.password_reset_events
 CREATE INDEX IF NOT EXISTS password_reset_events_user_event_created_idx
   ON public.password_reset_events (user_id, event, created_at);
 
--- Fallos de login por correo normalizado (exista o no la cuenta): 5 en 15 min dan 429.
--- TEXT: el correo que se escribe en el login no tiene un largo máximo.
+-- Fallos de login por correo normalizado (exista o no la cuenta): más de 5 en 15 min
+-- dan 429. Cada intento se guarda antes de comparar y se borra si no fue un fallo.
+-- TEXT: el login ya rechaza correos de más de 254 caracteres, pero el largo no se
+-- vuelve a validar aquí (un VARCHAR convertiría un cambio de esa regla en un 500).
 CREATE TABLE IF NOT EXISTS public.login_failures (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email      TEXT        NOT NULL,
@@ -153,6 +155,10 @@ CREATE TABLE IF NOT EXISTS public.login_failures (
 
 CREATE INDEX IF NOT EXISTS login_failures_email_created_idx
   ON public.login_failures (email, created_at);
+
+-- Cada fallo nuevo purga los de más de 1 día (de cualquier correo) con este índice.
+CREATE INDEX IF NOT EXISTS login_failures_created_idx
+  ON public.login_failures (created_at);
 
 -- Foto de perfil: una por cuenta, PNG, JPEG o WEBP de hasta 2 MB.
 CREATE TABLE IF NOT EXISTS public.user_photos (

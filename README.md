@@ -52,8 +52,11 @@ El gateway no tiene lógica de negocio: reenvía el header `Authorization` y cad
 - `POST /api/admin/auth/logout` borra la cookie y responde `204`, haya o no sesión.
 - `GET /api/admin/auth/me` responde `401` si el token falta, no es válido o venció, o si el usuario ya no existe o está desactivado.
 - Cambiar la contraseña cierra las demás sesiones: un token emitido antes del último cambio (con sesión o por recuperación) recibe `401` «La sesión ya no es válida.» en las rutas del admin que leen la cuenta (`/auth/me`, `/users/me*` y `/auth/change-password`). Se compara el `iat` del JWT (en segundos) con `password_changed_at` redondeado hacia abajo al segundo, así que un token del mismo segundo del cambio sigue valiendo. Las cuentas con `password_changed_at` vacío no se comparan. `POST /auth/change-password` pone una cookie `aircrew_token` nueva, con las mismas opciones que el login, para que la sesión que hizo el cambio siga abierta.
-- Sesiones anuladas en todos los servicios: antes de reenviar una petición con token (salvo `/api/admin/auth/*`, que gestiona su sesión), el gateway consulta `GET /auth/me` del admin con ese mismo `Authorization` (3 s de espera). Si admin responde `401`, el gateway devuelve ese `401` tal cual: con la cuenta inexistente o desactivada, o un token anterior al último cambio de contraseña, lleva `code: "session_revoked"`. Si admin no responde o da un `5xx`, responde `503` «No se pudo validar la sesión. Intenta de nuevo.». Guarda el resultado (`200` o `401`) 30 s por token en memoria, así que una sesión anulada puede entrar hasta 30 s más. El stream SSE de notification solo se valida al conectarse.
+- Sesiones anuladas en todos los servicios: antes de reenviar una petición con token (salvo `/api/admin/auth/*`, que gestiona su sesión), el gateway consulta `GET /auth/me` del admin con ese mismo `Authorization` (3 s de espera). Si admin responde `401`, el gateway devuelve ese `401` tal cual: con la cuenta inexistente o desactivada, o un token anterior al último cambio de contraseña, lleva `code: "session_revoked"`. Si admin no responde o da un `5xx`, responde `503` «No se pudo validar la sesión. Intenta de nuevo.». Guarda el resultado (`200` o `401`) 30 s por token en memoria, así que una sesión anulada puede entrar hasta 30 s más; las peticiones simultáneas con el mismo token esperan una sola consulta, y con 5000 tokens guardados sale el más antiguo. Solo consulta un token con forma de JWT (`Bearer x.y.z`): con otro `Authorization` valida la cookie `aircrew_token` si la hay (notification la leería) y, si no, deja que el servicio responda `401`. El stream SSE de notification se valida al conectarse y, con la conexión abierta, se cierra cuando admin responde `401` al refrescar las preferencias (ver «Notificaciones»).
 - Límite de intentos: 5 logins fallidos de un correo en 15 minutos dan `429` «Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.» hasta que salen de la ventana, exista o no la cuenta (tabla `login_failures`), y 5 contraseñas actuales incorrectas en `POST /auth/change-password` dan `429` antes de comparar (evento `change_failed` de `password_reset_events`).
+  - Cada intento se guarda como fallo **antes** de comparar y se cuenta incluyéndolo, así que intentos simultáneos no pasan todos el límite: con más de 5 en la ventana responde `429`. El `429` y la contraseña correcta borran su propio registro.
+  - Un correo de más de 254 caracteres responde `400` «Se requieren email y password.» sin contarse. Cada fallo nuevo borra los de más de 1 día.
+  - Sin cuenta (o con una desactivada o pendiente de activar) la contraseña se compara igual contra un hash bcrypt ficticio: la respuesta tarda lo mismo exista o no el correo.
 
 CORS solo está activo en el gateway, con credenciales (`credentials: true`) para que el navegador envíe la cookie. Con credenciales el navegador no acepta el origen `*`, así que `CORS_ORIGINS` debe listar los orígenes exactos del frontend, y el frontend debe hacer sus peticiones con credenciales (`withCredentials` en Axios). Configura en `services/gateway/.env` el origen del frontend (por defecto `http://localhost:5173`) y, si cambian, las URLs de los servicios; ver `services/gateway/.env.example`.
 
@@ -79,7 +82,7 @@ npm run db:migrate -- crew         # solo una
 npm run db:migrate -- admin crew   # varias
 ```
 
-- **Qué hace:** crea la base si no existe y aplica su script completo en una transacción, así que si falla no deja esa base a medias. Se detiene en el primer error y lo muestra.
+- **Qué hace:** crea la base si no existe y aplica su script completo en una transacción, así que si falla no deja esa base a medias. Se detiene en el primer error y lo muestra. Si una tabla está bloqueada (p. ej. por los servicios encendidos), falla a los 10 s (`lock_timeout`) en vez de dejar en cola las consultas de los servicios.
 - **Repítelo después de cada `git pull`:** los scripts se pueden ejecutar varias veces sin error y agregan las columnas y tablas nuevas.
 - **Conexión, en este orden:** `DATABASE_URL`; `PGHOST`, `PGPORT`, `PGUSER` y `PGPASSWORD`; o `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD`. Crea las bases desde la base de mantenimiento: la de `DATABASE_URL`, o `PGDATABASE`, o `postgres`. Antes de empezar muestra el servidor y de qué variables salió.
 - **No lee los `.env`:** pon las variables en la terminal.
@@ -89,21 +92,24 @@ npm run db:migrate -- admin crew   # varias
 
 - **Catálogo:** las bases son los 9 hubs de Delta (ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC y SEA), definidos una sola vez en `shared/domain/hubs.js`. De ahí salen las bases del formulario de Usuarios y de Aeronaves. `admin_db.sql` siembra `public.bases` y `flights_db.sql` siembra `public.airports` con los mismos datos.
 - **Datos de la demo antigua (Colombia):** al ejecutar los scripts, los usuarios, tripulantes y aeronaves con base BOG, MDE o CLO quedan sin base (`NULL`), y un super_admin les asigna un hub. También se borran esas bases y los aeropuertos colombianos que ningún vuelo usa.
-- **Vuelo nacional:** es nacional si sus dos aeropuertos son de EE. UU. (`country = 'US'`). Un aeropuerto que no está en `public.airports` cuenta como de EE. UU., así que los destinos internacionales deben agregarse a esa tabla.
+- **Vuelo nacional:** es nacional solo si sus dos aeropuertos están en `public.airports` con `country = 'US'`. Un aeropuerto que no está en la tabla cuenta como **internacional** (se exige de más, p. ej. inglés OACI 4, y no de menos), así que los aeropuertos de EE. UU. que no son hubs también deben agregarse a esa tabla.
+- **Tope de horas del mes:** 100 horas de vuelo (14 CFR 117.23), en el mes local de la base del tripulante. Es el mismo en Mis Vuelos (crew) y en la regla de elegibilidad de recommendation (`MAX_MONTH_FLIGHT_HOURS` y `crewMonth` en `shared/domain/flightHours.js`).
 - **Zona horaria:** «hoy», el turno, el mes de Mis Vuelos y los días de una ausencia se calculan en la zona del hub: la `base` pedida (`?base=` en turno, programación, `/absences/tracking` y `/absences/stats`) o la base del tripulante. Sin base, Nueva York.
 - **Turno de todas las bases:** `GET /shifts/current` de crew sin `base` junta todas las bases para supervisor y super_admin, con `base: null` y la hora de Nueva York.
 
 ### Datos de demo
 
-**Nunca en producción:** el script se niega a correr con `NODE_ENV=production`, porque borra y vuelve a crear datos. Úsalo solo con una base local o de pruebas.
+**Solo contra una base local:** el script borra y vuelve a crear datos, así que se niega a correr con `NODE_ENV=production` y si el host de destino no es `localhost`, `127.0.0.1` ni `::1`. Para una base de pruebas en otra máquina, córrelo con `SEED_DEMO_ALLOW_REMOTE=1` (nunca contra producción).
 
 ```bash
 npm run seed:demo
 ```
 
-- **Qué carga:** datos de Delta con los 9 hubs, 3 destinos internacionales (CDG, LHR y CUN), 6 aeronaves `N…`, un supervisor de JFK, 21 tripulantes de JFK, ATL y LAX y 14 vuelos `DL`: 12 en los próximos 7 días y 2 ya realizados. Los teléfonos son de ficción (`+1 212 555 01xx`). Los correos de los usuarios de demo y su contraseña común están en `database/seed-demo.js`.
+- **Qué carga:** datos de Delta con los 9 hubs, 3 destinos internacionales (CDG, LHR y CUN), 6 aeronaves `N991AC` a `N996AC`, un supervisor de JFK, 21 tripulantes de JFK, ATL y LAX y 14 vuelos `DL9901` a `DL9914` (números que no usa ningún vuelo real): 12 en los próximos 7 días y 2 ya realizados. Los teléfonos son de ficción (`+1 212 555 01xx`). Los correos de los usuarios de demo y su contraseña común están en `database/seed-demo.js`.
 - **Conexión:** usa `DATABASE_URL` si existe; el script cambia el nombre de la base por cada una de las cuatro. Si no, usa `PGHOST`, `PGPORT`, `PGUSER` y `PGPASSWORD` y, como último recurso, `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD` de `services/admin/.env`. Antes de escribir, muestra el servidor de destino. Las bases `admin_db`, `crew_db`, `flights_db` y `recommendation_db` deben existir con sus scripts ejecutados (`npm run db:migrate`).
-- **Se puede repetir:** borra solo sus datos de demo y los vuelve a crear con fechas desde ese momento. Sus datos de demo son las cuentas de demo que define `database/seed-demo.js` y los números `DL` de su lista. De la demo antigua de Colombia, borra también los vuelos `AV-*`, sus aeronaves y sus aeropuertos.
+- **Se puede repetir:** borra solo sus datos de demo y los vuelve a crear con fechas desde ese momento. Sus datos de demo son las cuentas de demo que define `database/seed-demo.js` y sus vuelos, y los de las demos anteriores (los `AV-*` de Colombia y los primeros `DL` de Delta), siempre por su número exacto **y** su id de demo: un vuelo real con el mismo número no se toca. De la demo de Colombia borra también sus aeronaves y aeropuertos si ya ningún vuelo los usa.
+- **No pisa tus aeronaves:** cada aeronave de demo tiene un id fijo. Si una de sus matrículas ya es de una aeronave que no es de la demo, el seed se detiene con un error y no cambia nada. Las aeronaves de la primera demo de Delta (`N321AC`, `N322AC`, `N739AC`, `N740AC`, `N330AC` y `N350AC`) no se borran solas, porque no se puede saber si son de la demo: bórralas a mano si ya no las usas.
+- **Todo o nada:** cada base va en su propia transacción; si algo falla, ninguna queda a medias.
 
 ## Documentación de la API (Swagger)
 
@@ -119,7 +125,7 @@ Cada servicio publica su contrato OpenAPI con Swagger UI:
 
 Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/openapi.yaml`. Si cambias un endpoint, actualiza también ese archivo. Para probar rutas protegidas, inicia sesión en Admin (`POST /auth/login`), copia el `token` y pégalo en el botón **Authorize**.
 
-A través del gateway (`/api/<servicio>/docs`), el Swagger está **cerrado** y responde 404, salvo con `DOCS_PUBLIC=true` en el gateway. El gateway también responde 404, siempre, a las rutas que solo usan los servicios entre sí: `/api/<servicio>/internal/*`, `/api/admin/users/lookup` y `/api/notification/events/*`. Los servicios se las piden unos a otros por su URL directa (en Railway, la red privada).
+A través del gateway (`/api/<servicio>/docs`), el Swagger está **cerrado** y responde 404, salvo con `DOCS_PUBLIC=true` en el gateway. El gateway también responde 404, siempre, a las rutas que solo usan los servicios entre sí: `/api/<servicio>/internal/*`, `/api/admin/users/lookup` y `/api/notification/events/*`. Las compara con la ruta canónica (decodificada, sin mayúsculas ni barras repetidas) y responde 404 a cualquier petición sin una ruta inequívoca: que no empieza por `/` (forma absoluta, `GET http://host/ruta`), con `\` o `#` (también codificados, `%5C` y `%23`, en la ruta), con caracteres de control o con segmentos `.` o `..`. Un `%23` en un parámetro de búsqueda sí pasa. Los servicios se las piden unos a otros por su URL directa (en Railway, la red privada).
 
 ## Usuarios (pantalla del super_admin)
 
@@ -283,7 +289,7 @@ Las notificaciones llegan en vivo por **SSE** (Server-Sent Events), no por Socke
   - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered`, `absence:deadline_missed` y `flight:slot_vacated` (se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante; no tiene preferencia, siempre se envía);
   - **crew** (solo los suyos): `assignment:replacement`, `certification:registered` y `certification:verified`;
   - **super_admin:** ninguna. `/stream` y `/notifications/*` le responden `403`.
-- Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión; después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
+- Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión, o cuando admin responde `401` al refrescar las preferencias (la sesión se anuló, p. ej. por un cambio de contraseña: se nota en unos 2 minutos como mucho); después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
 - Todos los avisos se guardan para la campana, así se ven aunque la persona no estuviera conectada. Los del tripulante se guardan para él; las alertas del supervisor, una sola vez para el rol, y cada supervisor marca como leídas las suyas:
   - `GET /api/notification/notifications?limit=20` responde `{ items, unread_count }`. `limit` va de 1 a 100;
   - `PATCH /api/notification/notifications/:id/read` marca uno como leído. Responde `404` si no existe o no es de esa persona;
@@ -292,7 +298,7 @@ Las notificaciones llegan en vivo por **SSE** (Server-Sent Events), no por Socke
 - **Preferencias de cada persona** (`notifications` de `GET /users/me` en admin):
   - `absence_reported` apaga `absence:reported`, y `absence_covered` apaga `absence:covered`, en el stream y en la campana;
   - `replacement_assigned` solo silencia el aviso en vivo de `assignment:replacement`: en la campana queda siempre.
-  - Notification las consulta con el token de la persona (2 s de espera, caché de 60 s), así que un cambio se nota en la campana en 60 s como mucho y en el stream en unos 2 minutos.
+  - Notification las consulta con el token de la persona (2 s de espera, caché de 60 s por sesión), así que un cambio se nota en la campana en 60 s como mucho y en el stream en unos 2 minutos.
   - Necesita `ADMIN_SERVICE_URL`. Si admin no responde, no se filtra nada y el error queda en el log.
 - Requiere la base `notification_db` con `database/notification_db.sql` y las variables `DB_*` en `services/notification/.env`; ver `services/notification/.env.example`.
 - **Una sola instancia:** las conexiones del stream viven en la memoria del proceso. Con dos réplicas, un aviso solo llegaría a quienes estén conectados a la misma.
@@ -305,7 +311,7 @@ Recommendation pide a Claude las sugerencias de reemplazo. Usa Claude Code con l
 - **La CLI viene con el servicio:** es el paquete `@anthropic-ai/claude-code`, dependencia de recommendation, y su postinstall deja el binario al ejecutar `npm ci` o `npm install`. Por eso la instalación no debe usar `--ignore-scripts`, y no hace falta `CLAUDE_CODE_PATH`. Con la CLI, `node_modules` ocupa unos 770 MB.
 - **Sin token:** el servicio arranca, lo avisa en el log y las sugerencias responden `503` con `code: "ai_unavailable"` («La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.»).
 - **No definas `ANTHROPIC_API_KEY`** en recommendation: es del proveedor `api`, que cobra el saldo de la API de Anthropic.
-- **El proceso de Claude Code** solo recibe `PATH`, la carpeta personal, la carpeta temporal y el token. Nunca recibe `JWT_SECRET`, `DB_PASSWORD` ni las claves de servicio.
+- **El proceso de Claude Code** solo recibe `PATH`, la carpeta personal, la carpeta temporal, el token y `DISABLE_AUTOUPDATER=1` y `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` (sin actualizaciones ni tráfico aparte de la consulta). Nunca recibe `JWT_SECRET`, `DB_PASSWORD` ni las claves de servicio. Corre en una carpeta privada del proceso (`aircrew-claude-…` en el temporal, creada con `mkdtemp` y permisos `0700`), que también es su carpeta personal si `HOME` no existe o no se puede escribir.
 - **Opcionales:**
   - `CLAUDE_MODEL`: vacío usa el modelo por defecto de Claude Code;
   - `AI_TIMEOUT_MS`: tiempo máximo por llamada, por defecto 90000;

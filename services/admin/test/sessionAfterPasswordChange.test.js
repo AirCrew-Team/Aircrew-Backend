@@ -357,8 +357,16 @@ function createChangeRepository({ row, savedAt }) {
   return {
     calls,
     findPasswordHash: locked.findPasswordHash,
-    // BE-2: antes de comparar se cuentan los fallos (change_failed) con el pool.
+    // BE-2: antes de comparar se cuentan los fallos (change_failed) con el pool. Revisión
+    // final: el intento se registra antes de contar y se borra si la contraseña es correcta.
     countPasswordResetEvents: locked.countPasswordResetEvents,
+    async recordPasswordChangeFailure() {
+      calls.push('recordPasswordChangeFailure');
+      return 'intento-1';
+    },
+    async deletePasswordChangeFailure() {
+      calls.push('deletePasswordChangeFailure');
+    },
     async withPasswordResetLock(userId, fn) {
       calls.push('withPasswordResetLock');
       return fn(locked);
@@ -461,10 +469,15 @@ test('D4: el login sigue firmando el token con sub, role, iss y la duración con
   const createLogin = require('../src/application/use-cases/login');
   const login = createLogin({
     userRepository: {
-      // BE-2: el login cuenta antes los fallos del correo (aquí ninguno).
-      async countLoginFailures() {
-        return 0;
+      // BE-2: el login cuenta antes los fallos del correo (aquí ninguno). Revisión final:
+      // registra el intento antes de contar y lo borra si la contraseña es correcta.
+      async recordLoginFailure() {
+        return 'intento-1';
       },
+      async countLoginFailures() {
+        return 1;
+      },
+      async deleteLoginFailure() {},
       async findByEmail() {
         return {
           ...USER_ROW,

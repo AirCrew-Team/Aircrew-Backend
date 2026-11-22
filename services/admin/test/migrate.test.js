@@ -178,16 +178,23 @@ describe('migrate: crear la base si falta', () => {
 });
 
 describe('migrate: aplicar el script', () => {
-  it('ejecuta el script completo dentro de BEGIN/COMMIT', async () => {
+  // Revisión final: con lock_timeout, un ALTER que espera un bloqueo (p. ej. de los
+  // servicios encendidos) falla a los 10 s en vez de dejar en cola todas las consultas.
+  it('ejecuta el script completo dentro de BEGIN/COMMIT, con lock_timeout de 10 s', async () => {
     const client = fakeClient();
     await applyScript(client, 'CREATE TABLE a (); CREATE TABLE b ();');
-    assert.deepEqual(client.calls, ['BEGIN', 'CREATE TABLE a (); CREATE TABLE b ();', 'COMMIT']);
+    assert.deepEqual(client.calls, [
+      'BEGIN',
+      "SET LOCAL lock_timeout = '10s'",
+      'CREATE TABLE a (); CREATE TABLE b ();',
+      'COMMIT',
+    ]);
   });
 
   it('si falla hace ROLLBACK y relanza el error de Postgres', async () => {
     const pgError = Object.assign(new Error('syntax error at or near "TABL"'), { code: '42601' });
     const client = fakeClient({ 'CREATE TABL x ();': pgError });
     await assert.rejects(applyScript(client, 'CREATE TABL x ();'), pgError);
-    assert.deepEqual(client.calls, ['BEGIN', 'CREATE TABL x ();', 'ROLLBACK']);
+    assert.deepEqual(client.calls, ['BEGIN', "SET LOCAL lock_timeout = '10s'", 'CREATE TABL x ();', 'ROLLBACK']);
   });
 });

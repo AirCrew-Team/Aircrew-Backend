@@ -457,15 +457,20 @@ test('CF-B7: admin_db.sql crea el índice único parcial del código y los CHECK
 
 // --- BE-2 (D2): fallos de change-password y de login ---
 
-test('BE-2: recordPasswordChangeFailure registra change_failed con el pool, sin transacción', async (t) => {
+test('BE-2: recordPasswordChangeFailure registra change_failed con el pool, sin transacción, y devuelve su id', async (t) => {
   const db = useFakeDb(t);
+  pool.query.mock.mockImplementation(async (sql, params) => {
+    db.queries.push({ sql: sql.trim(), params });
+    return { rows: [{ id: 'evento-1' }] };
+  });
 
-  await userRepository.recordPasswordChangeFailure(USER_ID);
+  const id = await userRepository.recordPasswordChangeFailure(USER_ID);
 
+  assert.equal(id, 'evento-1');
   assert.equal(db.queries.length, 1);
   assert.match(
     db.queries[0].sql,
-    /^INSERT INTO public\.password_reset_events \(user_id, event\)\s+VALUES \(\$1, 'change_failed'\)$/
+    /^INSERT INTO public\.password_reset_events \(user_id, event\)\s+VALUES \(\$1, 'change_failed'\)\s+RETURNING id$/
   );
   assert.deepEqual(db.queries[0].params, [USER_ID]);
   assert.equal(pool.connect.mock.callCount(), 0);
@@ -489,13 +494,58 @@ test('BE-2: countLoginFailures cuenta los fallos del correo posteriores a since'
   assert.deepEqual(db.queries[0].params, ['ana@aircrew.test', since]);
 });
 
-test('BE-2: recordLoginFailure guarda el correo en login_failures', async (t) => {
+test('BE-2: recordLoginFailure guarda el correo en login_failures y devuelve su id', async (t) => {
   const db = useFakeDb(t);
+  pool.query.mock.mockImplementation(async (sql, params) => {
+    db.queries.push({ sql: sql.trim(), params });
+    return { rows: [{ id: 'fallo-1' }] };
+  });
+
+  const id = await userRepository.recordLoginFailure('ana@aircrew.test');
+
+  assert.equal(id, 'fallo-1');
+  assert.equal(db.queries.length, 1);
+  assert.match(db.queries[0].sql, /INSERT INTO public\.login_failures \(email\)\s+VALUES \(\$1\)\s+RETURNING id$/);
+  assert.deepEqual(db.queries[0].params, ['ana@aircrew.test']);
+});
+
+// Revisión final: la tabla no crece sin límite. En la misma sentencia se borran los
+// fallos de más de 1 día (de cualquier correo), con el índice por created_at.
+test('Revisión: recordLoginFailure purga los fallos de más de 1 día en la misma sentencia', async (t) => {
+  const db = useFakeDb(t);
+  pool.query.mock.mockImplementation(async (sql, params) => {
+    db.queries.push({ sql: sql.trim(), params });
+    return { rows: [{ id: 'fallo-1' }] };
+  });
 
   await userRepository.recordLoginFailure('ana@aircrew.test');
 
-  assert.match(db.queries[0].sql, /^INSERT INTO public\.login_failures \(email\)\s+VALUES \(\$1\)$/);
-  assert.deepEqual(db.queries[0].params, ['ana@aircrew.test']);
+  assert.match(
+    db.queries[0].sql,
+    /^WITH purged AS \(\s*DELETE FROM public\.login_failures\s+WHERE created_at < NOW\(\) - INTERVAL '1 day'\s*\)\s*INSERT INTO public\.login_failures/
+  );
+});
+
+test('Revisión: deleteLoginFailure borra solo el intento indicado', async (t) => {
+  const db = useFakeDb(t);
+
+  await userRepository.deleteLoginFailure('fallo-1');
+
+  assert.match(db.queries[0].sql, /^DELETE FROM public\.login_failures\s+WHERE id = \$1$/);
+  assert.deepEqual(db.queries[0].params, ['fallo-1']);
+});
+
+test('Revisión: deletePasswordChangeFailure borra solo ese change_failed, con el pool', async (t) => {
+  const db = useFakeDb(t);
+
+  await userRepository.deletePasswordChangeFailure('evento-1');
+
+  assert.match(
+    db.queries[0].sql,
+    /^DELETE FROM public\.password_reset_events\s+WHERE id = \$1\s+AND event = 'change_failed'$/
+  );
+  assert.deepEqual(db.queries[0].params, ['evento-1']);
+  assert.equal(pool.connect.mock.callCount(), 0);
 });
 
 test('BE-2: admin_db.sql crea login_failures y amplía el CHECK de password_reset_events de forma repetible', () => {
@@ -511,6 +561,11 @@ test('BE-2: admin_db.sql crea login_failures y amplía el CHECK de password_rese
   assert.match(
     sql,
     /CREATE INDEX IF NOT EXISTS login_failures_email_created_idx\s+ON public\.login_failures \(email, created_at\);/
+  );
+  // Revisión final: la purga de fallos de más de 1 día usa su propio índice.
+  assert.match(
+    sql,
+    /CREATE INDEX IF NOT EXISTS login_failures_created_idx\s+ON public\.login_failures \(created_at\);/
   );
   assert.match(
     sql,

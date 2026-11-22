@@ -3,19 +3,12 @@ const {
   assertCanBeReplaced,
 } = require('../../domain/entities/replacementRequest');
 const { DomainError } = require('../../domain/errors');
+const { assignmentsWindow } = require('../../domain/services/flightTime');
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-// Asignaciones a pedir: el mes del vuelo completo (regla de 90 h) más un día a
-// cada lado del vuelo (descanso y carga cercana).
+// Asignaciones a pedir: el mes local del vuelo para cada tripulante (regla de 100 h)
+// más un día a cada lado del vuelo (descanso y carga cercana).
 function assignmentWindow(flight) {
-  const departure = new Date(flight.departure_at);
-  const monthStart = Date.UTC(departure.getUTCFullYear(), departure.getUTCMonth(), 1);
-  const monthEnd = Date.UTC(departure.getUTCFullYear(), departure.getUTCMonth() + 1, 1);
-  const from = Math.min(monthStart, departure.getTime() - DAY_MS);
-  const to = Math.max(monthEnd, new Date(flight.arrival_at).getTime() + DAY_MS);
-
-  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+  return assignmentsWindow(flight.departure_at, flight.arrival_at);
 }
 
 // Reúne lo que el motor necesita de Crew y Flights para una ausencia: la

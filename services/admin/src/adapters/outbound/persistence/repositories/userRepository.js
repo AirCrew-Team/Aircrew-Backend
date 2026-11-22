@@ -257,12 +257,27 @@ async function countPasswordResetEvents({ userId, event, since }, db = pool) {
 }
 
 // Contraseña actual incorrecta en el cambio con sesión: un evento 'change_failed'.
-// Con el pool: el fallo no abre una transacción ni bloquea la cuenta.
+// Con el pool: el fallo no abre una transacción ni bloquea la cuenta. Se registra
+// antes de comparar (cuenta para el límite enseguida) y devuelve su id para borrarlo
+// si la contraseña resulta correcta.
 async function recordPasswordChangeFailure(userId) {
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO public.password_reset_events (user_id, event)
-     VALUES ($1, 'change_failed')`,
+     VALUES ($1, 'change_failed')
+     RETURNING id`,
     [userId]
+  );
+
+  return rows[0].id;
+}
+
+// Borra un intento registrado con recordPasswordChangeFailure (solo si es change_failed).
+async function deletePasswordChangeFailure(id) {
+  await pool.query(
+    `DELETE FROM public.password_reset_events
+     WHERE id = $1
+       AND event = 'change_failed'`,
+    [id]
   );
 }
 
@@ -279,12 +294,30 @@ async function countLoginFailures({ email, since }) {
   return rows[0].count;
 }
 
-// Un fallo de login por correo, aunque la cuenta no exista.
+// Un intento de login por correo, aunque la cuenta no exista. Se registra antes de
+// comparar y devuelve su id para borrarlo si no era un fallo. En la misma sentencia
+// se purgan los fallos de más de 1 día (índice por created_at): la tabla no crece.
 async function recordLoginFailure(email) {
-  await pool.query(
-    `INSERT INTO public.login_failures (email)
-     VALUES ($1)`,
+  const { rows } = await pool.query(
+    `WITH purged AS (
+       DELETE FROM public.login_failures
+       WHERE created_at < NOW() - INTERVAL '1 day'
+     )
+     INSERT INTO public.login_failures (email)
+     VALUES ($1)
+     RETURNING id`,
     [email]
+  );
+
+  return rows[0].id;
+}
+
+// Borra un intento registrado con recordLoginFailure.
+async function deleteLoginFailure(id) {
+  await pool.query(
+    `DELETE FROM public.login_failures
+     WHERE id = $1`,
+    [id]
   );
 }
 
@@ -676,8 +709,10 @@ module.exports = {
   findPasswordHash,
   countPasswordResetEvents,
   recordPasswordChangeFailure,
+  deletePasswordChangeFailure,
   countLoginFailures,
   recordLoginFailure,
+  deleteLoginFailure,
   findByPasswordResetToken,
   resetPasswordByToken,
   createFirstSuperAdmin,

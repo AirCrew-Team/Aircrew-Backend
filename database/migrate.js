@@ -107,9 +107,12 @@ async function ensureDatabase(client, database) {
 
 // Ningún script tiene sentencias que no admitan transacción (CREATE DATABASE,
 // VACUUM, CREATE INDEX CONCURRENTLY...): los BEGIN que contienen son de bloques DO.
+// lock_timeout: si una tabla está bloqueada (p. ej. por los servicios encendidos), el
+// script falla a los 10 s y se deshace, en vez de dejar en cola todas las consultas.
 async function applyScript(client, sql) {
   await client.query('BEGIN');
   try {
+    await client.query("SET LOCAL lock_timeout = '10s'");
     await client.query(sql);
     await client.query('COMMIT');
   } catch (err) {

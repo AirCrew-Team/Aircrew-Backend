@@ -46,7 +46,9 @@ test('BE-4: solo se borran los aeropuertos colombianos de la demo antigua que ni
   assert.match(remove[2], /NOT EXISTS \(\s*SELECT 1 FROM public\.flights f\s+WHERE f\.origin = a\.code OR f\.destination = a\.code\s*\)/);
 });
 
-test('BE-4: un vuelo es internacional si algún aeropuerto está fuera de EE. UU.', async (t) => {
+// Revisión final: doméstico solo con los dos aeropuertos conocidos y de EE. UU.; uno
+// desconocido cuenta como internacional (antes contaba como de EE. UU.). Ver flightScope.test.js.
+test('BE-4: un vuelo es internacional si algún aeropuerto está fuera de EE. UU. o no está en el catálogo', async (t) => {
   const queries = [];
   t.mock.method(pool, 'query', async (text) => {
     queries.push(text);
@@ -58,7 +60,8 @@ test('BE-4: un vuelo es internacional si algún aeropuerto está fuera de EE. UU
 
   assert.equal(queries.length, 2);
   for (const text of queries) {
-    assert.match(text, /COALESCE\(o\.country, 'US'\) <> 'US' OR COALESCE\(d\.country, 'US'\) <> 'US'/);
+    assert.match(text, /o\.country IS NOT DISTINCT FROM 'US' AND d\.country IS NOT DISTINCT FROM 'US'/);
+    assert.doesNotMatch(text, /COALESCE\([od]\.country/);
     assert.doesNotMatch(text, /'CO'/);
   }
 });

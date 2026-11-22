@@ -143,6 +143,18 @@ function createFakeRepository({ users = [USER], events = [], clock }) {
           }
         : null;
     },
+    // Revisión final: el cambio con sesión registra el intento antes de comparar y lo
+    // borra si la contraseña actual es correcta.
+    async recordPasswordChangeFailure(userId) {
+      record('recordPasswordChangeFailure');
+      const id = `intento-${state.events.length + 1}`;
+      state.events.push({ id, userId, event: 'change_failed', createdAt: clock.now() });
+      return id;
+    },
+    async deletePasswordChangeFailure(id) {
+      record('deletePasswordChangeFailure');
+      state.events = state.events.filter((event) => event.id !== id);
+    },
     // Cambio con sesión: como el UPDATE real, también anula el token pendiente.
     async findPasswordHash(userId) {
       record('findPasswordHash');

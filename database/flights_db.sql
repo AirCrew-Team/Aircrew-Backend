@@ -138,7 +138,8 @@ CREATE INDEX IF NOT EXISTS flight_assignments_crew_user_id_idx
 -- ===== Programación y reemplazos =====
 
 -- Catálogo de aeropuertos: ciudad, nombre y zona horaria para el frontend.
--- country decide si un vuelo es internacional (fuera de US).
+-- country decide si un vuelo es internacional: es doméstico solo si sus dos
+-- aeropuertos están aquí con country US (uno que falta cuenta como internacional).
 CREATE TABLE IF NOT EXISTS public.airports (
   code     TEXT PRIMARY KEY,
   icao     TEXT NOT NULL,
@@ -149,7 +150,7 @@ CREATE TABLE IF NOT EXISTS public.airports (
 );
 
 -- Fuera los aeropuertos colombianos de los datos de demo antiguos, salvo los que
--- algún vuelo todavía usa: sin su fila, ese vuelo pasaría a contar como nacional.
+-- algún vuelo todavía usa: sin su fila, ese vuelo perdería su ciudad y su nombre.
 -- Los demás destinos (los del seed o los que se agreguen a mano) no se tocan.
 DELETE FROM public.airports a
 WHERE a.code IN ('BOG', 'MDE', 'CLO', 'CTG')

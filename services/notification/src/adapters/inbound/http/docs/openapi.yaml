@@ -42,7 +42,8 @@ info:
     - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ id, assignment_id, flight_number, deadline_at }`).
     - `certification:registered` (solo al tripulante): el super_admin le registró la certificación (`{ id, license_number, certificates }`).
     - `certification:verified` (solo al tripulante): su certificación quedó verificada (`{ id, license_number, certificates }`).
-    - `auth:expired`: el token está por vencer; el servidor cierra la conexión. Volver a iniciar sesión.
+    - `auth:expired`: el token está por vencer, o admin respondió 401 al refrescar las preferencias
+      (la sesión se anuló); el servidor cierra la conexión. Volver a iniciar sesión.
 
     En los avisos guardados, `id` es el de la notificación (sirve para marcarla como leída).
 

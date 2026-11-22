@@ -1,8 +1,8 @@
 const pool = require('../pool');
 
 // Asignación junto con su vuelo y aeronave, como la necesita el frontend.
-// scope: internacional si algún aeropuerto está fuera de EE. UU. (uno que no
-// está en public.airports cuenta como de EE. UU.).
+// scope: doméstico solo si los dos aeropuertos están en public.airports con
+// country 'US'; uno desconocido cuenta como internacional (se exige de más, no de menos).
 const assignmentWithFlight = `
   SELECT a.id, a.crew_user_id, a.role, a.status, a.created_at, a.slot_id,
          a.source, a.is_replacement, a.replacement_reason, a.approved_by_name,
@@ -11,8 +11,8 @@ const assignmentWithFlight = `
          f.departure_at, f.arrival_at, f.status AS flight_status, f.gate,
          o.city AS origin_city, o.name AS origin_name, o.timezone AS origin_timezone,
          d.city AS destination_city, d.name AS destination_name,
-         CASE WHEN COALESCE(o.country, 'US') <> 'US' OR COALESCE(d.country, 'US') <> 'US'
-              THEN 'international' ELSE 'domestic' END AS scope,
+         CASE WHEN o.country IS NOT DISTINCT FROM 'US' AND d.country IS NOT DISTINCT FROM 'US'
+              THEN 'domestic' ELSE 'international' END AS scope,
          ac.id AS aircraft_id, ac.name AS aircraft_name,
          ac.registration AS aircraft_registration, ac.family AS aircraft_family
   FROM public.flight_assignments a

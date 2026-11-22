@@ -724,7 +724,8 @@ paths:
         Con `?replacement=true&acknowledged=false` devuelve los reemplazos que todavía debe confirmar.
         Historial: `?status=completed` (ya aterrizó) o `?status=upcoming`. Por fecha: `?month=AAAA-MM`
         o `?from=&to=`. Cada vuelo trae scope (domestic/international), block_minutes, ciudades y
-        zona horaria del origen.
+        zona horaria del origen. scope es domestic solo si los dos aeropuertos están en el catálogo
+        con país US; uno que no está cuenta como international.
       security:
         - bearerAuth: []
       responses:
@@ -964,7 +965,10 @@ components:
         status: { $ref: '#/components/schemas/FlightStatus' }
         gate: { type: string, nullable: true, example: A12 }
         aircraft_family: { type: string, nullable: true, example: A320 }
-        scope: { type: string, enum: [domestic, international] }
+        scope:
+          type: string
+          enum: [domestic, international]
+          description: domestic solo si origen y destino están en public.airports con país US; un aeropuerto desconocido cuenta como international.
         origin_city: { type: string, nullable: true, example: Nueva York }
         destination_city: { type: string, nullable: true, example: Miami }
         origin_name: { type: string, nullable: true, example: John F. Kennedy International }

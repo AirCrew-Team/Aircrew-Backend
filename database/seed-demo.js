@@ -1,9 +1,11 @@
 // Datos de demo de AirCrew (Delta Air Lines): un supervisor de JFK, 21
 // tripulantes de JFK, ATL y LAX, 6 aeronaves, 3 destinos internacionales y 14
-// vuelos DL (12 en los próximos 7 días y 2 ya realizados).
+// vuelos DL9901 a DL9914 (12 en los próximos 7 días y 2 ya realizados).
 //
-// NUNCA en producción: el script se niega a correr con NODE_ENV=production.
-// Borra y vuelve a crear datos, así que úsalo solo con una base local o de pruebas.
+// Borra y vuelve a crear datos, así que solo corre contra una base local:
+// - se niega con NODE_ENV=production, siempre;
+// - se niega si el host no es localhost, 127.0.0.1 ni ::1, salvo con
+//   SEED_DEMO_ALLOW_REMOTE=1 (p. ej. una base de pruebas en otra máquina).
 //
 // Uso (desde la raíz):  npm run seed:demo
 //
@@ -15,9 +17,12 @@
 //   Las cuatro bases (admin_db, crew_db, flights_db, recommendation_db) deben
 //   existir con sus scripts de database/ ya ejecutados: ellos siembran los 9 hubs.
 // - Se puede ejecutar las veces que quieras: primero borra SOLO los datos de demo
-//   (correos @aircrew.demo, los vuelos DL de esta lista y, de la demo antigua de
-//   Colombia, los vuelos AV-*, sus aeronaves y sus aeropuertos) y los vuelve a
-//   crear con fechas a partir de ahora. Tus otros datos no se tocan.
+//   (correos @aircrew.demo, los vuelos de esta lista y los de las demos anteriores
+//   por su número exacto y su id de demo, y de la demo antigua de Colombia sus
+//   aeronaves y aeropuertos si ya nadie los usa) y los vuelve a crear con fechas a
+//   partir de ahora. Tus otros datos no se tocan: una aeronave con una matrícula de
+//   la demo que no sea de la demo hace que el seed se detenga sin cambiar nada.
+// - Cada base va en su propia transacción: si algo falla, no queda a medias.
 // - Todos los usuarios de demo tienen la contraseña DEMO_PASSWORD.
 // - Teléfonos de ficción (+1 … 555-01xx), nombres y matrículas inventados.
 
@@ -28,43 +33,70 @@ const bcrypt = require('bcryptjs');
 const { HUBS } = require('@vuelos/shared');
 const { findModel } = require('../services/flights/src/domain/aircraftCatalog');
 
-if (process.env.NODE_ENV === 'production') {
-  console.error('seed-demo no se ejecuta con NODE_ENV=production: borra y recrea datos.');
-  process.exit(1);
-}
-
 const DEMO_PASSWORD = 'AirCrewDemo2026';
 const DEMO_DOMAIN = '@aircrew.demo';
 const HOUR = 60 * 60 * 1000;
 const DATABASES = ['admin_db', 'crew_db', 'flights_db', 'recommendation_db'];
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1'];
 
 // ---------- Conexión ----------
 
-function connectionFor(database) {
-  if (process.env.DATABASE_URL) {
-    const url = new URL(process.env.DATABASE_URL);
+// services/admin/.env (la base local de quien desarrolla), sin tocar process.env.
+function readAdminEnvFile() {
+  return require('dotenv').config({
+    path: path.join(__dirname, '../services/admin/.env'),
+    processEnv: {},
+  }).parsed || {};
+}
+
+function connectionFor(database, env = process.env, readEnvFile = readAdminEnvFile) {
+  if (env.DATABASE_URL) {
+    const url = new URL(env.DATABASE_URL);
     url.pathname = `/${database}`;
     return { connectionString: url.toString() };
   }
-  if (process.env.PGHOST) {
+  if (env.PGHOST) {
     return {
-      host: process.env.PGHOST,
-      port: Number(process.env.PGPORT) || 5432,
-      user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD,
+      host: env.PGHOST,
+      port: Number(env.PGPORT) || 5432,
+      user: env.PGUSER || 'postgres',
+      password: env.PGPASSWORD,
       database,
     };
   }
-  const env = require('dotenv').config({
-    path: path.join(__dirname, '../services/admin/.env'),
-  }).parsed || {};
+  const file = readEnvFile();
   return {
-    host: env.DB_HOST || 'localhost',
-    port: Number(env.DB_PORT) || 5432,
-    user: env.DB_USER || 'postgres',
-    password: env.DB_PASSWORD,
+    host: file.DB_HOST || 'localhost',
+    port: Number(file.DB_PORT) || 5432,
+    user: file.DB_USER || 'postgres',
+    password: file.DB_PASSWORD,
     database,
   };
+}
+
+// Host al que se va a escribir (sin corchetes si es IPv6).
+function targetHost(env = process.env, readEnvFile = readAdminEnvFile) {
+  const sample = connectionFor('admin_db', env, readEnvFile);
+  return sample.connectionString ? new URL(sample.connectionString).hostname.replace(/^\[(.*)\]$/, '$1') : sample.host;
+}
+
+function isLocalHost(host) {
+  if (typeof host !== 'string') return false;
+  return LOCAL_HOSTS.includes(host.toLowerCase().replace(/^\[(.*)\]$/, '$1'));
+}
+
+// Se llama antes de conectar: nunca en producción y, salvo permiso explícito, solo local.
+function assertSafeTarget(env = process.env, readEnvFile = readAdminEnvFile) {
+  if (env.NODE_ENV === 'production') {
+    throw new Error('seed-demo no se ejecuta con NODE_ENV=production: borra y recrea datos.');
+  }
+  const host = targetHost(env, readEnvFile);
+  if (!isLocalHost(host) && env.SEED_DEMO_ALLOW_REMOTE !== '1') {
+    throw new Error(
+      `seed-demo solo corre contra una base local y el destino es «${host}». ` +
+        'Si de verdad es una base de pruebas, vuelve a correrlo con SEED_DEMO_ALLOW_REMOTE=1.'
+    );
+  }
 }
 
 // Servidor al que se va a escribir, para mostrarlo antes de borrar nada.
@@ -109,17 +141,28 @@ const internationalAirports = [
 const LEGACY_AIRCRAFT = ['HK-5320', 'HK-5321', 'HK-5330', 'HK-5322', 'N781AV'];
 const LEGACY_AIRPORTS = ['BOG', 'MDE', 'CLO', 'CTG', 'MIA', 'MAD', 'PTY', 'LIM'];
 
+// Vuelos de las demos anteriores: la de Colombia (AV-*) y la primera de Delta, que
+// usaba números DL reales. Se borran solo si tienen a la vez ese número y el id que
+// les dio la demo (stableId('flight:<número>')): un vuelo real con el mismo número
+// tiene otro id y no se toca.
+const LEGACY_FLIGHT_NUMBERS = [
+  'AV-9340', 'AV-8118', 'AV-9344', 'AV-8120', 'AV-4021', 'AV-8122', 'AV-9120',
+  'AV-9345', 'AV-8124', 'AV-4022', 'AV-9346', 'AV-8126', 'AV-9122', 'AV-8128',
+  'DL0410', 'DL2104', 'DL1102', 'DL2231', 'DL0044', 'DL2232', 'DL1105',
+  'DL1103', 'DL2235', 'DL0045', 'DL0598', 'DL2237', 'DL0001', 'DL2239',
+];
+
 // Familia de cada modelo del catálogo para la regla de habilitación (ratings).
 const FAMILY_BY_MODEL = { a321neo: 'A320', b739: '737', a330neo: 'A330', a350: 'A350' };
 
 // [matrícula, modelo del catálogo de flights, base, estado]
 const aircraft = [
-  ['N321AC', 'a321neo', 'JFK', 'operating'],
-  ['N322AC', 'a321neo', 'ATL', 'operating'],
-  ['N739AC', 'b739', 'JFK', 'operating'],
-  ['N740AC', 'b739', 'LAX', 'maintenance'],
-  ['N330AC', 'a330neo', 'JFK', 'operating'],
-  ['N350AC', 'a350', 'ATL', 'operating'],
+  ['N991AC', 'a321neo', 'JFK', 'operating'],
+  ['N992AC', 'a321neo', 'ATL', 'operating'],
+  ['N993AC', 'b739', 'JFK', 'operating'],
+  ['N994AC', 'b739', 'LAX', 'maintenance'],
+  ['N995AC', 'a330neo', 'JFK', 'operating'],
+  ['N996AC', 'a350', 'ATL', 'operating'],
 ];
 
 // ---------- Personas ----------
@@ -172,40 +215,40 @@ const crew = [
 // número, matrícula, origen, destino, horas desde ahora, duración (min), puerta
 const flights = [
   // Ya realizados (historial de Mis Vuelos).
-  ['DL0410', 'N739AC', 'LAX', 'JFK', -50, 330, 'B24'],
-  ['DL2104', 'N321AC', 'JFK', 'BOS', -26, 75, 'C61'],
-  ['DL1102', 'N739AC', 'JFK', 'LAX', 3, 380, 'B27'],
-  ['DL2231', 'N321AC', 'JFK', 'ATL', 5, 150, 'C64'],
-  ['DL0044', 'N330AC', 'JFK', 'CDG', 26, 435, 'B32'],
-  ['DL2232', 'N322AC', 'ATL', 'JFK', 28, 135, 'A17'],
-  ['DL1105', 'N739AC', 'JFK', 'SEA', 30, 380, 'B29'],
-  ['DL1103', 'N739AC', 'LAX', 'JFK', 50, 320, '23A'],
-  ['DL2235', 'N321AC', 'JFK', 'MSP', 52, 190, 'C66'],
-  ['DL0045', 'N330AC', 'CDG', 'JFK', 74, 520, '2E-K40'],
-  ['DL0598', 'N322AC', 'ATL', 'CUN', 76, 135, 'E12'],
-  ['DL2237', 'N321AC', 'JFK', 'DTW', 100, 125, 'C68'],
-  ['DL0001', 'N330AC', 'JFK', 'LHR', 124, 420, 'B30'],
-  ['DL2239', 'N321AC', 'JFK', 'SLC', 148, 315, 'C70'],
+  ['DL9901', 'N993AC', 'LAX', 'JFK', -50, 330, 'B24'],
+  ['DL9902', 'N991AC', 'JFK', 'BOS', -26, 75, 'C61'],
+  ['DL9903', 'N993AC', 'JFK', 'LAX', 3, 380, 'B27'],
+  ['DL9904', 'N991AC', 'JFK', 'ATL', 5, 150, 'C64'],
+  ['DL9905', 'N995AC', 'JFK', 'CDG', 26, 435, 'B32'],
+  ['DL9906', 'N992AC', 'ATL', 'JFK', 28, 135, 'A17'],
+  ['DL9907', 'N993AC', 'JFK', 'SEA', 30, 380, 'B29'],
+  ['DL9908', 'N993AC', 'LAX', 'JFK', 50, 320, '23A'],
+  ['DL9909', 'N991AC', 'JFK', 'MSP', 52, 190, 'C66'],
+  ['DL9910', 'N995AC', 'CDG', 'JFK', 74, 520, '2E-K40'],
+  ['DL9911', 'N992AC', 'ATL', 'CUN', 76, 135, 'E12'],
+  ['DL9912', 'N991AC', 'JFK', 'DTW', 100, 125, 'C68'],
+  ['DL9913', 'N995AC', 'JFK', 'LHR', 124, 420, 'B30'],
+  ['DL9914', 'N991AC', 'JFK', 'SLC', 148, 315, 'C70'],
 ];
 
-// Tripulación ya armada: DL1102 completa y confirmada (sirve para reportar una
-// ausencia en la demo); DL2231 y DL0044 a medias (para Programación).
+// Tripulación ya armada: DL9903 completa y confirmada (sirve para reportar una
+// ausencia en la demo); DL9904 y DL9905 a medias (para Programación).
 const assignments = [
-  ['DL0410', 'first_officer', 'first_officer', 'sarah.collins'],
-  ['DL0410', 'captain', 'captain', 'jennifer.hayes'],
-  ['DL2104', 'first_officer', 'first_officer', 'amanda.ross'],
-  ['DL2104', 'captain', 'captain', 'david.mitchell'],
-  ['DL1102', 'captain', 'captain', 'jennifer.hayes'],
-  ['DL1102', 'first_officer', 'first_officer', 'sarah.collins'],
-  ['DL1102', 'purser', 'purser', 'nicole.turner'],
-  ['DL1102', 'fa-1', 'flight_attendant', 'matthew.hill'],
-  ['DL1102', 'fa-2', 'flight_attendant', 'andrew.cooper'],
-  ['DL1102', 'fa-3', 'flight_attendant', 'megan.howard'],
-  ['DL2231', 'captain', 'captain', 'david.mitchell'],
-  ['DL2231', 'first_officer', 'first_officer', 'ryan.bennett'],
-  ['DL0044', 'captain', 'captain', 'emily.brooks'],
+  ['DL9901', 'first_officer', 'first_officer', 'sarah.collins'],
+  ['DL9901', 'captain', 'captain', 'jennifer.hayes'],
+  ['DL9902', 'first_officer', 'first_officer', 'amanda.ross'],
+  ['DL9902', 'captain', 'captain', 'david.mitchell'],
+  ['DL9903', 'captain', 'captain', 'jennifer.hayes'],
+  ['DL9903', 'first_officer', 'first_officer', 'sarah.collins'],
+  ['DL9903', 'purser', 'purser', 'nicole.turner'],
+  ['DL9903', 'fa-1', 'flight_attendant', 'matthew.hill'],
+  ['DL9903', 'fa-2', 'flight_attendant', 'andrew.cooper'],
+  ['DL9903', 'fa-3', 'flight_attendant', 'megan.howard'],
+  ['DL9904', 'captain', 'captain', 'david.mitchell'],
+  ['DL9904', 'first_officer', 'first_officer', 'ryan.bennett'],
+  ['DL9905', 'captain', 'captain', 'emily.brooks'],
 ];
-const confirmedFlights = ['DL0410', 'DL2104', 'DL1102'];
+const confirmedFlights = ['DL9901', 'DL9902', 'DL9903'];
 
 // ---------- Ejecución ----------
 
@@ -216,6 +259,8 @@ async function connect(database) {
 }
 
 async function main() {
+  // Antes de conectar: nunca en producción y, salvo SEED_DEMO_ALLOW_REMOTE=1, solo local.
+  assertSafeTarget();
   const target = describeTarget();
   if (!target.hasPassword) {
     throw new Error('Falta la contraseña: usa DATABASE_URL, PGPASSWORD o DB_PASSWORD en services/admin/.env.');
@@ -226,10 +271,17 @@ async function main() {
   const userId = (key) => stableId(`user:${key}`);
   const flightNumbers = flights.map((f) => f[0]);
   const flightIds = Object.fromEntries(flightNumbers.map((number) => [number, stableId(`flight:${number}`)]));
+  // Vuelos de demo (los de ahora y los de las demos anteriores): número e id juntos.
+  const demoFlightNumbers = [...flightNumbers, ...LEGACY_FLIGHT_NUMBERS];
+  const demoFlightStableIds = demoFlightNumbers.map((number) => stableId(`flight:${number}`));
 
   const [admin, crewDb, flightsDb, recommendation] = await Promise.all(DATABASES.map(connect));
+  const clients = [admin, crewDb, flightsDb, recommendation];
 
   try {
+    // Una transacción por base: si algo falla, ninguna queda a medias.
+    for (const client of clients) await client.query('BEGIN');
+
     // 1. Borrar los datos de demo anteriores (de hijos a padres). Los ids salen de
     //    la base, para borrar también los de la demo antigua (otros nombres).
     const { rows: oldUsers } = await admin.query('SELECT id FROM public.users WHERE email LIKE $1', [`%${DEMO_DOMAIN}`]);
@@ -237,11 +289,14 @@ async function main() {
       ...oldUsers.map((row) => row.id),
       ...[supervisor.key, ...crew.map((c) => c[0])].map(userId),
     ])];
-    // Solo los números DL de esta lista: un LIKE 'DL%' borraría también vuelos
-    // reales de Delta cargados a mano en la misma base.
+    // Solo los vuelos de demo: su número exacto y, a la vez, su id de demo. Un LIKE
+    // 'DL%' o 'AV-%' borraría también vuelos reales cargados a mano en la misma base.
     const { rows: oldFlights } = await flightsDb.query(
-      "SELECT id FROM public.flights WHERE flight_number LIKE 'AV-%' OR flight_number = ANY($1::text[])",
-      [flightNumbers]
+      `SELECT f.id
+       FROM public.flights f
+       JOIN unnest($1::text[], $2::uuid[]) AS demo (flight_number, id)
+         ON demo.flight_number = f.flight_number AND demo.id = f.id`,
+      [demoFlightNumbers, demoFlightStableIds]
     );
     const demoFlightIds = oldFlights.map((row) => row.id);
 
@@ -297,21 +352,29 @@ async function main() {
       );
     }
 
+    // Cada aeronave de demo tiene un id estable: el upsert solo actualiza la fila con
+    // ese id. Si la matrícula ya es de otra aeronave (no de la demo), no la toca y el
+    // seed se detiene (la transacción deshace todo).
     const aircraftIds = {};
     for (const [registration, modelId, base, status] of aircraft) {
       const model = findModel(modelId);
       const { rows } = await flightsDb.query(
         `INSERT INTO public.aircraft
-           (name, registration, model_id, capacity, minimum_crew, base, status, maintenance_type, family)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (id, name, registration, model_id, capacity, minimum_crew, base, status, maintenance_type, family)
+         VALUES ($10, $1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (registration) DO UPDATE
            SET name = $1, model_id = $3, capacity = $4, minimum_crew = $5, base = $6,
                status = $7, maintenance_type = $8, maintenance_note = NULL, family = $9
+           WHERE public.aircraft.id = EXCLUDED.id
          RETURNING id`,
         [model.name, registration, model.id, model.capacity,
           model.minimum_crew.pilots + model.minimum_crew.cabin, base, status,
-          status === 'maintenance' ? 'revision_programada' : null, FAMILY_BY_MODEL[model.id]]
+          status === 'maintenance' ? 'revision_programada' : null, FAMILY_BY_MODEL[model.id],
+          stableId(`aircraft:${registration}`)]
       );
+      if (rows.length === 0) {
+        throw new Error(`La matrícula ${registration} ya es de una aeronave que no es de la demo: no se toca. Cambia la matrícula en seed-demo.js.`);
+      }
       aircraftIds[registration] = rows[0].id;
     }
 
@@ -385,17 +448,37 @@ async function main() {
       );
     }
 
+    for (const client of clients) await client.query('COMMIT');
+
     console.log('Datos de demo cargados:');
     console.log(`  ${HUBS.length} hubs, ${internationalAirports.length} destinos internacionales, ${aircraft.length} aeronaves`);
     console.log(`  1 supervisor y ${crew.length} tripulantes (contraseña: ${DEMO_PASSWORD})`);
     console.log(`  ${flights.length} vuelos (2 ya realizados), ${assignments.length} asignaciones`);
     console.log(`  Supervisor: ${supervisor.key}${DEMO_DOMAIN} (base ${supervisor.base})`);
+  } catch (error) {
+    await Promise.all(clients.map((client) => client.query('ROLLBACK').catch(() => {})));
+    throw error;
   } finally {
-    await Promise.all([admin, crewDb, flightsDb, recommendation].map((client) => client.end()));
+    await Promise.all(clients.map((client) => client.end()));
   }
 }
 
-main().catch((error) => {
-  console.error(`No se pudieron cargar los datos de demo: ${error.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`No se pudieron cargar los datos de demo: ${error.message}`);
+    process.exit(1);
+  });
+}
+
+// Para los tests (services/admin/test/seedDemo.test.js).
+module.exports = {
+  isLocalHost,
+  targetHost,
+  assertSafeTarget,
+  stableId,
+  aircraft,
+  flights,
+  assignments,
+  confirmedFlights,
+  LEGACY_FLIGHT_NUMBERS,
+};

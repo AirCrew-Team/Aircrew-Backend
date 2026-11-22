@@ -1,6 +1,6 @@
 const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
 const { firstFailure, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
-const { monthHours, restHoursBefore, durationHours } = require('./flightTime');
+const { monthHours, restHoursBefore, durationHours, assignmentsWindow } = require('./flightTime');
 
 const STATUS_BY_CREW = {
   unassigned: 'unassigned',
@@ -9,17 +9,11 @@ const STATUS_BY_CREW = {
   confirmed: 'confirmed',
 };
 
-// Asignaciones a pedir para evaluar un día local de la zona timeZone: su mes
-// completo (regla de 90 h, en UTC) más un día a cada lado (descanso).
+// Asignaciones a pedir para evaluar un día local de la zona timeZone: el mes local
+// de cada tripulante para los vuelos de ese día (regla de 100 h) más un día a cada lado.
 function monthWindowForDay(date, timeZone) {
-  const day = new Date(`${date}T12:00:00.000Z`);
-  const monthStart = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 1);
-  const monthEnd = Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 1);
   const { from, to } = localDayRange(date, timeZone);
-  return {
-    from: new Date(Math.min(monthStart, new Date(from).getTime() - 24 * 3600000)).toISOString(),
-    to: new Date(Math.max(monthEnd, new Date(to).getTime() + 24 * 3600000)).toISOString(),
-  };
+  return assignmentsWindow(from, to);
 }
 
 // La regla de rango usa la clave del puesto (relief acepta capitán o primer oficial).
@@ -31,7 +25,7 @@ function ruleRoleFor(slot) {
 // la IA y en qué orden se muestran en la lista de candidatos: reparte la carga
 // (más margen de horas), cuida el descanso y prefiere a quien ya está en la base.
 function planningScore({ member, flight, memberAssignments }) {
-  const hours = monthHours(flight, memberAssignments);
+  const hours = monthHours(flight, memberAssignments, member.base_code);
   const margin = Math.max(0, Math.round(MAX_MONTH_HOURS - hours - durationHours(flight)));
   const rest = restHoursBefore(flight, memberAssignments);
 
@@ -116,7 +110,7 @@ function buildPlannedFlight(plan, members, assignments, timeZone = hubTimezone(p
             employee_code: member.employee_code || null,
             full_name: member.name || null,
             rank: member.rank || null,
-            month_hours: Math.round(monthHours(plan, memberAssignments) + durationHours(plan)),
+            month_hours: Math.round(monthHours(plan, memberAssignments, member.base_code) + durationHours(plan)),
             max_month_hours: MAX_MONTH_HOURS,
             source: taken.source,
             rationale: taken.rationale,

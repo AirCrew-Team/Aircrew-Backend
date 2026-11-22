@@ -116,3 +116,24 @@ describe('crew_db.sql: bases de la demo antigua (BE-4)', () => {
     assert.ok(clear > copy, 'el UPDATE a NULL va después de la copia');
   });
 });
+
+// Revisión final: crew (Mis Vuelos) y recommendation (regla de horas) comparten el tope
+// y la definición de mes: 100 h (14 CFR 117.23) en el mes local de la base del tripulante.
+describe('Tope de horas de vuelo del mes (shared)', () => {
+  const { MAX_MONTH_FLIGHT_HOURS, crewMonth } = require('@vuelos/shared');
+
+  it('el tope es de 100 h (14 CFR 117.23)', () => {
+    assert.equal(MAX_MONTH_FLIGHT_HOURS, 100);
+  });
+
+  it('el mes es el local de la base: el 1 de julio a las 05:00Z es junio en LAX y julio en JFK', () => {
+    assert.equal(crewMonth('2026-07-01T05:00:00Z', 'LAX'), '2026-06');
+    assert.equal(crewMonth('2026-07-01T05:00:00Z', 'JFK'), '2026-07');
+  });
+
+  it('sin base o con una base desconocida, el mes es el de Nueva York', () => {
+    assert.equal(crewMonth('2026-07-01T03:00:00Z', null), '2026-06');
+    assert.equal(crewMonth('2026-07-01T03:00:00Z', 'BOG'), '2026-06');
+    assert.equal(crewMonth(Date.parse('2026-07-01T04:00:00Z'), undefined), '2026-07');
+  });
+});

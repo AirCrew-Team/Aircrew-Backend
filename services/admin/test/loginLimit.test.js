@@ -27,27 +27,44 @@ const USER = {
   password_changed_at: null,
 };
 
-// Repositorio en memoria: cuentas y fallos de login por correo.
+// Repositorio en memoria: cuentas y fallos de login por correo. Cada operación espera
+// un turno antes de leer o escribir, como una consulta real: peticiones simultáneas se
+// intercalan entre la escritura y la lectura.
+const ioTurn = () => new Promise((resolve) => setImmediate(resolve));
+
 function createFakeRepository({ users = [USER], failures = [] } = {}) {
-  const state = { failures: failures.map((failure) => ({ ...failure })) };
+  let nextId = 0;
+  const state = {
+    failures: failures.map((failure) => ({ id: `previo-${(nextId += 1)}`, ...failure })),
+  };
   const calls = [];
   return {
     state,
     calls,
     async findByEmail(email) {
       calls.push('findByEmail');
+      await ioTurn();
       const user = users.find((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
       return user ? { ...user } : null;
     },
     async countLoginFailures({ email, since }) {
       calls.push('countLoginFailures');
+      await ioTurn();
       return state.failures.filter(
         (failure) => failure.email === email && failure.createdAt > since
       ).length;
     },
     async recordLoginFailure(email) {
       calls.push('recordLoginFailure');
-      state.failures.push({ email, createdAt: new Date(clock.time) });
+      await ioTurn();
+      const id = `intento-${(nextId += 1)}`;
+      state.failures.push({ id, email, createdAt: new Date(clock.time) });
+      return id;
+    },
+    async deleteLoginFailure(id) {
+      calls.push('deleteLoginFailure');
+      await ioTurn();
+      state.failures = state.failures.filter((failure) => failure.id !== id);
     },
   };
 }
@@ -62,18 +79,23 @@ function failures(count, ago, email = EMAIL) {
 }
 
 // El require va aquí para que, si algo falta, cada test falle por su cuenta.
-function setup(options) {
+function setup(options = {}) {
   const createLogin = require('../src/application/use-cases/login');
   clock.time = START;
   const userRepository = createFakeRepository(options);
+  // Hashes con los que se comparó, en orden. alwaysMatches: compare responde true siempre.
+  const compared = [];
   const passwordHasher = {
     async compare(value, hash) {
       userRepository.calls.push('compare');
-      return hash === `hash:${value}`;
+      compared.push(hash);
+      await ioTurn();
+      return options.alwaysMatches === true || hash === `hash:${value}`;
     },
   };
   return {
     userRepository,
+    compared,
     login: createLogin({ userRepository, passwordHasher, now: () => new Date(clock.time) }),
   };
 }
@@ -126,7 +148,8 @@ test('BE-2: con 5 fallos en 15 min responde 429 sin buscar la cuenta ni comparar
 
   await assert.rejects(login({ email: EMAIL, password: PASSWORD }), rejectsWith(429, LIMIT_MESSAGE));
 
-  assert.deepEqual(userRepository.calls, ['countLoginFailures']);
+  // Revisión final: el intento se registra antes de contar y, con el 429, se borra.
+  assert.deepEqual(userRepository.calls, ['recordLoginFailure', 'countLoginFailures', 'deleteLoginFailure']);
   assert.equal(userRepository.state.failures.length, 5, 'el 429 no registra otro fallo');
 });
 
@@ -224,4 +247,97 @@ test('BE-2 (HTTP): el 429 llega con { error } y sin cookie de sesión', async (t
   assert.equal(res.statusCode, 429);
   assert.deepEqual(res.body, { error: LIMIT_MESSAGE });
   assert.deepEqual(res.cookies, []);
+});
+
+// --- Revisión final: carrera en el límite, correos enormes y tiempos iguales ---
+
+test('Revisión: 10 intentos simultáneos con la contraseña incorrecta: como mucho 5 llegan a comparar', async () => {
+  const { login, userRepository } = setup();
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 10 }, () => login({ email: EMAIL, password: WRONG }))
+  );
+
+  const compares = userRepository.calls.filter((call) => call === 'compare').length;
+  assert.ok(compares <= 5, `compararon ${compares}`);
+  const statuses = results.map(({ reason }) => reason.status);
+  assert.equal(statuses.filter((status) => status === 401).length, compares);
+  assert.equal(statuses.filter((status) => status === 429).length, 10 - compares);
+  // Solo quedan los fallos de verdad: los intentos con 429 se borran.
+  assert.equal(userRepository.state.failures.length, compares);
+});
+
+test('Revisión: con 4 fallos, 10 intentos simultáneos dejan comparar como mucho a 1', async () => {
+  const { login, userRepository } = setup({ failures: failures(4, MINUTE) });
+
+  await Promise.allSettled(Array.from({ length: 10 }, () => login({ email: EMAIL, password: WRONG })));
+
+  assert.ok(userRepository.calls.filter((call) => call === 'compare').length <= 1);
+});
+
+test('Revisión: el intento se registra antes de comparar y, si la contraseña es correcta, se borra', async () => {
+  const { login, userRepository } = setup({ failures: failures(2, MINUTE) });
+
+  await login({ email: EMAIL, password: PASSWORD });
+
+  assert.deepEqual(userRepository.calls, [
+    'recordLoginFailure',
+    'countLoginFailures',
+    'findByEmail',
+    'compare',
+    'deleteLoginFailure',
+  ]);
+  assert.equal(userRepository.state.failures.length, 2);
+});
+
+test('Revisión: un email de más de 254 caracteres responde 400 sin contar ni registrar', async () => {
+  const { login, userRepository } = setup();
+  const longEmail = `${'a'.repeat(243)}@aircrew.test`;
+  assert.equal(longEmail.length, 256);
+
+  await assert.rejects(login({ email: longEmail, password: WRONG }), rejectsWith(400, 'Se requieren email y password.'));
+
+  assert.deepEqual(userRepository.calls, []);
+});
+
+test('Revisión: un email de 254 caracteres sí se procesa', async () => {
+  const { login } = setup();
+  const email = `${'a'.repeat(241)}@aircrew.test`;
+  assert.equal(email.length, 254);
+
+  await assert.rejects(login({ email, password: WRONG }), rejectsWith(401, CREDENTIALS_MESSAGE));
+});
+
+test('Revisión: con una cuenta inexistente compara igual contra un hash bcrypt ficticio', async () => {
+  const { login, userRepository, compared } = setup();
+
+  await assert.rejects(login({ email: 'nadie@aircrew.test', password: WRONG }), rejectsWith(401, CREDENTIALS_MESSAGE));
+
+  assert.ok(userRepository.calls.includes('compare'));
+  assert.equal(compared.length, 1);
+  // Hash bcrypt de verdad con el mismo coste (10) que passwordHasher.
+  assert.match(compared[0], /^\$2[aby]\$10\$[./A-Za-z0-9]{53}$/);
+});
+
+test('Revisión: con una cuenta desactivada también compara contra el hash ficticio', async () => {
+  const { login, compared } = setup({ users: [{ ...USER, is_active: false }] });
+
+  await assert.rejects(login({ email: EMAIL, password: PASSWORD }), rejectsWith(401, CREDENTIALS_MESSAGE));
+
+  assert.equal(compared.length, 1);
+  assert.notEqual(compared[0], USER.password_hash);
+});
+
+test('Revisión: aunque el hash ficticio coincidiera, una cuenta inexistente no entra', async () => {
+  const { login } = setup({ alwaysMatches: true });
+
+  await assert.rejects(login({ email: 'nadie@aircrew.test', password: WRONG }), rejectsWith(401, CREDENTIALS_MESSAGE));
+});
+
+test('Revisión: el hash ficticio es un hash bcrypt válido (bcryptjs lo compara sin error)', async () => {
+  const bcrypt = require('bcryptjs');
+  const { TIMING_HASH } = require('../src/application/use-cases/login');
+
+  assert.equal(await bcrypt.compare(WRONG, TIMING_HASH), false);
+  assert.equal(bcrypt.getRounds(TIMING_HASH), 10);
 });

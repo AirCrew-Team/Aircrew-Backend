@@ -1,6 +1,7 @@
 const { DomainError } = require('../../domain/errors');
 
 const DEFAULT_LIMIT = 20;
+const ALWAYS_IN_BELL = ['assignment:replacement'];
 const MAX_LIMIT = 100;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,7 +34,11 @@ function createManageMyNotifications({ notificationRepository, loadDisabledTypes
       throw new DomainError(`limit debe ser un entero de 1 a ${MAX_LIMIT}.`);
     }
 
-    const excludeTypes = await loadDisabledTypes(user, token);
+    // La asignación de reemplazo tiene un plazo para dar «Enterado»: la preferencia
+    // solo silencia el aviso en vivo; en la campana queda siempre.
+    const excludeTypes = (await loadDisabledTypes(user, token)).filter(
+      (type) => !ALWAYS_IN_BELL.includes(type)
+    );
     const [rows, unread] = await Promise.all([
       notificationRepository.findVisible(user, { limit: size, excludeTypes }),
       notificationRepository.countUnread(user, { excludeTypes }),

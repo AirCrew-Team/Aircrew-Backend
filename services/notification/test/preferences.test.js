@@ -183,6 +183,24 @@ test('la campana excluye de la lista y del contador los tipos apagados', async (
   ]);
 });
 
+test('la asignación de reemplazo siempre queda en la campana aunque la persona la haya apagado', async () => {
+  const calls = [];
+  const manage = createManageMyNotifications({
+    notificationRepository: {
+      findVisible: async (viewer, options) => calls.push(['find', options]) && [],
+      countUnread: async (viewer, options) => calls.push(['count', options]) && 0,
+    },
+    loadDisabledTypes: async () => ['assignment:replacement', 'absence:covered'],
+  });
+
+  await manage.listMine({ id: USER_ID, role: 'crew' }, { token: 'tok' });
+
+  assert.deepEqual(calls.sort(), [
+    ['count', { excludeTypes: ['absence:covered'] }],
+    ['find', { limit: 20, excludeTypes: ['absence:covered'] }],
+  ]);
+});
+
 test('la campana valida limit antes de preguntar a admin', async () => {
   let asked = false;
   const manage = createManageMyNotifications({

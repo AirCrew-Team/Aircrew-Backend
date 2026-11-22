@@ -11,6 +11,8 @@ const ALERT_EVENTS = {
   assignmentReplacement: 'assignment:replacement',
   certificationRegistered: 'certification:registered',
   certificationVerified: 'certification:verified',
+  // Para los supervisores: se eliminó la cuenta de un tripulante con vuelos futuros.
+  slotVacated: 'flight:slot_vacated',
 };
 
 // Las alertas operativas son solo de los supervisores. El super_admin no recibe
@@ -49,6 +51,24 @@ function hasDates(absence) {
 
 function canReceiveAlerts(user) {
   return Boolean(user) && SUPERVISOR_ROLES.includes(user.role);
+}
+
+// Preferencia de la persona (notifications de GET /users/me en admin) que apaga cada
+// tipo. Los tipos que no están aquí no tienen preferencia: siempre se envían.
+const ALERT_PREFERENCES = {
+  [ALERT_EVENTS.absenceReported]: 'absence_reported',
+  [ALERT_EVENTS.absenceCovered]: 'absence_covered',
+  [ALERT_EVENTS.assignmentReplacement]: 'replacement_assigned',
+};
+
+// Tipos que la persona apagó. Solo cuenta un false explícito: sin preferencias
+// (super_admin, null) o sin la clave, se envía.
+function disabledAlertTypes(notifications) {
+  if (!notifications || typeof notifications !== 'object') return [];
+
+  return Object.keys(ALERT_PREFERENCES).filter(
+    (type) => notifications[ALERT_PREFERENCES[type]] === false
+  );
 }
 
 // Las ausencias antiguas son por vuelo; las nuevas, por fechas.
@@ -226,7 +246,42 @@ function createCertificationAlert(input) {
   };
 }
 
+// Alerta para supervisores: se eliminó la cuenta de un tripulante y su puesto en
+// un vuelo que aún no sale quedó vacante (lo cubren desde Programación).
+function createSlotVacatedAlert(input) {
+  const {
+    flight_id: flightId,
+    flight_number: flightNumber,
+    origin,
+    destination,
+    departure_at: departureAt,
+    slot_id: slotId,
+    role,
+  } = input || {};
+
+  if (typeof flightId !== 'string' || !uuidPattern.test(flightId) || !isNonEmptyString(flightNumber)) {
+    throw new DomainError('Se requieren flight_id y flight_number.');
+  }
+
+  const route =
+    isNonEmptyString(origin) && isNonEmptyString(destination) ? ` (${origin} → ${destination})` : '';
+
+  return {
+    type: ALERT_EVENTS.slotVacated,
+    message: `Puesto vacante en ${flightNumber}${route}: se eliminó la cuenta del tripulante.`,
+    flight_id: flightId,
+    flight_number: flightNumber,
+    origin: origin || null,
+    destination: destination || null,
+    departure_at: departureAt || null,
+    slot_id: slotId || null,
+    role: role || null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
+  createSlotVacatedAlert,
   ALERT_EVENTS,
   SUPERVISOR_AUDIENCE,
   createDeadlineMissedAlert,
@@ -234,6 +289,7 @@ module.exports = {
   createCertificationAlert,
   createSuggestionsReadyAlert,
   canReceiveAlerts,
+  disabledAlertTypes,
   createAbsenceReportedAlert,
   createAbsenceCoveredAlert,
 };

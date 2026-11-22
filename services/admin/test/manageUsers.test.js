@@ -42,3 +42,30 @@ test('LR-B6: getCurrentUser con un usuario inexistente lanza DomainError 401', a
 
   await assert.rejects(getCurrentUser({ id: USER_ID, role: 'crew' }), isUnauthorized);
 });
+
+// BE-2 (D1): el gateway reenvía este 401 al cliente; el code distingue una sesión
+// anulada de un token vencido (token_expired) o inválido (invalid_token).
+for (const [label, users, requester] of [
+  ['una cuenta inexistente', [], { id: USER_ID, role: 'crew', iat: 1000 }],
+  [
+    'una cuenta desactivada',
+    [{ id: USER_ID, role: 'crew', is_active: false }],
+    { id: USER_ID, role: 'crew', iat: 1000 },
+  ],
+  [
+    'un token anterior al último cambio de contraseña',
+    [{ id: USER_ID, role: 'crew', is_active: true, password_changed_at: new Date(2000 * 1000) }],
+    { id: USER_ID, role: 'crew', iat: 1000 },
+  ],
+]) {
+  test(`BE-2: getCurrentUser con ${label} lanza 401 con code session_revoked`, async () => {
+    const { getCurrentUser } = createManageUsers(createFakeRepository(users));
+
+    await assert.rejects(getCurrentUser(requester), (error) => {
+      isUnauthorized(error);
+      assert.equal(error.message, 'La sesión ya no es válida.');
+      assert.equal(error.code, 'session_revoked');
+      return true;
+    });
+  });
+}

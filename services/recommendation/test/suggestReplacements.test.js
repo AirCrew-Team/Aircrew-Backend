@@ -29,6 +29,9 @@ function build() {
     ai: {
       model: 'claude-test',
       isEnabled: () => aiEnabled,
+      get disabledReason() {
+        return aiEnabled ? null : 'La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.';
+      },
       decide: async (input) => {
         calls.ai.push(input);
         if (aiError) throw aiError;
@@ -104,6 +107,13 @@ describe('Buscar reemplazos (caso de uso)', () => {
     aiEnabled = false;
     await assert.rejects(build()('abs-1', 'Bearer sup'), { code: 'ai_unavailable' });
     assert.equal(calls.ai.length, 0);
+  });
+
+  it('si la IA no está configurada, el 503 dice qué falta y queda en la auditoría', async () => {
+    aiEnabled = false;
+    const reason = 'La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.';
+    await assert.rejects(build()('abs-1', 'Bearer sup'), { status: 503, code: 'ai_unavailable', message: reason });
+    assert.equal(calls.audit[0].error, reason);
   });
 
   it('si nadie cumple las reglas, no llama a Claude y queda en "none"', async () => {

@@ -98,12 +98,13 @@ paths:
         candidatos con Claude en segundo plano.
 
         **Por fechas** (`start_date`, `end_date`, `reason`, `notes`, `attachment`): no podrá trabajar esos días.
-        Por cada vuelo suyo que salga en esas fechas (hora de Colombia) y no haya salido, se crea además
+        Por cada vuelo suyo que salga en esas fechas (días de la zona horaria de su base; sin base, Nueva York) y no haya salido, se crea además
         una ausencia por vuelo con `parent_absence_id` = esta, y cada una es una solicitud de reemplazo.
         La respuesta las trae en `replacement_requests`. Si Flights no responde, la ausencia se guarda
         igual, sin solicitudes.
-        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y `end_date` es igual o posterior, con 30 días como máximo entre ambas.
+        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y como máximo de dentro de 365 días; `end_date` es igual o posterior, con 30 días como máximo entre ambas.
         - El comprobante es obligatorio si el motivo es `illness`. Va en base64: PDF, PNG o JPG de hasta 10 MB ya decodificado, y sus primeros bytes deben coincidir con `mime_type`.
+        - `file_name` se normaliza: solo se quita una extensión conocida (`.pdf`, `.png`, `.jpg`, `.jpeg`, sin distinguir mayúsculas), se añade la del tipo real (`.pdf`, `.png` o `.jpg`) y la base se recorta para que el total no pase de 255 caracteres. «Dr. Pérez» se guarda como «Dr. Pérez.pdf» y un nombre vacío tras quitar la extensión, como «comprobante.pdf».
         - La ausencia y el comprobante se guardan en una sola transacción. Esta ruta acepta un body JSON de hasta 15 MB; las demás, 100 kB.
         - Avisa en segundo plano a los supervisores conectados.
       security:
@@ -127,7 +128,7 @@ paths:
                   nullable: true
                   required: [file_name, mime_type, data_base64]
                   properties:
-                    file_name: { type: string, maxLength: 255, example: incapacidad.pdf }
+                    file_name: { type: string, example: incapacidad.pdf, description: 'Se normaliza con la extensión del tipo real y como máximo 255 caracteres (no da 400 por largo).' }
                     mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
                     data_base64: { type: string, format: byte, description: Contenido del archivo en base64. }
       responses:
@@ -137,7 +138,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Absence' }
         '400':
-          description: Fechas, motivo, observaciones o comprobante inválidos
+          description: |
+            Fechas, motivo, observaciones o comprobante inválidos. Por ejemplo, un `start_date`
+            de más de 365 días desde hoy: «La fecha de inicio no puede ser posterior a 365 días desde hoy.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -195,7 +198,7 @@ paths:
                     - type: object
                       properties:
                         gate: { type: string, nullable: true, example: A12 }
-                        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+                        origin_name: { type: string, nullable: true, example: John F. Kennedy International }
                         destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
                         aircraft_family: { type: string, nullable: true, example: A320 }
         '400':
@@ -214,12 +217,57 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /absences/me:
+    get:
+      tags: [Ausencias]
+      summary: Mis ausencias (crew)
+      description: |
+        Las ausencias del tripulante que inició sesión, la más reciente primero (por created_at).
+        Cada ausencia por fechas trae en `flights` las ausencias de sus vuelos (`parent_absence_id`),
+        ordenadas por salida. Una ausencia reportada directamente sobre un vuelo sale sola, con sus
+        datos de vuelo y `flights` vacío. El frontend las cruza con `GET /api/flights/assignments/me`
+        por `flight_id`. No incluye datos del reemplazo, de quién aprobó ni plazos.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Día AAAA-MM-DD. Por fechas, las que terminan ese día o después; por vuelo, las que salen ese día o después (día local de la base del tripulante; sin base, Nueva York). Las de los vuelos de una ausencia por fechas siempre salen con ella.
+          schema: { type: string, format: date, example: '2026-11-01' }
+        - name: to
+          in: query
+          description: Día AAAA-MM-DD, no anterior a from. Por fechas, las que empiezan ese día o antes; por vuelo, las que salen ese día o antes.
+          schema: { type: string, format: date, example: '2026-11-30' }
+      responses:
+        '200':
+          description: Mis ausencias
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MyAbsence' }
+        '400':
+          description: from o to no son fechas válidas, o to es anterior a from (field from o to)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences/tracking:
     get:
       tags: [Ausencias]
       summary: Seguimiento del turno (supervisor o super_admin)
       description: |
-        Ausencias de los vuelos que salen en un día (hora de Colombia), con su línea de tiempo.
+        Ausencias de los vuelos que salen en un día (día local de la base de ?base=; sin base, Nueva York), con su línea de tiempo.
         Orden: por aprobar (sin candidatos primero, luego por salida más próxima, al final las que
         la IA sigue buscando), esperando confirmación (por plazo), cubiertas (más reciente primero).
       security:
@@ -228,8 +276,13 @@ paths:
         - name: date
           in: query
           required: false
-          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          description: AAAA-MM-DD. Por defecto, hoy en la zona de la base.
           schema: { type: string, example: '2026-11-19' }
+        - name: base
+          in: query
+          required: false
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Fija la zona horaria del día; sin base, Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Ausencias del día
@@ -248,9 +301,15 @@ paths:
     get:
       tags: [Ausencias]
       summary: Indicadores de ausencias (supervisor o super_admin)
-      description: La tasa de resolución es el porcentaje de ausencias cubiertas en los últimos 30 días.
+      description: La tasa de resolución es el porcentaje de ausencias cubiertas en los últimos 30 días. «Cubiertas hoy» cuenta el día local de la base.
       security:
         - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          required: false
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Fija la zona horaria del día; sin base, Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Indicadores
@@ -417,9 +476,13 @@ paths:
       tags: [Ausencias]
       summary: Descargar el comprobante de una ausencia (supervisor o super_admin)
       description: |
-        Responde los bytes del archivo con su `Content-Type`, `Content-Disposition: attachment`
-        con el nombre saneado (solo ASCII, sin rutas, comillas ni saltos de línea) y
-        `X-Content-Type-Options: nosniff`.
+        Responde los bytes del archivo con su `Content-Type`, `X-Content-Type-Options: nosniff`,
+        `Cache-Control: private, no-store` (documento médico: no queda en cachés) y
+        `Content-Disposition: attachment` con dos parámetros (RFC 6266):
+        - `filename="…"`: el nombre en ASCII, sin rutas, comillas ni saltos de línea, para clientes antiguos.
+        - `filename*=UTF-8''…`: el nombre real codificado en UTF-8, con tildes; los navegadores lo prefieren.
+
+        Ejemplo: `attachment; filename="Dr. Perez.pdf"; filename*=UTF-8''Dr.%20P%C3%A9rez.pdf`.
       security:
         - bearerAuth: []
       parameters:
@@ -511,14 +574,15 @@ paths:
   /shifts/current:
     get:
       tags: [Turno]
-      summary: Turno actual (banner del inicio del supervisor)
+      summary: Turno actual (banner del inicio del supervisor y guardia del inicio del super_admin)
+      description: Supervisor o super_admin. Sin base, el resumen junta todas las bases (base null) con el día y el turno de Nueva York, para cualquiera de los dos roles.
       security:
         - bearerAuth: []
       parameters:
         - name: base
           in: query
-          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Sin base, todas.
-          schema: { type: string, example: BOG }
+          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Fija la zona horaria del turno y de «hoy». Sin base, todas y la hora de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Turno
@@ -527,12 +591,27 @@ paths:
               schema:
                 type: object
                 properties:
-                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora de Colombia: 06–14, 14–22, 22–06' }
+                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora local de la base (sin base, Nueva York): 06–14, 14–22, 22–06' }
                   base: { type: string, nullable: true }
                   flights_today: { type: integer }
                   standby_total: { type: integer, description: De guardia. }
                   standby_ready: { type: integer, description: De guardia y sin impedimento para reemplazar. }
                   staffing_delays: { type: integer }
+        '400':
+          description: base no es un código IATA de 3 letras
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo supervisor o super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /shift-crew:
     get:
@@ -547,7 +626,7 @@ paths:
       parameters:
         - name: base
           in: query
-          schema: { type: string, example: BOG }
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Tripulantes del turno
@@ -603,7 +682,7 @@ paths:
                 type: object
                 properties:
                   month: { type: string }
-                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
+                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 100 }, regulation: { type: string, example: FAA 14 CFR Part 117 }, cycle_closes_on: { type: string } } }
                   rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
                   sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
   /certifications:
@@ -748,6 +827,39 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /certifications/me:
+    get:
+      tags: [Certificaciones]
+      summary: Mi certificación (crew)
+      description: |
+        La certificación del tripulante que inició sesión, con el nombre de cada certificado (no puede
+        pedir `/certifications/options`). Sin nombre ni correo (salen de la sesión) y sin historial.
+        El único vencimiento con fecha es el del certificado médico (`medical_expires_on`, del perfil);
+        no se guarda fecha de vencimiento para las licencias ni los certificados.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Mi certificación (status uncertified si todavía no tiene)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyCertification' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El usuario no tiene perfil de tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /certifications/{userId}:
     get:
       tags: [Certificaciones]
@@ -783,6 +895,9 @@ paths:
       description: |
         `verified: true` la deja «verificada»; `false`, «por verificar» (así también se quita la verificación).
         `file` en base64: PDF, PNG o JPG de hasta 5 MB; sin `file` se deja la copia que había y con `null` se quita.
+        `file.file_name` se normaliza igual que el comprobante de una ausencia: solo se quita una extensión
+        conocida (`.pdf`, `.png`, `.jpg`, `.jpeg`), se añade la del tipo real y el total queda en 255 caracteres
+        como máximo («certificado.pdf» si el nombre queda vacío).
         Deja en el historial «registrado» o «actualizado», y «verificado» cuando pasa a verificada. Esta ruta
         acepta un body de hasta 8 MB y lo lee después de comprobar la sesión.
       security:
@@ -877,7 +992,10 @@ paths:
         - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: El archivo original, con Content-Disposition attachment, nosniff y sin caché
+          description: |
+            El archivo original, con `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y
+            `Content-Disposition: attachment; filename="<nombre en ASCII>"; filename*=UTF-8''<nombre real codificado>`
+            (RFC 6266: los navegadores usan `filename*`, que conserva las tildes).
           content:
             application/pdf: { schema: { type: string, format: binary } }
             image/png: { schema: { type: string, format: binary } }
@@ -1062,6 +1180,43 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /internal/users/{userId}:
+    delete:
+      tags: [Interno]
+      summary: Borrar todo lo de una cuenta eliminada (solo Admin)
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`). En una transacción:
+        las ausencias de otros en las que esperaba dar «Enterado» como reemplazo vuelven a la cola
+        (`reopened_absences`, con un evento en su línea de tiempo); se borran sus ausencias (con sus
+        hijas, comprobantes y eventos), su certificación (con archivo e historial) y su perfil.
+        Repetirlo no falla: devuelve 0. El gateway responde 404 a `/api/crew/internal/*`.
+      security:
+        - adminServiceKey: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Datos borrados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile: { type: integer, description: 1 si tenía perfil. }
+                  certifications: { type: integer }
+                  absences: { type: integer, description: Ausencias borradas, contando las hijas. }
+                  reopened_absences: { type: integer }
+        '400':
+          description: Id inválido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1102,7 +1257,7 @@ components:
         status: { $ref: '#/components/schemas/AbsenceStatus' }
         suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
         slot_role: { type: string, nullable: true, example: first_officer }
-        flight_origin: { type: string, nullable: true, example: BOG }
+        flight_origin: { type: string, nullable: true, example: JFK }
         flight_destination: { type: string, nullable: true, example: MIA }
         deadline_at: { type: string, format: date-time, nullable: true, description: Plazo para el «Enterado». }
         approved_at: { type: string, format: date-time, nullable: true }
@@ -1114,7 +1269,7 @@ components:
     AbsenceAttachment:
       type: object
       properties:
-        file_name: { type: string, example: incapacidad.pdf }
+        file_name: { type: string, example: incapacidad.pdf, description: Normalizado con la extensión del tipo real. }
         mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
         size_bytes: { type: integer, example: 48213 }
     AbsenceStatus:
@@ -1136,8 +1291,8 @@ components:
         id: { type: string, format: uuid }
         code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
         flight_id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-9344 }
-        origin: { type: string, example: BOG }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
         destination: { type: string, example: MIA }
         departure_at: { type: string, format: date-time }
         slot_role: { type: string, example: first_officer }
@@ -1231,6 +1386,77 @@ components:
                   by: { type: string, nullable: true, description: Nombre del super_admin. }
                   note: { type: string, nullable: true }
                   created_at: { type: string, format: date-time }
+    MyCertification:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string, example: AC-1108 }
+        position: { type: string, example: Comandante }
+        area: { type: string, nullable: true, enum: [flight_deck, cabin] }
+        base: { type: string, nullable: true, example: ATL }
+        status: { $ref: '#/components/schemas/CertificationStatus' }
+        license_number: { type: string, nullable: true, example: '2775981' }
+        certificates: { type: array, items: { type: string }, example: [ATP, IR] }
+        certificate_details:
+          type: array
+          description: Los certificados de certificates, en el mismo orden.
+          items:
+            type: object
+            properties:
+              code: { type: string, example: ATP }
+              name: { type: string, example: Airline Transport Pilot (ATP) }
+              short: { type: string, example: ATP }
+              is_license: { type: boolean, description: 'Licencia (ATP, CPL, PPL o CDP); el resto son habilitaciones (IR, ME) o cursos.' }
+        file:
+          type: object
+          nullable: true
+          description: Metadatos de la copia (la descarga es solo del super_admin).
+          properties:
+            file_name: { type: string }
+            mime_type: { type: string }
+            size_bytes: { type: integer }
+        updated_at: { type: string, format: date-time, nullable: true }
+        medical_expires_on: { type: string, format: date, nullable: true, example: '2027-05-18', description: Vencimiento del certificado médico. }
+        ratings: { type: array, items: { type: string }, example: [A320, '787'], description: Familias de avión habilitadas. }
+        english_level: { type: integer, nullable: true, minimum: 1, maximum: 6, description: Nivel OACI de inglés. }
+    MyAbsenceFlight:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00043 }
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: ATL }
+        destination: { type: string, example: JFK }
+        departure_at: { type: string, format: date-time }
+        slot_role: { type: string, nullable: true, example: captain }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+    MyAbsence:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042 }
+        kind: { type: string, enum: [flight, dates] }
+        reason: { $ref: '#/components/schemas/AbsenceReason' }
+        notes: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+        start_date: { type: string, format: date, nullable: true, description: Solo en las de fechas. }
+        end_date: { type: string, format: date, nullable: true }
+        flight_id: { type: string, format: uuid, nullable: true, description: Solo en las de un vuelo reportado directamente. }
+        flight_number: { type: string, nullable: true }
+        origin: { type: string, nullable: true }
+        destination: { type: string, nullable: true }
+        departure_at: { type: string, format: date-time, nullable: true }
+        slot_role: { type: string, nullable: true }
+        attachment:
+          allOf:
+            - $ref: '#/components/schemas/AbsenceAttachment'
+          nullable: true
+        created_at: { type: string, format: date-time }
+        flights:
+          type: array
+          description: Ausencias de los vuelos de una ausencia por fechas, por salida. Vacío en las de un vuelo.
+          items: { $ref: '#/components/schemas/MyAbsenceFlight' }
     Error:
       type: object
       properties:
@@ -1241,7 +1467,7 @@ components:
         id: { type: string }
         user_id: { type: string, format: uuid }
         rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        base_code: { type: string, nullable: true, example: BOG }
+        base_code: { type: string, nullable: true, example: JFK }
         ratings: { type: array, items: { type: string }, example: [A320, '787'] }
         english_level: { type: integer, nullable: true, minimum: 1, maximum: 6 }
         medical_expires_on: { type: string, nullable: true, example: '2027-05-18' }

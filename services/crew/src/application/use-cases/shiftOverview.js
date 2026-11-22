@@ -1,32 +1,34 @@
 const {
+  hubTimezone,
+  localDate,
+  localDayRange,
+  MAX_MONTH_FLIGHT_HOURS,
+  crewMonth,
+} = require('@vuelos/shared');
+const {
   currentShift,
   crewMemberShiftState,
   shiftOrder,
   MIN_REST_HOURS,
 } = require('../../domain/services/shiftStatus');
+const { parseBase } = require('../../domain/value-objects/baseCode');
 const { DomainError } = require('../../domain/errors');
 
 const HOUR = 3600000;
-const MAX_MONTH_HOURS = 90;
-const basePattern = /^[A-Z]{3}$/;
+const REGULATION = 'FAA 14 CFR Part 117';
 const monthPattern = /^\d{4}-\d{2}$/;
 
-function bogotaDay(now) {
-  const from = new Date(new Date(now - 5 * HOUR).toISOString().slice(0, 10) + 'T05:00:00.000Z');
-  return { from: from.toISOString(), to: new Date(from.getTime() + 24 * HOUR).toISOString() };
-}
-
-function parseBase(base) {
-  if (base === undefined || base === '') return null;
-  const code = String(base).toUpperCase();
-  if (!basePattern.test(code)) {
-    throw new DomainError('base debe ser un código IATA de 3 letras, por ejemplo BOG.', 400, { field: 'base' });
-  }
-  return code;
-}
-
 // Pantallas del turno (supervisor) y métricas de Mis Vuelos (tripulante).
-function createShiftOverview({ findCrewMembers, absenceRepository, attachUserNames, flightsClient }) {
+// «Hoy», el turno y el mes van en la zona del hub: la base pedida (?base=) o la
+// del tripulante. Sin base, Nueva York.
+function createShiftOverview({
+  findCrewMembers,
+  findCrewMemberByUserId = async () => null,
+  absenceRepository,
+  attachUserNames,
+  flightsClient,
+  now: clock = () => Date.now(),
+}) {
   async function loadCrew(base, authorization, now) {
     const [members, absences, assignments] = await Promise.all([
       findCrewMembers(),
@@ -51,23 +53,24 @@ function createShiftOverview({ findCrewMembers, absenceRepository, attachUserNam
   // Tripulación del turno, ya ordenada (pantalla 3.4).
   async function getShiftCrew({ base } = {}, authorization) {
     const code = parseBase(base);
-    const now = Date.now();
+    const now = clock();
     const members = (await loadCrew(code, authorization, now)).sort(shiftOrder);
-    return { base: code, shift: currentShift(now), members };
+    return { base: code, shift: currentShift(now, hubTimezone(code)), members };
   }
 
   // Banner del inicio: turno, vuelos de hoy y guardia disponible.
   async function getCurrentShift({ base } = {}, authorization) {
     const code = parseBase(base);
-    const now = Date.now();
+    const zone = hubTimezone(code);
+    const now = clock();
     const [members, flights] = await Promise.all([
       loadCrew(code, authorization, now),
-      flightsClient.listFlights(bogotaDay(now), authorization),
+      flightsClient.listFlights(localDayRange(localDate(now, zone), zone), authorization),
     ]);
     const standby = members.filter((member) => member.status === 'standby');
 
     return {
-      shift: currentShift(now),
+      shift: currentShift(now, zone),
       base: code,
       flights_today: flights.filter((flight) => !code || flight.origin === code).length,
       standby_total: standby.length,
@@ -78,16 +81,22 @@ function createShiftOverview({ findCrewMembers, absenceRepository, attachUserNam
 
   // Métricas de Mis Vuelos: horas del mes (FDP), descanso y sectores.
   async function getMyMetrics(user, authorization, { month } = {}) {
-    const now = Date.now();
-    const period = month || new Date(now - 5 * HOUR).toISOString().slice(0, 7);
-    if (!monthPattern.test(period)) {
+    if (month && !monthPattern.test(month)) {
       throw new DomainError('month debe tener el formato AAAA-MM.', 400, { field: 'month' });
     }
 
-    const assignments = await flightsClient.getMyAssignments(authorization);
+    const now = clock();
+    const [member, assignments] = await Promise.all([
+      findCrewMemberByUserId(user.id),
+      flightsClient.getMyAssignments(authorization),
+    ]);
+    // El mes local de la base (crewMonth), el mismo que usa la regla de horas de recommendation.
+    const base = member && member.base;
+    const period = month || crewMonth(now, base);
+
     const flights = assignments.map((item) => item.flight).filter((flight) => flight.status !== 'cancelled');
     const time = (value) => new Date(value).getTime();
-    const inMonth = flights.filter((flight) => new Date(flight.departure_at).toISOString().slice(0, 7) === period);
+    const inMonth = flights.filter((flight) => crewMonth(flight.departure_at, base) === period);
     const completed = inMonth.filter((flight) => time(flight.arrival_at) < now);
     const usedHours = inMonth.reduce((total, flight) => total + (time(flight.arrival_at) - time(flight.departure_at)) / HOUR, 0);
     const lastDuty = flights
@@ -99,8 +108,9 @@ function createShiftOverview({ findCrewMembers, absenceRepository, attachUserNam
       month: period,
       fdp: {
         used_hours: Math.round(usedHours * 10) / 10,
-        max_hours: MAX_MONTH_HOURS,
-        regulation: 'RAC 3',
+        // 14 CFR 117.23: máximo 100 horas de vuelo (tope común con recommendation).
+        max_hours: MAX_MONTH_FLIGHT_HOURS,
+        regulation: REGULATION,
         cycle_closes_on: new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10),
       },
       rest: {

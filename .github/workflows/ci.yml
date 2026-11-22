@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  security-check:
+    name: Escaneo de secretos
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el código con todo el historial
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Buscar secretos (Gitleaks)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:latest git --redact -v /repo
+
+  test:
+    name: Pruebas y auditoría
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v6
+
+      - name: Configurar Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      # Instala todos los workspaces desde la raíz. El postinstall de
+      # @anthropic-ai/claude-code (recommendation) se ejecuta, pero las pruebas
+      # no lanzan la CLI: usan un proceso falso.
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Sin .env ni PostgreSQL: cada prueba fija sus variables y usa
+      # repositorios o servidores falsos.
+      - name: Pruebas
+        run: npm test
+
+      - name: Auditoría de dependencias de producción
+        run: npm audit --omit=dev --audit-level=high

@@ -1,21 +1,9 @@
-// Nombre para Content-Disposition: sin rutas, comillas ni saltos de línea y
-// solo en ASCII (Node rechaza otros caracteres en las cabeceras).
-function toSafeFileName(name) {
-  const safe = String(name)
-    .split(/[\\/]/)
-    .pop()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/["\u0000-\u001f\u007f]/g, '')
-    .replace(/[^\x20-\x7e]/g, '_')
-    .trim();
-
-  return safe || 'comprobante';
-}
+const { attachmentDisposition } = require('./contentDisposition');
 
 function createAbsenceController({
   reportAbsence,
   getAbsences,
+  getMyAbsences,
   getAbsenceById,
   getAbsenceAttachment,
   coverAbsence,
@@ -71,7 +59,7 @@ function createAbsenceController({
       const attachment = await getAbsenceAttachment(req.params.id);
       res.set({
         'Content-Type': attachment.mime_type,
-        'Content-Disposition': `attachment; filename="${toSafeFileName(attachment.file_name)}"`,
+        'Content-Disposition': attachmentDisposition(attachment.file_name, 'comprobante'),
         'X-Content-Type-Options': 'nosniff',
         // Documentos médicos: que no queden en cachés del navegador o proxies.
         'Cache-Control': 'private, no-store',
@@ -107,12 +95,13 @@ function createAbsenceController({
     downloadAttachment,
     cover,
     updateSuggestions,
+    mine: respond(200, (req) => getMyAbsences(req.user, { from: req.query.from, to: req.query.to })),
     approve: respond(200, (req) => workflow.approveReplacement(req.user, req.params.id, req.body)),
     acknowledged: respond(200, (req) => workflow.acknowledgeAbsence(req.body)),
     missed: respond(200, (req) => workflow.markMissed(req.params.id)),
     expired: respond(200, () => workflow.getExpired()),
-    tracking: respond(200, (req) => workflow.getTracking({ date: req.query.date })),
-    stats: respond(200, () => workflow.getStats()),
+    tracking: respond(200, (req) => workflow.getTracking({ date: req.query.date, base: req.query.base })),
+    stats: respond(200, (req) => workflow.getStats({ base: req.query.base })),
   };
 }
 

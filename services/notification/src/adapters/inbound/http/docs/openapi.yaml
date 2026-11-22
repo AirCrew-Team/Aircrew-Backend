@@ -15,13 +15,22 @@ info:
     comentario `: ping` para mantenerla viva.
 
     **Quién recibe qué:**
-    - **supervisor:** las alertas operativas (`absence:*`).
+    - **supervisor:** las alertas operativas (`absence:*` y `flight:slot_vacated`).
     - **crew:** solo los avisos dirigidos a él (`assignment:replacement`, `certification:*`).
-    - **super_admin:** ninguna.
+    - **super_admin:** ninguna: `/stream` y la campana le responden `403`.
 
     Todos los avisos se guardan también en la campana (`/notifications`), así se ven aunque la
     persona no estuviera conectada. Las alertas del supervisor se guardan una vez para el rol y
     cada supervisor marca como leídas las suyas.
+
+    **Preferencias:** se respetan las que la persona guarda en Configuración (`notifications` de
+    `GET /users/me` en Admin, leído con su propio token y guardado 60 s por persona):
+    `absence_reported` → `absence:reported`, `absence_covered` → `absence:covered` (supervisor) y
+    `replacement_assigned` → `assignment:replacement` (crew). Solo un `false` apaga el tipo: no llega
+    en vivo ni sale en la campana (lista y `unread_count`). Los demás tipos siempre se envían. Si Admin
+    no responde, no se filtra nada (mejor recibir de más que perder una alerta). Con la conexión
+    abierta, las preferencias se vuelven a leer cada 60 s, así que un cambio se aplica en un par de
+    minutos como mucho, sin reconectar.
 
     **Eventos que emite el servidor** (en `data`, un JSON con `type` y `message`):
     - `connected`: confirmación al conectarse.
@@ -29,10 +38,12 @@ info:
     - `absence:suggestions_ready`: terminó la búsqueda de candidatos (`{ absence_id, candidate_count, source }`).
     - `absence:covered`: el reemplazo confirmó con «Enterado».
     - `absence:deadline_missed`: el reemplazo no confirmó a tiempo (`{ absence_id, candidate_name, next_candidate_name }`).
+    - `flight:slot_vacated`: se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante (`{ id, flight_id, flight_number, origin, destination, departure_at, slot_id, role }`).
     - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ id, assignment_id, flight_number, deadline_at }`).
     - `certification:registered` (solo al tripulante): el super_admin le registró la certificación (`{ id, license_number, certificates }`).
     - `certification:verified` (solo al tripulante): su certificación quedó verificada (`{ id, license_number, certificates }`).
-    - `auth:expired`: el token está por vencer; el servidor cierra la conexión. Volver a iniciar sesión.
+    - `auth:expired`: el token está por vencer, o admin respondió 401 al refrescar las preferencias
+      (la sesión se anuló); el servidor cierra la conexión. Volver a iniciar sesión.
 
     En los avisos guardados, `id` es el de la notificación (sirve para marcarla como leída).
 
@@ -51,10 +62,12 @@ paths:
   /stream:
     get:
       tags: [Tiempo real]
-      summary: Abrir la conexión SSE (cualquier usuario con sesión)
+      summary: Abrir la conexión SSE (crew y supervisor)
       description: |
         Desde el frontend: `/api/notification/stream`. La sesión sale de la cookie `aircrew_token`
         o del header `Authorization: Bearer`. La conexión queda abierta; el gateway no la corta.
+        Antes de abrirla se leen las preferencias de la persona en Admin (hasta 2 s de espera):
+        no recibe los tipos que apagó.
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -77,12 +90,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorWithCode' }
-        '403': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /notifications:
     get:
       tags: [Campana]
-      summary: Mis avisos y los de mi rol, del más nuevo al más viejo
+      summary: Mis avisos y los de mi rol, del más nuevo al más viejo (crew y supervisor)
+      description: |
+        Sin los tipos que la persona apagó en sus preferencias: no salen en `items` ni cuentan en
+        `unread_count`. Si Admin no responde, se listan todos.
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -104,7 +120,7 @@ paths:
                   unread_count: { type: integer, example: 2 }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /notifications/{id}/read:
     patch:
@@ -125,6 +141,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Notification' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
         '404':
           description: No existe o no es de esta persona
           content:
@@ -148,6 +165,7 @@ paths:
                 properties:
                   updated: { type: integer, example: 2 }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /health:
     get:
@@ -246,6 +264,64 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
 
+  /internal/alerts/slot-vacated:
+    post:
+      tags: [Interno]
+      summary: 'Interno: alerta «puesto vacante» a los supervisores (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar a un tripulante, una vez por cada vuelo futuro donde su puesto quedó
+        vacante. Se guarda para el rol supervisor y sale en vivo por `GET /stream` con el evento
+        `flight:slot_vacated`, por ejemplo «Puesto vacante en DL1102 (JFK → LAX): se eliminó la cuenta del
+        tripulante.». No tiene preferencia en Configuración: siempre se envía. El gateway responde 404 a
+        `/api/notification/internal/*`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_id, flight_number]
+              properties:
+                flight_id: { type: string, format: uuid }
+                flight_number: { type: string, example: DL1102 }
+                origin: { type: string, example: JFK }
+                destination: { type: string, example: LAX }
+                departure_at: { type: string, format: date-time }
+                slot_id: { type: string, example: fa-1 }
+                role: { type: string, example: flight_attendant }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /internal/users/{userId}/notifications:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: borrar las notificaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta. Borra sus avisos personales (con sus lecturas) y sus
+        lecturas de las alertas del rol; las alertas del rol se quedan. Repetirlo no falla: devuelve 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Notificaciones borradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Avisos personales borrados. }
+                  reads_deleted: { type: integer, description: Lecturas de alertas del rol borradas. }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -267,7 +343,7 @@ components:
             properties:
               type: { type: string, example: 'absence:reported' }
               message: { type: string, example: EMP-004 no podrá volar AC201 (incapacidad). }
-              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron. }
+              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron (sin contar las de quienes apagaron ese tipo). }
               saved: { type: boolean, description: Quedó en la campana de los supervisores. false si no se pudo guardar; igual se envía en vivo. }
     Notified:
       description: Aviso guardado en el historial del tripulante y enviado a sus conexiones abiertas
@@ -278,7 +354,7 @@ components:
             properties:
               type: { type: string, example: 'certification:registered' }
               message: { type: string, example: Asley Torres te registró un certificado. }
-              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas). }
+              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas); 0 si apagó ese tipo. }
               saved: { type: boolean, description: false si no se pudo guardar; igual se envía en vivo. }
     Error:
       description: Datos inválidos, falta autenticación o el rol no tiene permiso
@@ -288,6 +364,14 @@ components:
             type: object
             properties:
               error: { type: string }
+    NoNotifications:
+      description: |
+        Token de servicio («No tienes permisos para esta acción.») o super_admin, que no recibe
+        notificaciones.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorWithCode' }
+          example: { error: El super_admin no recibe notificaciones., code: forbidden }
 
   schemas:
     ErrorWithCode:

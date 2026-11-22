@@ -1,3 +1,4 @@
+const { DEFAULT_TIMEZONE } = require('@vuelos/shared');
 const pool = require('../pool');
 
 // code: número de solicitud legible para el supervisor (SOL-00042).
@@ -207,6 +208,18 @@ async function findAbsenceById(id) {
   return rows[0] || null;
 }
 
+// Todas las ausencias de un tripulante (GET /absences/me), las más recientes primero.
+async function findCrewAbsences(crewUserId) {
+  const { rows } = await pool.query(
+    `${absenceWithCrewMember}
+     WHERE a.crew_user_id = $1
+     ORDER BY a.created_at DESC`,
+    [crewUserId]
+  );
+
+  return rows;
+}
+
 // Ausencias por vuelo que salieron de una ausencia por fechas.
 async function findChildAbsences(parentAbsenceId) {
   const { rows } = await pool.query(
@@ -332,14 +345,14 @@ async function setCandidateCount(id, count) {
   await pool.query('UPDATE public.absences SET candidate_count = $2 WHERE id = $1', [id, count]);
 }
 
-// Ausencias de los vuelos que salen en un día (hora de Colombia), para el
-// seguimiento del turno.
-async function findAbsencesByDepartureDay(day) {
+// Ausencias de los vuelos que salen en un día local de la zona timeZone (la de
+// la base del supervisor), para el seguimiento del turno.
+async function findAbsencesByDepartureDay(day, timeZone = DEFAULT_TIMEZONE) {
   const { rows } = await pool.query(
     `${absenceWithCrewMember}
-     WHERE (a.flight_departure_at AT TIME ZONE 'America/Bogota')::date = $1::date
+     WHERE (a.flight_departure_at AT TIME ZONE $2)::date = $1::date
        AND a.status <> 'cancelled'`,
-    [day]
+    [day, timeZone]
   );
 
   return rows;
@@ -359,19 +372,20 @@ async function findEventsByAbsences(absenceIds) {
 
 // Indicadores para el inicio del supervisor: solo solicitudes por vuelo (las que
 // se reemplazan). La tasa de resolución es sobre las de los últimos 30 días.
-async function getAbsenceStats(now) {
+// «Hoy» es el día local de la zona timeZone.
+async function getAbsenceStats(now, timeZone = DEFAULT_TIMEZONE) {
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE status = 'reported')::int AS reported,
        COUNT(*) FILTER (WHERE status = 'pending_ack')::int AS pending_ack,
        COUNT(*) FILTER (WHERE status = 'covered'
-         AND (covered_at AT TIME ZONE 'America/Bogota')::date
-             = ($1::timestamptz AT TIME ZONE 'America/Bogota')::date)::int AS covered_today,
+         AND (covered_at AT TIME ZONE $2)::date
+             = ($1::timestamptz AT TIME ZONE $2)::date)::int AS covered_today,
        COUNT(*) FILTER (WHERE status = 'covered' AND created_at >= $1::timestamptz - interval '30 days')::int AS covered_30d,
        COUNT(*) FILTER (WHERE status <> 'cancelled' AND created_at >= $1::timestamptz - interval '30 days')::int AS total_30d
      FROM public.absences
      WHERE flight_id IS NOT NULL`,
-    [now]
+    [now, timeZone]
   );
 
   return rows[0];
@@ -390,6 +404,7 @@ module.exports = {
   createAbsence,
   findAbsences,
   findAbsenceById,
+  findCrewAbsences,
   findChildAbsences,
   findAttachment,
   markAbsenceCovered,

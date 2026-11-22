@@ -24,6 +24,13 @@ npm run start:gateway
 
 Para arrancar otro servicio, usa `npm run start:<servicio>`, por ejemplo `npm run start:crew`. En desarrollo están disponibles los comandos `npm run dev:<servicio>`.
 
+Cada servicio lee su configuración de `services/<servicio>/.env`. Copia el `.env.example` de cada uno, que lista todas las variables que lee el código.
+
+### Pruebas y CI
+
+- `npm test` desde la raíz ejecuta las pruebas de los seis servicios. No necesitan PostgreSQL, los `.env` ni otros servicios encendidos: cada prueba fija sus variables y usa repositorios o servidores falsos. Para un solo servicio: `npm test -w @vuelos/<servicio>`.
+- El CI (`.github/workflows/ci.yml`) corre en cada push y pull request a `main` y `develop`. Busca secretos con Gitleaks en todo el historial y, con Node 24, ejecuta `npm ci`, `npm test` y `npm audit --omit=dev --audit-level=high`.
+
 ## Gateway (entrada del frontend)
 
 El frontend llama solo al gateway (`http://localhost:3000`), que reenvía cada petición al servicio según el prefijo:
@@ -36,7 +43,7 @@ El frontend llama solo al gateway (`http://localhost:3000`), que reenvía cada p
 | `/api/recommendation/...` | recommendation (3003) |
 | `/api/notification/...` | notification (3004) |
 
-El gateway no tiene lógica de negocio ni valida el token: reenvía el header `Authorization` y cada servicio lo verifica. Si un servicio está apagado, responde `502`.
+El gateway no tiene lógica de negocio: reenvía el header `Authorization` y cada servicio lo verifica. Solo comprueba que la sesión no se haya anulado (ver «Sesión con cookie»). Si un servicio está apagado, responde `502`.
 
 ### Sesión con cookie
 
@@ -44,7 +51,12 @@ El gateway no tiene lógica de negocio ni valida el token: reenvía el header `A
 - Si la petición trae la cookie `aircrew_token` y no trae `Authorization`, el gateway la convierte en `Authorization: Bearer <token>` antes de reenviarla. Si ya trae `Authorization`, se respeta.
 - `POST /api/admin/auth/logout` borra la cookie y responde `204`, haya o no sesión.
 - `GET /api/admin/auth/me` responde `401` si el token falta, no es válido o venció, o si el usuario ya no existe o está desactivado.
-- Cambiar la contraseña cierra las demás sesiones: un token emitido antes del último cambio (con sesión o por recuperación) recibe `401` «La sesión ya no es válida.» en las rutas del admin que leen la cuenta (`/auth/me`, `/users/me*` y `/auth/change-password`). Se compara el `iat` del JWT (en segundos) con `password_changed_at` redondeado hacia abajo al segundo, así que un token del mismo segundo del cambio sigue valiendo. Las cuentas con `password_changed_at` vacío no se comparan. `POST /auth/change-password` pone una cookie `aircrew_token` nueva, con las mismas opciones que el login, para que la sesión que hizo el cambio siga abierta. Crew, flights y los demás servicios solo verifican la firma del JWT: una sesión antigua sigue entrando en ellos hasta que vence o hasta que el frontend la cierra en su siguiente consulta al admin.
+- Cambiar la contraseña cierra las demás sesiones: un token emitido antes del último cambio (con sesión o por recuperación) recibe `401` «La sesión ya no es válida.» en las rutas del admin que leen la cuenta (`/auth/me`, `/users/me*` y `/auth/change-password`). Se compara el `iat` del JWT (en segundos) con `password_changed_at` redondeado hacia abajo al segundo, así que un token del mismo segundo del cambio sigue valiendo. Las cuentas con `password_changed_at` vacío no se comparan. `POST /auth/change-password` pone una cookie `aircrew_token` nueva, con las mismas opciones que el login, para que la sesión que hizo el cambio siga abierta.
+- Sesiones anuladas en todos los servicios: antes de reenviar una petición con token (salvo `/api/admin/auth/*`, que gestiona su sesión), el gateway consulta `GET /auth/me` del admin con ese mismo `Authorization` (3 s de espera). Si admin responde `401`, el gateway devuelve ese `401` tal cual: con la cuenta inexistente o desactivada, o un token anterior al último cambio de contraseña, lleva `code: "session_revoked"`. Si admin no responde o da un `5xx`, responde `503` «No se pudo validar la sesión. Intenta de nuevo.». Guarda el resultado (`200` o `401`) 30 s por token en memoria, así que una sesión anulada puede entrar hasta 30 s más; las peticiones simultáneas con el mismo token esperan una sola consulta, y con 5000 tokens guardados sale el más antiguo. Solo consulta un token con forma de JWT (`Bearer x.y.z`): con otro `Authorization` valida la cookie `aircrew_token` si la hay (notification la leería) y, si no, deja que el servicio responda `401`. El stream SSE de notification se valida al conectarse y, con la conexión abierta, se cierra cuando admin responde `401` al refrescar las preferencias (ver «Notificaciones»).
+- Límite de intentos: 5 logins fallidos de un correo en 15 minutos dan `429` «Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.» hasta que salen de la ventana, exista o no la cuenta (tabla `login_failures`), y 5 contraseñas actuales incorrectas en `POST /auth/change-password` dan `429` antes de comparar (evento `change_failed` de `password_reset_events`).
+  - Cada intento se guarda como fallo **antes** de comparar y se cuenta incluyéndolo, así que intentos simultáneos no pasan todos el límite: con más de 5 en la ventana responde `429`. El `429` y la contraseña correcta borran su propio registro.
+  - Un correo de más de 254 caracteres responde `400` «Se requieren email y password.» sin contarse. Cada fallo nuevo borra los de más de 1 día.
+  - Sin cuenta (o con una desactivada o pendiente de activar) la contraseña se compara igual contra un hash bcrypt ficticio: la respuesta tarda lo mismo exista o no el correo.
 
 CORS solo está activo en el gateway, con credenciales (`credentials: true`) para que el navegador envíe la cookie. Con credenciales el navegador no acepta el origen `*`, así que `CORS_ORIGINS` debe listar los orígenes exactos del frontend, y el frontend debe hacer sus peticiones con credenciales (`withCredentials` en Axios). Configura en `services/gateway/.env` el origen del frontend (por defecto `http://localhost:5173`) y, si cambian, las URLs de los servicios; ver `services/gateway/.env.example`.
 
@@ -52,37 +64,68 @@ Para probar el login desde el frontend, arranca al menos `npm run dev:gateway` y
 
 ## Bases de datos
 
-Cada servicio tiene su propia base en PostgreSQL. Crea las bases y ejecuta el script de cada una (conectado a esa base):
+Cada servicio tiene su propia base en PostgreSQL; el gateway no tiene base.
 
-| Base | Script |
-| --- | --- |
-| `admin_db` | `database/admin_db.sql` |
-| `crew_db` | `database/crew_db.sql` |
-| `flights_db` | `database/flights_db.sql` |
-| `recommendation_db` | `database/recommendation_db.sql` |
-| `notification_db` | `database/notification_db.sql` |
+| Servicio | Base | Script |
+| --- | --- | --- |
+| admin | `admin_db` | `database/admin_db.sql` |
+| crew | `crew_db` | `database/crew_db.sql` |
+| flights | `flights_db` | `database/flights_db.sql` |
+| recommendation | `recommendation_db` | `database/recommendation_db.sql` |
+| notification | `notification_db` | `database/notification_db.sql` |
 
-Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+Crea las bases que falten y aplica sus scripts desde la raíz:
+
+```bash
+npm run db:migrate                 # las cinco
+npm run db:migrate -- crew         # solo una
+npm run db:migrate -- admin crew   # varias
+```
+
+- **Qué hace:** crea la base si no existe y aplica su script completo en una transacción, así que si falla no deja esa base a medias. Se detiene en el primer error y lo muestra. Si una tabla está bloqueada (p. ej. por los servicios encendidos), falla a los 10 s (`lock_timeout`) en vez de dejar en cola las consultas de los servicios.
+- **Repítelo después de cada `git pull`:** los scripts se pueden ejecutar varias veces sin error y agregan las columnas y tablas nuevas.
+- **Conexión, en este orden:** `DATABASE_URL`; `PGHOST`, `PGPORT`, `PGUSER` y `PGPASSWORD`; o `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD`. Crea las bases desde la base de mantenimiento: la de `DATABASE_URL`, o `PGDATABASE`, o `postgres`. Antes de empezar muestra el servidor y de qué variables salió.
+- **No lee los `.env`:** pon las variables en la terminal.
+- Cada servicio se conecta a su base con `DB_NAME` en su `.env`.
+
+### Hubs de Delta y zona horaria
+
+- **Catálogo:** las bases son los 9 hubs de Delta (ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC y SEA), definidos una sola vez en `shared/domain/hubs.js`. De ahí salen las bases del formulario de Usuarios y de Aeronaves. `admin_db.sql` siembra `public.bases` y `flights_db.sql` siembra `public.airports` con los mismos datos.
+- **Datos de la demo antigua (Colombia):** al ejecutar los scripts, los usuarios, tripulantes y aeronaves con base BOG, MDE o CLO quedan sin base (`NULL`), y un super_admin les asigna un hub. También se borran esas bases y los aeropuertos colombianos que ningún vuelo usa.
+- **Vuelo nacional:** es nacional solo si sus dos aeropuertos están en `public.airports` con `country = 'US'`. Un aeropuerto que no está en la tabla cuenta como **internacional** (se exige de más, p. ej. inglés OACI 4, y no de menos), así que los aeropuertos de EE. UU. que no son hubs también deben agregarse a esa tabla.
+- **Tope de horas del mes:** 100 horas de vuelo (14 CFR 117.23), en el mes local de la base del tripulante. Es el mismo en Mis Vuelos (crew) y en la regla de elegibilidad de recommendation (`MAX_MONTH_FLIGHT_HOURS` y `crewMonth` en `shared/domain/flightHours.js`).
+- **Zona horaria:** «hoy», el turno, el mes de Mis Vuelos y los días de una ausencia se calculan en la zona del hub: la `base` pedida (`?base=` en turno, programación, `/absences/tracking` y `/absences/stats`) o la base del tripulante. Sin base, Nueva York.
+- **Turno de todas las bases:** `GET /shifts/current` de crew sin `base` junta todas las bases para supervisor y super_admin, con `base: null` y la hora de Nueva York.
 
 ### Datos de demo
+
+**Solo contra una base local:** el script borra y vuelve a crear datos, así que se niega a correr con `NODE_ENV=production` y si el host de destino no es `localhost`, `127.0.0.1` ni `::1`. Para una base de pruebas en otra máquina, córrelo con `SEED_DEMO_ALLOW_REMOTE=1` (nunca contra producción).
 
 ```bash
 npm run seed:demo
 ```
 
-Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 21 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
+- **Qué carga:** datos de Delta con los 9 hubs, 3 destinos internacionales (CDG, LHR y CUN), 6 aeronaves `N991AC` a `N996AC`, un supervisor de JFK, 21 tripulantes de JFK, ATL y LAX y 14 vuelos `DL9901` a `DL9914` (números que no usa ningún vuelo real): 12 en los próximos 7 días y 2 ya realizados. Los teléfonos son de ficción (`+1 212 555 01xx`). Los correos de los usuarios de demo y su contraseña común están en `database/seed-demo.js`.
+- **Conexión:** usa `DATABASE_URL` si existe; el script cambia el nombre de la base por cada una de las cuatro. Si no, usa `PGHOST`, `PGPORT`, `PGUSER` y `PGPASSWORD` y, como último recurso, `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD` de `services/admin/.env`. Antes de escribir, muestra el servidor de destino. Las bases `admin_db`, `crew_db`, `flights_db` y `recommendation_db` deben existir con sus scripts ejecutados (`npm run db:migrate`).
+- **Se puede repetir:** borra solo sus datos de demo y los vuelve a crear con fechas desde ese momento. Sus datos de demo son las cuentas de demo que define `database/seed-demo.js` y sus vuelos, y los de las demos anteriores (los `AV-*` de Colombia y los primeros `DL` de Delta), siempre por su número exacto **y** su id de demo: un vuelo real con el mismo número no se toca. De la demo de Colombia borra también sus aeronaves y aeropuertos si ya ningún vuelo los usa.
+- **No pisa tus aeronaves:** cada aeronave de demo tiene un id fijo. Si una de sus matrículas ya es de una aeronave que no es de la demo, el seed se detiene con un error y no cambia nada. Las aeronaves de la primera demo de Delta (`N321AC`, `N322AC`, `N739AC`, `N740AC`, `N330AC` y `N350AC`) no se borran solas, porque no se puede saber si son de la demo: bórralas a mano si ya no las usas.
+- **Todo o nada:** cada base va en su propia transacción; si algo falla, ninguna queda a medias.
 
 ## Documentación de la API (Swagger)
 
-Admin, Crew y Flights publican su contrato OpenAPI con Swagger UI:
+Cada servicio publica su contrato OpenAPI con Swagger UI:
 
 | Servicio | Swagger UI | Contrato JSON |
 | --- | --- | --- |
 | admin | http://localhost:3005/docs | http://localhost:3005/docs/openapi.json |
 | crew | http://localhost:3002/docs | http://localhost:3002/docs/openapi.json |
 | flights | http://localhost:3001/docs | http://localhost:3001/docs/openapi.json |
+| recommendation | http://localhost:3003/docs | http://localhost:3003/docs/openapi.json |
+| notification | http://localhost:3004/docs | http://localhost:3004/docs/openapi.json |
 
 Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/openapi.yaml`. Si cambias un endpoint, actualiza también ese archivo. Para probar rutas protegidas, inicia sesión en Admin (`POST /auth/login`), copia el `token` y pégalo en el botón **Authorize**.
+
+A través del gateway (`/api/<servicio>/docs`), el Swagger está **cerrado** y responde 404, salvo con `DOCS_PUBLIC=true` en el gateway. El gateway también responde 404, siempre, a las rutas que solo usan los servicios entre sí: `/api/<servicio>/internal/*`, `/api/admin/users/lookup` y `/api/notification/events/*`. Las compara con la ruta canónica (decodificada, sin mayúsculas ni barras repetidas) y responde 404 a cualquier petición sin una ruta inequívoca: que no empieza por `/` (forma absoluta, `GET http://host/ruta`), con `\` o `#` (también codificados, `%5C` y `%23`, en la ruta), con caracteres de control o con segmentos `.` o `..`. Un `%23` en un parámetro de búsqueda sí pasa. Los servicios se las piden unos a otros por su URL directa (en Railway, la red privada).
 
 ## Usuarios (pantalla del super_admin)
 
@@ -98,15 +141,21 @@ Todas las altas entran por Admin: tripulante, supervisor o super_admin. El super
   - Cada fila trae `phone`, `employee_code`, `position`, `base`, `status` y `shift`. Del tripulante salen de Crew; del supervisor, de sus datos laborales (`status` es su `operational_status`); al super_admin no le aplican y van en `null`.
   - Si Crew no responde, la lista sale igual con los campos del tripulante en `null`.
 - `GET /users/stats` (solo super_admin) responde `{ total, by_role: { crew, supervisor, super_admin }, in_flight, on_duty, crew_available, medical_fitness_percent }`. `on_duty` cuenta tripulantes y supervisores; `crew_available`, tripulantes con la cuenta activa y disponibles. `medical_fitness_percent` es `null` porque todavía no hay datos de aptitud médica.
-- `GET /catalogs/user-options` (solo super_admin) da las opciones del formulario: `bases`, `crew_positions`, `shifts` (Turno 1, 2 y 3), `crew_statuses` y `supervisor_statuses`. Vive en `src/domain/userCatalog.js` y es la única fuente.
+- `GET /catalogs/user-options` (solo super_admin) da las opciones del formulario: `bases`, `crew_positions`, `shifts` (Turno 1, 2 y 3), `crew_statuses` (incluye `vacation`, «Vacaciones») y `supervisor_statuses`. Vive en `src/domain/userCatalog.js` y es la única fuente.
 - `GET /users/:id` responde lo mismo que una fila de la lista.
 - `PATCH /users/:id` también recibe `phone`, para cualquier rol. En un tripulante, `employee_code`, `position`, `base` y `status` van a su perfil de Crew. Crew se actualiza primero; si después falla Admin, Crew vuelve a como estaba.
 - `POST /users/:id/resend-invitation` (solo super_admin) reenvía el correo de activación de una cuenta pendiente: genera un enlace nuevo y el anterior deja de servir. Una cuenta ya activa responde `409`.
 - Si se corrige el `email` de una cuenta pendiente con `PATCH /users/:id`, la invitación se reenvía sola al correo nuevo y el enlace del correo anterior deja de servir.
-- `DELETE /users/:id` desactiva la cuenta y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- `DELETE /users/:id` **desactiva** la cuenta (reversible, conserva todo) y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- `DELETE /users/:id/permanent` (solo super_admin) **elimina** la cuenta de forma definitiva, esté activa, inactiva o con la invitación pendiente. Responde `{ id, vacated_flights }`.
+  - Orden: flights libera sus asignaciones (en los vuelos que aún no salen el puesto queda vacante y la tripulación deja de estar confirmada; si era un reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado); notification avisa a los supervisores con `flight:slot_vacated` por cada puesto vacante y borra sus avisos; recommendation borra las sugerencias que lo nombran; crew borra perfil, certificación y ausencias (las de otros que esperaban su «Enterado» vuelven a la cola); y admin borra la cuenta, su foto, sus eventos de contraseña y sus fallos de login. El correo queda libre y los enlaces de invitación y de recuperación dan su error normal de enlace inválido.
+  - `404` si no existe. `409` con `code: cannot_delete_self` («No puedes eliminar tu propia cuenta.») o `code: last_super_admin` («No se puede eliminar al último super_admin.»).
+  - Si un servicio no responde: `502` con `code: user_delete_incomplete`, la cuenta sigue existiendo y el fallo queda en el log de admin. Lo ya borrado no se deshace y un reintento termina el borrado. Si el fallo fue después de liberar los vuelos, el reintento ya no los ve (`vacated_flights` vacío) y no repite las alertas; si las alertas no salieron, los vuelos quedan en el log.
+  - Se conservan los registros de otras personas que lo nombran como aprobador (`approved_by`, `approved_by_name`, `crew_confirmed_by`). Una sesión abierta del eliminado deja de valer en el gateway en 30 s como mucho (`401 session_revoked`).
+  - Admin llama a las rutas internas `/internal/users/...` de flights, notification y recommendation con un token de servicio de 1 minuto firmado con `JWT_SECRET` (rol `service`), y a `/internal/users/:id` de crew con `x-service-key`. Las encuentra en `FLIGHTS_SERVICE_URL`, `NOTIFICATION_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `CREW_SERVICE_URL`.
 - Crew ya no tiene `POST /crew-members`. Admin usa las rutas internas `/internal/crew-members` de Crew con el header `x-service-key`, y `ADMIN_SERVICE_KEY` debe ser igual en `services/admin/.env` y `services/crew/.env`. Admin las encuentra en `CREW_SERVICE_URL` (por defecto `http://localhost:3002`).
 - Requiere la columna `base` de `crew_members` y la secuencia `crew_employee_code_seq` de `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
-- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`.
+- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`. Eliminar usuarios: `deleteUser.test.js` (admin), `eraseUser.test.js` (crew y notification), `releaseCrewUser.test.js` (flights) y `eraseUserSuggestions.test.js` (recommendation).
 
 ### Invitación por correo
 
@@ -166,7 +215,7 @@ Rutas de la pantalla Configuración. Todas piden sesión, sirven a cualquier rol
 - `PATCH /users/me` recibe `{ phone?, residence?, notifications? }` (al menos uno) y responde lo mismo que `GET /users/me`.
   - `phone` se guarda sin espacios y debe cumplir `^\+?\d{7,15}$`. Vacíos se guardan como `null`.
   - `residence` debe ser una ciudad de `GET /catalogs/us-cities`. Se compara sin distinguir mayúsculas y se guarda con la forma del catálogo (`atlanta, ga` → `Atlanta, GA`). Vacía se guarda como `null`, y una que no está en la lista responde `400` («Elige una ciudad de Estados Unidos de la lista.»). Las residencias guardadas antes se devuelven tal cual.
-  - `notifications` solo admite las claves del rol, con valores `true` o `false`. Si no, responde `400`. Un super_admin no puede enviarlas (ni vacías ni `null`): `400` «Hay una preferencia de notificaciones que no corresponde a tu rol.». Se guardan, pero notification todavía no las aplica.
+  - `notifications` solo admite las claves del rol, con valores `true` o `false`. Si no, responde `400`. Un super_admin no puede enviarlas (ni vacías ni `null`): `400` «Hay una preferencia de notificaciones que no corresponde a tu rol.». Notification las aplica al stream en vivo y a la campana.
   - Los datos laborales no se cambian aquí: los asigna un super_admin.
 - `GET /catalogs/us-cities` (con sesión, cualquier rol) devuelve unas 150 ciudades de EE. UU. ordenadas, con el formato «Ciudad, ST» e incluidas las de los hubs de Delta. El catálogo vive en `src/domain/usCities.js` y es la única fuente: el frontend no tiene su copia.
 - `POST /auth/change-password` recibe `{ current_password, new_password }` y responde `{ password_changed_at }` con una cookie de sesión `aircrew_token` nueva (ver «Sesión con cookie»): las demás sesiones se cierran y esta sigue abierta. El token nuevo lleva el rol guardado en la cuenta y un `iat` del segundo del cambio o posterior, aunque el reloj del servicio vaya por detrás del de PostgreSQL. El body no incluye el token.
@@ -207,7 +256,8 @@ Pantalla Aeronaves del super_admin. El contrato completo está en el Swagger de 
 
 Pantalla Certificaciones del super_admin. El contrato completo está en el Swagger de crew.
 
-- Todas las rutas son solo del super_admin; el supervisor y el tripulante reciben `403`.
+- Las rutas son solo del super_admin, salvo `GET /certifications/me`; en las demás, el supervisor y el tripulante reciben `403`.
+- `GET /certifications/me` (solo `crew`) devuelve la certificación del propio tripulante: `certificate_details`, `medical_expires_on`, `ratings` y `english_level`, sin historial ni nombre.
 - `GET /certifications` (paginado: `page`, `page_size` de 5 por defecto, `search` por nombre, ID o licencia, y `status`: `verified`, `pending_verification` o `uncertified`), `GET /certifications/stats`, `GET /certifications/options` (certificados por cargo) y `GET /certifications/uncertified` (tripulantes para «Registrar certificado»).
 - `PUT /certifications/:userId` registra o edita: `{ license_number, certificates, verified, file? }`. El número de licencia es de 5 a 10 dígitos. Pilotos: PPL, CPL, ATP, IR y ME, con al menos una licencia; Auxiliar de Vuelo: CDP; Sobrecargos: CDP (obligatorio), LID, CONF y ADU. `file` va en base64 (PDF, PNG o JPG de hasta 5 MB); sin `file` se deja la copia y con `null` se quita.
 - `GET /certifications/:userId` trae la copia (sin bytes) y el historial; `GET /certifications/:userId/file` descarga la copia. `DELETE /certifications/:userId` deja al tripulante sin certificado.
@@ -218,12 +268,14 @@ Pantalla Certificaciones del super_admin. El contrato completo está en el Swagg
 Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en el Swagger de crew.
 
 - `POST /absences` (solo `crew`) recibe `{ start_date, end_date, reason, notes?, attachment? }`, con las fechas en `AAAA-MM-DD` y `attachment` como `{ file_name, mime_type, data_base64 }`.
-  - Validaciones: el inicio puede ser como mucho de ayer, que es el margen por la zona horaria; el fin es igual o posterior al inicio, con 30 días como máximo entre ambas; las observaciones tienen hasta 500 caracteres.
+  - Validaciones: el inicio puede ser como mucho de ayer, que es el margen por la zona horaria, y como máximo de dentro de 365 días; el fin es igual o posterior al inicio, con 30 días como máximo entre ambas; las observaciones tienen hasta 500 caracteres.
   - El comprobante es un PDF, PNG o JPG de hasta 10 MB, ya decodificado, y sus primeros bytes deben coincidir con el tipo. Es obligatorio si el motivo es `illness`.
+  - El nombre del archivo se normaliza: solo se quita una extensión conocida (`.pdf`, `.png`, `.jpg` o `.jpeg`), se añade la del tipo real y la base se recorta para que el total no pase de 255 caracteres. «Dr. Pérez» se guarda como «Dr. Pérez.pdf». La copia de una certificación sigue la misma regla.
   - Responde `409` si el tripulante ya tiene una ausencia cuyas fechas se cruzan. La comprobación y el guardado van en una transacción con el tripulante bloqueado (`pg_advisory_xact_lock`), así que dos envíos simultáneos no crean ausencias que se cruzan.
   - Esta ruta acepta un body JSON de hasta 15 MB, por el base64, y lo lee después de comprobar la sesión. Las demás rutas de crew siguen con 100 kB.
 - `GET /absences` y `GET /absences/:id` (supervisor y super_admin) incluyen `start_date`, `end_date` y `attachment: { file_name, mime_type, size_bytes } | null`, nunca los bytes.
-- `GET /absences/:id/attachment` (supervisor y super_admin) descarga el comprobante con su `Content-Type`, `Content-Disposition: attachment` y `X-Content-Type-Options: nosniff`. Responde `404` si la ausencia no existe o no tiene comprobante.
+- `GET /absences/me` (solo `crew`) lista las ausencias del propio tripulante, la más reciente primero. Las de fechas llevan sus vuelos en `flights`, y las de un vuelo directo salen solas. `from` y `to` (`AAAA-MM-DD`) son opcionales.
+- `GET /absences/:id/attachment` (supervisor y super_admin) descarga el comprobante con su `Content-Type`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y `Content-Disposition: attachment` con `filename` en ASCII y `filename*=UTF-8''…` con el nombre real (RFC 6266), así el navegador conserva las tildes. Responde `404` si la ausencia no existe o no tiene comprobante.
 - Recommendation responde `409` («Esta ausencia no tiene un vuelo asociado.») si se piden reemplazos para una ausencia sin vuelo.
 - El comprobante se guarda en la tabla `absence_attachments` (`BYTEA`) de `database/crew_db.sql`. El script también deja opcionales las columnas del vuelo y añade `start_date` y `end_date`, y se puede volver a ejecutar sobre una base existente.
 - Tests: `npm test -w @vuelos/crew`, y lo mismo con `@vuelos/notification` y `@vuelos/recommendation`.
@@ -234,16 +286,37 @@ Las notificaciones llegan en vivo por **SSE** (Server-Sent Events), no por Socke
 
 - `GET /api/notification/stream` abre la conexión con la cookie de sesión: `new EventSource('/api/notification/stream', { withCredentials: true })`. Responde `401` sin sesión o con el token vencido, y `403` con un token de servicio. El gateway no le pone límite de tiempo.
 - Quién recibe qué:
-  - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered` y `absence:deadline_missed`;
+  - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered`, `absence:deadline_missed` y `flight:slot_vacated` (se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante; no tiene preferencia, siempre se envía);
   - **crew** (solo los suyos): `assignment:replacement`, `certification:registered` y `certification:verified`;
-  - **super_admin:** ninguna.
-- Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión; después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
+  - **super_admin:** ninguna. `/stream` y `/notifications/*` le responden `403`.
+- Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión, o cuando admin responde `401` al refrescar las preferencias (la sesión se anuló, p. ej. por un cambio de contraseña: se nota en unos 2 minutos como mucho); después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
 - Todos los avisos se guardan para la campana, así se ven aunque la persona no estuviera conectada. Los del tripulante se guardan para él; las alertas del supervisor, una sola vez para el rol, y cada supervisor marca como leídas las suyas:
   - `GET /api/notification/notifications?limit=20` responde `{ items, unread_count }`. `limit` va de 1 a 100;
   - `PATCH /api/notification/notifications/:id/read` marca uno como leído. Responde `404` si no existe o no es de esa persona;
   - `POST /api/notification/notifications/read-all` marca todos y responde `{ updated }`.
 - Crew avisa `certification:registered` cuando el super_admin registra la certificación por primera vez, y `certification:verified` cuando la marca como verificada. Si notification no responde, la certificación se guarda igual.
+- **Preferencias de cada persona** (`notifications` de `GET /users/me` en admin):
+  - `absence_reported` apaga `absence:reported`, y `absence_covered` apaga `absence:covered`, en el stream y en la campana;
+  - `replacement_assigned` solo silencia el aviso en vivo de `assignment:replacement`: en la campana queda siempre.
+  - Notification las consulta con el token de la persona (2 s de espera, caché de 60 s por sesión), así que un cambio se nota en la campana en 60 s como mucho y en el stream en unos 2 minutos.
+  - Necesita `ADMIN_SERVICE_URL`. Si admin no responde, no se filtra nada y el error queda en el log.
 - Requiere la base `notification_db` con `database/notification_db.sql` y las variables `DB_*` en `services/notification/.env`; ver `services/notification/.env.example`.
+- **Una sola instancia:** las conexiones del stream viven en la memoria del proceso. Con dos réplicas, un aviso solo llegaría a quienes estén conectados a la misma.
+
+## IA (servicio recommendation)
+
+Recommendation pide a Claude las sugerencias de reemplazo. Usa Claude Code con la suscripción de Claude:
+
+- **Variables:** `AI_PROVIDER=claude_code` y `CLAUDE_CODE_OAUTH_TOKEN`, con el token de suscripción de Claude Code. Es un secreto y solo lo lleva recommendation. También hace falta en local: el servicio no usa la sesión de Claude abierta en el equipo. Sin `AI_PROVIDER`, el proveedor es `api`.
+- **La CLI viene con el servicio:** es el paquete `@anthropic-ai/claude-code`, dependencia de recommendation, y su postinstall deja el binario al ejecutar `npm ci` o `npm install`. Por eso la instalación no debe usar `--ignore-scripts`, y no hace falta `CLAUDE_CODE_PATH`. Con la CLI, `node_modules` ocupa unos 770 MB.
+- **Sin token:** el servicio arranca, lo avisa en el log y las sugerencias responden `503` con `code: "ai_unavailable"` («La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.»).
+- **No definas `ANTHROPIC_API_KEY`** en recommendation: es del proveedor `api`, que cobra el saldo de la API de Anthropic.
+- **El proceso de Claude Code** solo recibe `PATH`, la carpeta personal, la carpeta temporal, el token y `DISABLE_AUTOUPDATER=1` y `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` (sin actualizaciones ni tráfico aparte de la consulta). Nunca recibe `JWT_SECRET`, `DB_PASSWORD` ni las claves de servicio. Corre en una carpeta privada del proceso (`aircrew-claude-…` en el temporal, creada con `mkdtemp` y permisos `0700`), que también es su carpeta personal si `HOME` no existe o no se puede escribir.
+- **Opcionales:**
+  - `CLAUDE_MODEL`: vacío usa el modelo por defecto de Claude Code;
+  - `AI_TIMEOUT_MS`: tiempo máximo por llamada, por defecto 90000;
+  - `DEADLINE_CHECK_MS`: cada cuánto se revisan los plazos de «Enterado», por defecto 60000;
+  - `AI_ENABLED=false`: apaga la IA, y las sugerencias responden `503`.
 
 ## Despliegue en Railway
 
@@ -251,51 +324,69 @@ Todo el sistema vive en un solo proyecto de Railway: el frontend, los seis servi
 
 ### 1. Servicios
 
-| Servicio en Railway | Origen | Comando de inicio | `PORT` |
-| --- | --- | --- | ---: |
-| `Postgres` | plantilla PostgreSQL | — | — |
-| `gateway` | este repositorio | `npm run start:gateway` | 3000 |
-| `flights` | este repositorio | `npm run start:flights` | 3001 |
-| `crew` | este repositorio | `npm run start:crew` | 3002 |
-| `recommendation` | este repositorio | `npm run start:recommendation` | 3003 |
-| `notification` | este repositorio | `npm run start:notification` | 3004 |
-| `admin` | este repositorio | `npm run start:admin` | 3005 |
+| Servicio en Railway | Origen | Comando de inicio | Pre-deploy command | `PORT` |
+| --- | --- | --- | --- | ---: |
+| `Postgres` | plantilla PostgreSQL | — | — | — |
+| `gateway` | este repositorio | `npm run start:gateway` | — | 3000 |
+| `flights` | este repositorio | `npm run start:flights` | `npm run db:migrate -- flights` | 3001 |
+| `crew` | este repositorio | `npm run start:crew` | `npm run db:migrate -- crew` | 3002 |
+| `recommendation` | este repositorio | `npm run start:recommendation` | `npm run db:migrate -- recommendation` | 3003 |
+| `notification` | este repositorio | `npm run start:notification` | `npm run db:migrate -- notification` | 3004 |
+| `admin` | este repositorio | `npm run start:admin` | `npm run db:migrate -- admin` | 3005 |
 
 En cada servicio del backend:
 
 - **Root directory:** la raíz del repositorio, no `services/<servicio>`. Los servicios usan `@vuelos/shared` por workspaces, y `npm ci` debe instalarse desde la raíz.
 - **Start command:** el de la tabla.
-- **Watch paths:** `services/<servicio>/**`, `shared/**`, `package.json` y `package-lock.json`, para que un cambio en un servicio no redepliegue los demás.
+- **Pre-deploy command:** el de la tabla. El gateway no lo lleva, porque no tiene base. Railway lo ejecuta antes de arrancar cada versión nueva: crea la base del servicio si falta y aplica su script (ver «Bases de datos»). Si falla, el script sale con código 1 y el error queda en el log del despliegue.
+- **Watch paths:** `services/<servicio>/**`, `shared/**`, `package.json` y `package-lock.json`. En los cinco servicios con base, también `database/<servicio>_db.sql` y `database/migrate.js`. Así un cambio en un servicio no redespliega los demás, pero un cambio del `package-lock.json` redespliega los seis.
 - **Healthcheck path:** `/health`.
 - **Sin dominio público.**
 - La versión de Node sale de `engines` en el `package.json` raíz (24.x).
 
+Además:
+
+- **notification, con una sola réplica:** las conexiones del stream SSE viven en la memoria del proceso (ver «Notificaciones»).
+- **recommendation:** el build no debe usar `--ignore-scripts`, porque el postinstall instala la CLI de Claude Code (ver «IA»).
+
 ### 2. Variables
 
-`${{servicio.VARIABLE}}` es una referencia de Railway a la variable de otro servicio. Los secretos de producción se generan nuevos; no reutilices los del `.env` local.
+`${{servicio.VARIABLE}}` es una referencia de Railway a la variable de otro servicio. Los secretos de producción se generan nuevos; no reutilices los del `.env` local. Los `.env.example` de cada servicio listan todas las variables que lee el código.
 
 - **En los seis servicios:** `PORT`, el de la tabla anterior. Debe ser fijo, porque las URL internas llevan el puerto.
-- **En admin, crew, flights, notification y recommendation:** `JWT_SECRET`, con **el mismo valor** en todos. Conviene crearlo como variable compartida del proyecto. El gateway no lo usa.
-- **admin y crew:** `CREW_SERVICE_KEY` y `ADMIN_SERVICE_KEY`, cada una con **el mismo valor** en los dos. Son claves distintas.
-- **admin, crew, flights y notification (base de datos):**
-  - `DB_HOST=${{Postgres.PGHOST}}`, `DB_PORT=${{Postgres.PGPORT}}`, `DB_USER=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}`;
-  - `DB_NAME`: `admin_db`, `crew_db`, `flights_db` o `notification_db`, según el servicio.
-- **URL internas:** `http://${{<servicio>.RAILWAY_PRIVATE_DOMAIN}}:<puerto>`.
+- **En admin, crew, flights, recommendation y notification:**
+  - `JWT_SECRET`, con **el mismo valor** en todos. Conviene crearlo como variable compartida del proyecto. El gateway no lo usa.
+  - `JWT_ISSUER`: **no la definas.** flights, recommendation y notification esperan por defecto `aircrew-admin`, el emisor que fija admin; con otro valor rechazarían todos los tokens.
+  - Base de datos: `DB_HOST=${{Postgres.PGHOST}}`, `DB_PORT=${{Postgres.PGPORT}}`, `DB_USER=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}` y `DB_NAME`: `admin_db`, `crew_db`, `flights_db`, `recommendation_db` o `notification_db`, según el servicio.
+  - `PGDATABASE=${{Postgres.PGDATABASE}}`: la base de mantenimiento del pre-deploy, desde la que se crean las bases que falten.
+- **admin y crew:** `CREW_SERVICE_KEY` y `ADMIN_SERVICE_KEY`, cada una con **el mismo valor** en los dos. Son claves distintas: con `CREW_SERVICE_KEY` crew le pide a admin los nombres de los usuarios, y con `ADMIN_SERVICE_KEY` admin crea, edita, desactiva y elimina los perfiles de tripulante en crew.
+- **URL internas:** `http://${{<servicio>.RAILWAY_PRIVATE_DOMAIN}}:<puerto>`. Sin ellas, cada servicio busca a los demás en `localhost` y esas llamadas fallan.
   - gateway: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
-  - admin: `CREW_SERVICE_URL`;
-  - crew: `ADMIN_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
-  - recommendation: `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`.
+  - admin: `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL` (estas tres, para eliminar usuarios);
+  - crew: `ADMIN_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
+  - flights: `CREW_SERVICE_URL`;
+  - recommendation: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
+  - notification: `ADMIN_SERVICE_URL`, obligatoria: sin ella no se aplican las preferencias de notificaciones.
 - **admin (además):**
   - `NODE_ENV=production`, para que la cookie lleve `Secure`;
   - `CREW_ACTIVATION_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}/activar-cuenta` y `PASSWORD_RESET_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}/restablecer-contrasena`. Llevan `https://` delante, porque `RAILWAY_PUBLIC_DOMAIN` no incluye el esquema; sin él, invitar y recuperar la contraseña responden 503;
   - `SUPER_ADMIN_BOOTSTRAP_KEY`: una clave larga, solo para crear el primer `super_admin`;
-  - correo: `EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y, opcional, `BREVO_SENDER_NAME`. Railway bloquea el SMTP en los planes Free, Trial y Hobby, así que Gmail por SMTP no funciona allí (ver «Proveedor del correo»);
-  - `JWT_EXPIRES_IN`: opcional, por defecto `1h`.
-- **gateway:** `CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`, sin barra final. Es opcional, porque las peticiones llegan del mismo origen a través del proxy.
+  - correo: `EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y, opcional, `BREVO_SENDER_NAME`. Railway bloquea el SMTP en los planes Free, Trial y Hobby, así que Gmail por SMTP no funciona allí y las variables `SMTP_*` y `RESEND_*` no hacen falta (ver «Proveedor del correo»);
+  - opcionales: `JWT_EXPIRES_IN` (por defecto `1h`) y `ACTIVATION_TOKEN_EXPIRES_MINUTES` (por defecto 1440).
+- **recommendation (además):** `AI_PROVIDER=claude_code` y `CLAUDE_CODE_OAUTH_TOKEN`, con el token de suscripción de Claude Code. Es secreta y solo la lleva este servicio. No definas `ANTHROPIC_API_KEY`. Opcionales: `CLAUDE_MODEL`, `AI_TIMEOUT_MS`, `DEADLINE_CHECK_MS` y `AI_ENABLED` (ver «IA»).
+- **gateway (además):**
+  - `CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`, sin barra final. Es opcional, porque las peticiones llegan del mismo origen a través del proxy;
+  - `DOCS_PUBLIC`: no la definas, o déjala en `false`, para que el Swagger siga cerrado desde el dominio público. Con `true` se abre.
 
 ### 3. Bases de datos
 
-Una sola instancia de PostgreSQL con varias bases. La carga inicial se hace una vez desde tu equipo, con Docker, sin instalar `psql`:
+Una sola instancia de PostgreSQL con cinco bases: `admin_db`, `crew_db`, `flights_db`, `recommendation_db` y `notification_db`. El pre-deploy de cada servicio crea su base y aplica su script en cada despliegue, así que no hace falta cargarlas a mano. La base arranca limpia: no se copian los datos locales.
+
+**Orden de despliegue:** con el pre-deploy, cada versión aplica su script antes de arrancar. Si no lo usas, aplica los scripts **antes** de subir el código, porque la versión nueva puede necesitar columnas o tablas que todavía no existen.
+
+#### Alternativa: carga manual desde tu equipo
+
+Sin el pre-deploy, carga las bases desde tu equipo con Docker, sin instalar `psql`:
 
 1. En el servicio `Postgres`, activa temporalmente el **TCP proxy** (Settings → Networking) y copia los datos de conexión pública: host, puerto, usuario y contraseña.
 2. En PowerShell, desde la raíz de este repositorio, pon esos datos en variables de entorno de tu terminal. La contraseña se pide con `Read-Host`, así no se ve en pantalla ni queda en el historial de PowerShell (`ConsoleHost_history.txt`):
@@ -310,17 +401,18 @@ Una sola instancia de PostgreSQL con varias bases. La carga inicial se hace una 
 3. Crea las bases y carga cada script:
 
    ```powershell
-   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:17-alpine psql -d railway -c "CREATE DATABASE admin_db;" -c "CREATE DATABASE crew_db;" -c "CREATE DATABASE flights_db;" -c "CREATE DATABASE notification_db;"
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:17-alpine psql -d railway -c "CREATE DATABASE admin_db;" -c "CREATE DATABASE crew_db;" -c "CREATE DATABASE flights_db;" -c "CREATE DATABASE recommendation_db;" -c "CREATE DATABASE notification_db;"
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d admin_db -f /sql/admin_db.sql
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d crew_db -f /sql/crew_db.sql
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d flights_db -f /sql/flights_db.sql
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d recommendation_db -f /sql/recommendation_db.sql
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d notification_db -f /sql/notification_db.sql
    ```
 
    Con `ON_ERROR_STOP=1`, psql se detiene en el primer error y lo muestra. Los scripts se pueden volver a ejecutar sin error; los `CREATE DATABASE`, no: al repetirlos, el «already exists» es esperable. Si la base `railway` tiene otro nombre en tu proyecto, usa el de `PGDATABASE`.
-4. Desactiva el TCP proxy y cierra la terminal, para borrar las variables.
 
-La base arranca limpia: no se copian los datos locales.
+   Con Node en tu equipo, `npm run db:migrate` con esas mismas variables y `$env:PGDATABASE = "railway"` hace lo mismo, y solo crea las bases que falten.
+4. Desactiva el TCP proxy y cierra la terminal, para borrar las variables.
 
 ### 4. Primer `super_admin`
 
@@ -332,12 +424,12 @@ $body = @{ name = '<nombre>'; email = '<correo>'; password = (Read-Secret 'Contr
 Invoke-RestMethod -Method Post -Uri 'https://<dominio del frontend>/api/admin/auth/bootstrap/super-admin' -Headers @{ 'x-bootstrap-key' = (Read-Secret 'SUPER_ADMIN_BOOTSTRAP_KEY') } -ContentType 'application/json; charset=utf-8' -Body $body
 ```
 
-Si ya existe un `super_admin`, responde `409`. Después:
-- los supervisores se crean con `POST /api/admin/users`;
-- los tripulantes, por invitación con `POST /api/crew/crew-members`.
+Si ya existe un `super_admin`, responde `409`. Después, todas las altas (tripulantes, supervisores y otros `super_admin`) se hacen desde la pantalla Usuarios con `POST /api/admin/users`, y cada persona recibe su invitación por correo (ver «Usuarios»). Crew ya no tiene `POST /api/crew/crew-members`.
 
 ### 5. Comprobación
 
 - Los seis servicios y el frontend en verde, con `/health` respondiendo 200.
+- El log del pre-deploy de cada servicio con base termina en «Listo: 1 base(s)».
+- El log de recommendation no muestra el aviso de la IA sin configurar.
 - Iniciar sesión en el dominio público y recargar con F5 sin perder la sesión. La cookie `aircrew_token` lleva `Secure`.
 - Una invitación y un correo de recuperación llegan por Brevo, y sus enlaces abren el dominio público.

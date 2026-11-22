@@ -100,4 +100,22 @@ async function findNextProposed(absenceId) {
   return rows.find((row) => row.status === 'proposed') || null;
 }
 
-module.exports = { saveRound, findLatestRound, markStatus, findMissedUserIds, findNextProposed };
+// Admin eliminó la cuenta: fuera las sugerencias que la nombran. Devuelve cuántas.
+async function deleteByCrewUser(crewUserId) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM public.replacement_suggestions
+     WHERE crew_user_id = $1`,
+    [crewUserId]
+  );
+
+  return rowCount;
+}
+
+module.exports = {
+  saveRound,
+  findLatestRound,
+  markStatus,
+  findMissedUserIds,
+  findNextProposed,
+  deleteByCrewUser,
+};

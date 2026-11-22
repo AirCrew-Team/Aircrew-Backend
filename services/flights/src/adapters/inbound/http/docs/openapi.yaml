@@ -430,8 +430,8 @@ paths:
               properties:
                 flight_number: { type: string, example: AC101, description: Se guarda en mayúsculas y debe ser único. }
                 aircraft_id: { type: string, format: uuid }
-                origin: { type: string, example: BOG }
-                destination: { type: string, example: MDE }
+                origin: { type: string, example: JFK }
+                destination: { type: string, example: LAX }
                 departure_at: { type: string, format: date-time, example: '2026-11-20T13:00:00Z', description: ISO-8601 con zona horaria (Z o ±hh:mm). }
                 arrival_at: { type: string, format: date-time, example: '2026-11-20T14:05:00Z', description: Debe ser posterior a departure_at. }
                 status: { $ref: '#/components/schemas/FlightStatus' }
@@ -724,7 +724,8 @@ paths:
         Con `?replacement=true&acknowledged=false` devuelve los reemplazos que todavía debe confirmar.
         Historial: `?status=completed` (ya aterrizó) o `?status=upcoming`. Por fecha: `?month=AAAA-MM`
         o `?from=&to=`. Cada vuelo trae scope (domestic/international), block_minutes, ciudades y
-        zona horaria del origen.
+        zona horaria del origen. scope es domestic solo si los dos aeropuertos están en el catálogo
+        con país US; uno que no está cuenta como international.
       security:
         - bearerAuth: []
       responses:
@@ -758,6 +759,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /internal/users/{userId}/assignments:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: liberar las asignaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`). Borra todas las
+        asignaciones de la persona, en una transacción. En los vuelos que aún no salen (ni cancelados
+        ni terminados), un puesto que ocupaba queda vacante, se devuelve en `vacated_flights` y la
+        tripulación del vuelo deja de estar confirmada para que el supervisor pueda cubrirlo. Si era un
+        reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado (`restored`), como cuando
+        vence el plazo. Repetirlo no falla: devuelve 0. El gateway responde 404 a `/api/flights/internal/*`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Asignaciones liberadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Asignaciones borradas (futuras y pasadas). }
+                  restored: { type: integer, description: Puestos devueltos a quien había reemplazado. }
+                  vacated_flights:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        flight_id: { type: string, format: uuid }
+                        flight_number: { type: string, example: DL1102 }
+                        origin: { type: string, example: JFK }
+                        destination: { type: string, example: LAX }
+                        departure_at: { type: string, format: date-time }
+                        slot_id: { type: string, nullable: true, example: fa-1 }
+                        role: { type: string, example: flight_attendant }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
 components:
   securitySchemes:
@@ -823,8 +865,8 @@ components:
           properties:
             id: { type: string, format: uuid }
             flight_number: { type: string, example: AC101 }
-            origin: { type: string, example: BOG }
-            destination: { type: string, example: MDE }
+            origin: { type: string, example: JFK }
+            destination: { type: string, example: LAX }
             departure_at: { type: string, format: date-time }
             arrival_at: { type: string, format: date-time }
             status: { $ref: '#/components/schemas/FlightStatus' }
@@ -833,7 +875,7 @@ components:
           properties:
             id: { type: string, format: uuid }
             name: { type: string, example: Airbus A320 }
-            registration: { type: string, example: HK-5000 }
+            registration: { type: string, example: N321AC }
     AircraftStatus:
       type: string
       description: operating (Operativa) o maintenance (En mantenimiento).
@@ -923,10 +965,13 @@ components:
         status: { $ref: '#/components/schemas/FlightStatus' }
         gate: { type: string, nullable: true, example: A12 }
         aircraft_family: { type: string, nullable: true, example: A320 }
-        scope: { type: string, enum: [domestic, international] }
-        origin_city: { type: string, nullable: true, example: Bogotá }
+        scope:
+          type: string
+          enum: [domestic, international]
+          description: domestic solo si origen y destino están en public.airports con país US; un aeropuerto desconocido cuenta como international.
+        origin_city: { type: string, nullable: true, example: Nueva York }
         destination_city: { type: string, nullable: true, example: Miami }
-        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+        origin_name: { type: string, nullable: true, example: John F. Kennedy International }
         destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

@@ -6,6 +6,8 @@ module.exports = {
   port: Number(process.env.PORT) || 3004,
   jwtSecret: process.env.JWT_SECRET,
   jwtIssuer: process.env.JWT_ISSUER || 'aircrew-admin',
+  // Preferencias de notificaciones de cada persona (GET /users/me con su token).
+  adminServiceUrl: process.env.ADMIN_SERVICE_URL || 'http://localhost:3005',
   // Historial de la campana (database/notification_db.sql).
   DataBase: {
     host: process.env.DB_HOST || 'localhost',

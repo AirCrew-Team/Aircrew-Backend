@@ -1,3 +1,4 @@
+const { MAX_MONTH_FLIGHT_HOURS } = require('@vuelos/shared');
 const { qualificationRule } = require('./qualificationRule');
 const {
   durationHours,
@@ -15,7 +16,8 @@ const {
 // - memberAssignments son los vuelos activos del tripulante cerca de la fecha.
 
 const MIN_REST_HOURS = 10;
-const MAX_MONTH_HOURS = 90;
+// 14 CFR 117.23: el mismo tope que muestra Mis Vuelos (crew).
+const MAX_MONTH_HOURS = MAX_MONTH_FLIGHT_HOURS;
 const MIN_INTERNATIONAL_ENGLISH = 4;
 const PILOT_RANKS = ['captain', 'first_officer'];
 const AVAILABLE_STATUSES = ['available', 'on_duty'];
@@ -98,11 +100,11 @@ const restRule = {
   },
 };
 
-// 5. No supera 90 h de vuelo en el mes contando este vuelo.
+// 5. No supera 100 h de vuelo en el mes (local de su base) contando este vuelo.
 const monthHoursRule = {
   name: 'month_hours',
-  check({ flight, memberAssignments }) {
-    const total = monthHours(flight, memberAssignments) + durationHours(flight);
+  check({ member, flight, memberAssignments }) {
+    const total = monthHours(flight, memberAssignments, member.base_code) + durationHours(flight);
     return total > MAX_MONTH_HOURS
       ? `Superaría ${MAX_MONTH_HOURS} h de vuelo en el mes (${Math.round(total)} h).`
       : null;

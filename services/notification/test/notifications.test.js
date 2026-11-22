@@ -181,7 +181,8 @@ test('la campana: lista con no leídos, marcar uno (solo los propios) y marcar t
   const list = await manage.listMine(user, {});
   assert.equal(list.unread_count, 1);
   assert.equal(list.items[0].read, false);
-  assert.deepEqual(calls[0], ['find', user, { limit: 20 }]);
+  // Sin lector de preferencias no se excluye ningún tipo.
+  assert.deepEqual(calls[0], ['find', user, { limit: 20, excludeTypes: [] }]);
 
   assert.equal((await manage.markRead(user, NOTIFICATION_ID)).read, true);
   await assert.rejects(manage.markRead({ id: OTHER_ID, role: 'crew' }, NOTIFICATION_ID), (error) => error.status === 404);

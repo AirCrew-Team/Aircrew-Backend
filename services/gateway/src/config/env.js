@@ -13,6 +13,8 @@ module.exports = {
   port: Number(process.env.PORT) || 3000,
   // Orígenes del frontend que pueden llamar al backend desde el navegador.
   corsOrigins: parseList(process.env.CORS_ORIGINS, 'http://localhost:5173'),
+  // Swagger de los servicios a través del gateway: cerrado salvo DOCS_PUBLIC=true.
+  docsPublic: process.env.DOCS_PUBLIC === 'true',
   services: {
     admin: process.env.ADMIN_SERVICE_URL || 'http://localhost:3005',
     crew: process.env.CREW_SERVICE_URL || 'http://localhost:3002',

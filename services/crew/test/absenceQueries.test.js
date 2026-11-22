@@ -185,7 +185,7 @@ test('AU-B8: GET /absences/:id/attachment devuelve los bytes con su Content-Type
   assert.equal(response.headers.get('content-type'), 'application/pdf');
   assert.equal(
     response.headers.get('content-disposition'),
-    'attachment; filename="comprobante.pdf"'
+    "attachment; filename=\"comprobante.pdf\"; filename*=UTF-8''comprobante.pdf"
   );
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   // Documentos médicos: ni el navegador ni un proxy los guardan.
@@ -206,7 +206,7 @@ test('AU-B8: el nombre del archivo sale saneado: sin rutas, comillas, saltos de 
   assert.equal(response.headers.get('content-type'), 'image/png');
   assert.equal(
     response.headers.get('content-disposition'),
-    'attachment; filename="informe medico_.png"'
+    "attachment; filename=\"informe medico_.png\"; filename*=UTF-8''informe%20m%C3%A9dico%E2%9C%88.png"
   );
 });
 
@@ -215,7 +215,45 @@ test('AU-B8: un nombre que queda vacío al sanearlo se descarga como «comproban
     [ABSENCE_ID]: { file_name: '""', mime_type: 'application/pdf', data: PDF },
   });
 
-  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="comprobante"');
+  assert.equal(
+    response.headers.get('content-disposition'),
+    "attachment; filename=\"comprobante\"; filename*=UTF-8''comprobante"
+  );
+});
+
+// RFC 6266: filename (ASCII, para clientes antiguos) y filename* en UTF-8,
+// que los navegadores prefieren y conserva las tildes.
+test('F11b: la descarga conserva las tildes en filename* (UTF-8)', async () => {
+  const { response } = await download({
+    [ABSENCE_ID]: { file_name: 'Dr. Pérez.pdf', mime_type: 'application/pdf', data: PDF },
+  });
+
+  const header = response.headers.get('content-disposition');
+  assert.equal(header, "attachment; filename=\"Dr. Perez.pdf\"; filename*=UTF-8''Dr.%20P%C3%A9rez.pdf");
+  assert.equal(decodeURIComponent(header.split("UTF-8''")[1]), 'Dr. Pérez.pdf');
+});
+
+test("F11b: filename* también escapa ' ( ) y *, que RFC 5987 no admite sin codificar", async () => {
+  const { response } = await download({
+    [ABSENCE_ID]: { file_name: "Copia (2) d'Ana*.pdf", mime_type: 'application/pdf', data: PDF },
+  });
+
+  assert.equal(
+    response.headers.get('content-disposition'),
+    "attachment; filename=\"Copia (2) d'Ana*.pdf\"; filename*=UTF-8''Copia%20%282%29%20d%27Ana%2A.pdf"
+  );
+});
+
+test('F11b: un nombre con un carácter UTF-16 suelto se descarga igual (sin 500)', async () => {
+  const { response } = await download({
+    [ABSENCE_ID]: { file_name: '\uD800x.pdf', mime_type: 'application/pdf', data: PDF },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get('content-disposition'),
+    "attachment; filename=\"_x.pdf\"; filename*=UTF-8''%EF%BF%BDx.pdf"
+  );
 });
 
 for (const [label, attachments, id] of [

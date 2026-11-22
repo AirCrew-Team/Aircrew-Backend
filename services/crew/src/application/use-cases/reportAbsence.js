@@ -1,3 +1,4 @@
+const { hubTimezone } = require('@vuelos/shared');
 const {
   createAbsence,
   createFlightAbsence,
@@ -22,6 +23,7 @@ function createReportAbsence({
   notificationClient,
   flightsClient,
   recommendationClient,
+  findCrewMemberByUserId = async () => null,
   now = () => new Date(),
 }) {
   // Primer evento de la línea de tiempo y búsqueda de reemplazos (sin esperar).
@@ -75,13 +77,18 @@ function createReportAbsence({
     // Todo se valida antes de abrir la transacción.
     const absence = createAbsence({ startDate, endDate, reason, notes, attachment }, now());
 
-    // Vuelos del tripulante en esas fechas. Si Flights no responde, la ausencia se
-    // guarda igual (el comprobante no se pierde) y queda sin solicitudes de reemplazo.
+    // Vuelos del tripulante en esas fechas, en los días de la zona de su base. Si
+    // Flights no responde, la ausencia se guarda igual (el comprobante no se pierde)
+    // y queda sin solicitudes de reemplazo.
     let affected = [];
     if (flightsClient) {
       try {
-        const assignments = await flightsClient.getMyAssignments(authorization);
-        affected = flightsWithinDates(assignments, absence.startDate, absence.endDate, now());
+        const [assignments, member] = await Promise.all([
+          flightsClient.getMyAssignments(authorization),
+          findCrewMemberByUserId(user.id),
+        ]);
+        const zone = hubTimezone(member && member.base);
+        affected = flightsWithinDates(assignments, absence.startDate, absence.endDate, now(), zone);
       } catch (error) {
         console.error(`[crew] Ausencia por fechas sin solicitudes de reemplazo: ${error.message}`);
       }

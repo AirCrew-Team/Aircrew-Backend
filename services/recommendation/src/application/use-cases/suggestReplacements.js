@@ -91,7 +91,7 @@ function createSuggestReplacements({
     let ranked = null;
     let audit;
     try {
-      if (!ai.isEnabled()) throw new Error('La IA está desactivada (AI_ENABLED=false).');
+      if (!ai.isEnabled()) throw new Error(ai.disabledReason);
       const result = await ai.decide({
         system: REPLACEMENT_SYSTEM_PROMPT,
         data: request,
@@ -116,8 +116,9 @@ function createSuggestReplacements({
 
     if (!ranked) {
       await report(absence, 'error', 0);
+      // Si la IA está apagada, el error dice por qué (p. ej. falta el token).
       throw new DomainError(
-        'La IA no pudo proponer candidatos. Intenta de nuevo en unos minutos.',
+        ai.isEnabled() ? 'La IA no pudo proponer candidatos. Intenta de nuevo en unos minutos.' : ai.disabledReason,
         503,
         { code: 'ai_unavailable' }
       );

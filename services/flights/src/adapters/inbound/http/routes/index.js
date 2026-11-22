@@ -5,6 +5,7 @@ const flightRoutes = require('./flight.routes');
 const aircraftRoutes = require('./aircraft.routes');
 const airportRoutes = require('./airport.routes');
 const assignmentRoutes = require('./assignment.routes');
+const internalRoutes = require('./internal.routes');
 
 const router = express.Router();
 
@@ -14,5 +15,7 @@ router.use('/flights', flightRoutes);
 router.use('/aircraft', aircraftRoutes);
 router.use('/airports', airportRoutes);
 router.use('/assignments', assignmentRoutes);
+// Solo para otros servicios (token de servicio).
+router.use('/internal', internalRoutes);
 
 module.exports = router;

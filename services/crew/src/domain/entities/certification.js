@@ -191,6 +191,19 @@ function compareForList(a, b) {
   );
 }
 
+// Nombre de cada certificado del tripulante (GET /certifications/me, que no
+// puede pedir el catálogo). is_license: licencia (ATP, CPL, PPL o CDP); el
+// resto son habilitaciones o cursos.
+function certificateDetails(codes) {
+  return codes
+    .map((code) => CERTIFICATES.find((certificate) => certificate.code === code))
+    .filter(Boolean)
+    .map((certificate) => ({
+      ...certificate,
+      is_license: PILOT_LICENSES.includes(certificate.code) || certificate.code === CABIN_LICENSE,
+    }));
+}
+
 // Catálogo para el formulario: certificados y los que permite cada cargo.
 function certificationOptions() {
   return {
@@ -218,4 +231,5 @@ module.exports = {
   matchesSearch,
   compareForList,
   certificationOptions,
+  certificateDetails,
 };

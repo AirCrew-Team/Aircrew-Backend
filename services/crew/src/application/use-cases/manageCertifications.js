@@ -9,6 +9,7 @@ const {
   matchesSearch,
   compareForList,
   certificationOptions,
+  certificateDetails,
 } = require('../../domain/entities/certification');
 const { parseCertificateFile } = require('../../domain/value-objects/certificateFile');
 const { DomainError } = require('../../domain/errors');
@@ -218,6 +219,38 @@ function createManageCertifications({
     }
   }
 
+  // La del tripulante que inició sesión (GET /certifications/me). Sin nombre ni
+  // correo (salen de su sesión) y sin historial, que lleva datos del super_admin.
+  // El único vencimiento con fecha es el del certificado médico del perfil.
+  async function getMyCertification(user) {
+    const record = await certificationRepository.findCrewCertification(user.id);
+
+    if (!record) {
+      throw new DomainError('No tienes un perfil de tripulante.', 404);
+    }
+
+    const { member, certification } = record;
+    const info = positionInfo(member.position);
+    const certificates = certification ? certification.certificates : [];
+
+    return {
+      user_id: member.user_id,
+      employee_code: member.employee_code,
+      position: member.position,
+      area: info ? info.area : null,
+      base: member.base,
+      status: certificationStatus(certification),
+      license_number: certification ? certification.license_number : null,
+      certificates,
+      certificate_details: certificateDetails(certificates),
+      file: certification ? certification.file : null,
+      updated_at: certification ? certification.updated_at : null,
+      medical_expires_on: member.medical_expires_on,
+      ratings: member.ratings,
+      english_level: member.english_level,
+    };
+  }
+
   async function getCertificationFile(crewUserId) {
     const record = await findRecord(crewUserId);
     const file = record.certification
@@ -237,6 +270,7 @@ function createManageCertifications({
     getCertificationStats,
     listUncertifiedCrew,
     getCertification,
+    getMyCertification,
     saveCertification,
     deleteCertification,
     getCertificationFile,

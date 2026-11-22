@@ -287,3 +287,9 @@ test('AC-B2 (ruta): /auth/activate/check es pública y sin token responde 400 co
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('B4: el mensaje de token de activación inválido sale de un único sitio del dominio', () => {
+  const { MESSAGES } = require('../src/domain/activation');
+
+  assert.equal(MESSAGES.invalidToken, INVALID_TOKEN_MESSAGE);
+});

@@ -17,31 +17,34 @@ async function insertNotification({ userId = null, audienceRole = null, type, me
 }
 
 // Los avisos que ve una persona, los más recientes primero, con su read_at.
-async function findVisible(viewer, { limit }) {
+// excludeTypes: tipos que apagó en sus preferencias (con [] no se excluye nada).
+async function findVisible(viewer, { limit, excludeTypes = [] }) {
   const { rows } = await pool.query(
     `SELECT n.id, n.type, n.message, n.data, r.read_at, n.created_at
      FROM public.notifications n
      LEFT JOIN public.notification_reads r
        ON r.notification_id = n.id AND r.user_id = $1
      WHERE ${visibleTo}
+       AND n.type <> ALL($4::text[])
      ORDER BY n.created_at DESC
      LIMIT $3`,
-    [viewer.id, viewer.role, limit]
+    [viewer.id, viewer.role, limit, excludeTypes]
   );
 
   return rows;
 }
 
-async function countUnread(viewer) {
+async function countUnread(viewer, { excludeTypes = [] } = {}) {
   const { rows } = await pool.query(
     `SELECT count(*)::int AS unread
      FROM public.notifications n
      WHERE ${visibleTo}
+       AND n.type <> ALL($3::text[])
        AND NOT EXISTS (
          SELECT 1 FROM public.notification_reads r
          WHERE r.notification_id = n.id AND r.user_id = $1
        )`,
-    [viewer.id, viewer.role]
+    [viewer.id, viewer.role, excludeTypes]
   );
 
   return rows[0].unread;
@@ -89,4 +92,33 @@ async function markAllRead(viewer) {
   return rowCount;
 }
 
-module.exports = { insertNotification, findVisible, countUnread, markRead, markAllRead };
+// Admin eliminó la cuenta: fuera sus avisos personales (con sus lecturas, por la
+// llave foránea) y sus lecturas de las alertas del rol. Las alertas del rol se quedan:
+// son de todos los supervisores. Devuelve cuántos de cada uno.
+async function deleteForUser(userId) {
+  const { rows } = await pool.query(
+    `WITH reads AS (
+       DELETE FROM public.notification_reads
+       WHERE user_id = $1
+       RETURNING 1
+     ), own AS (
+       DELETE FROM public.notifications
+       WHERE user_id = $1
+       RETURNING 1
+     )
+     SELECT (SELECT count(*) FROM own)::int AS notifications,
+            (SELECT count(*) FROM reads)::int AS reads`,
+    [userId]
+  );
+
+  return { deleted: rows[0].notifications, reads_deleted: rows[0].reads };
+}
+
+module.exports = {
+  insertNotification,
+  findVisible,
+  countUnread,
+  markRead,
+  markAllRead,
+  deleteForUser,
+};

@@ -256,6 +256,71 @@ async function countPasswordResetEvents({ userId, event, since }, db = pool) {
   return rows[0].count;
 }
 
+// Contraseña actual incorrecta en el cambio con sesión: un evento 'change_failed'.
+// Con el pool: el fallo no abre una transacción ni bloquea la cuenta. Se registra
+// antes de comparar (cuenta para el límite enseguida) y devuelve su id para borrarlo
+// si la contraseña resulta correcta.
+async function recordPasswordChangeFailure(userId) {
+  const { rows } = await pool.query(
+    `INSERT INTO public.password_reset_events (user_id, event)
+     VALUES ($1, 'change_failed')
+     RETURNING id`,
+    [userId]
+  );
+
+  return rows[0].id;
+}
+
+// Borra un intento registrado con recordPasswordChangeFailure (solo si es change_failed).
+async function deletePasswordChangeFailure(id) {
+  await pool.query(
+    `DELETE FROM public.password_reset_events
+     WHERE id = $1
+       AND event = 'change_failed'`,
+    [id]
+  );
+}
+
+// Fallos de login de un correo (ya normalizado) posteriores a `since`.
+async function countLoginFailures({ email, since }) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM public.login_failures
+     WHERE email = $1
+       AND created_at > $2`,
+    [email, since]
+  );
+
+  return rows[0].count;
+}
+
+// Un intento de login por correo, aunque la cuenta no exista. Se registra antes de
+// comparar y devuelve su id para borrarlo si no era un fallo. En la misma sentencia
+// se purgan los fallos de más de 1 día (índice por created_at): la tabla no crece.
+async function recordLoginFailure(email) {
+  const { rows } = await pool.query(
+    `WITH purged AS (
+       DELETE FROM public.login_failures
+       WHERE created_at < NOW() - INTERVAL '1 day'
+     )
+     INSERT INTO public.login_failures (email)
+     VALUES ($1)
+     RETURNING id`,
+    [email]
+  );
+
+  return rows[0].id;
+}
+
+// Borra un intento registrado con recordLoginFailure.
+async function deleteLoginFailure(id) {
+  await pool.query(
+    `DELETE FROM public.login_failures
+     WHERE id = $1`,
+    [id]
+  );
+}
+
 // Ejecuta fn(locked) en una transacción con la fila de la cuenta bloqueada (FOR UPDATE).
 // Otra solicitud de la misma cuenta espera al COMMIT y ya ve el evento guardado.
 // `locked` cuenta y guarda con el cliente de esa transacción.
@@ -563,7 +628,66 @@ async function deletePhoto(userId) {
   return rowCount > 0;
 }
 
+// super_admin activos sin contar esta cuenta: no se elimina al último.
+async function countActiveSuperAdminsExcept(id) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count
+     FROM public.users
+     WHERE role = 'super_admin' AND is_active AND id <> $1`,
+    [id]
+  );
+
+  return rows[0].count;
+}
+
+// Eliminar la cuenta de forma definitiva (después de borrar sus datos en los demás
+// servicios). Su foto y sus eventos de contraseña se van con ella (ON DELETE CASCADE);
+// sus fallos de login, por su correo. Con la fila se van los enlaces de invitación y
+// de recuperación. El bloqueo evita que dos super_admin se eliminen el uno al otro a
+// la vez y quede ninguno. Devuelve 'deleted', 'not_found' o 'last_super_admin'.
+async function deleteUser(id) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [73184220]);
+
+    const { rows: found } = await client.query(
+      `SELECT role,
+              (SELECT count(*)::int FROM public.users
+               WHERE role = 'super_admin' AND is_active AND id <> $1) AS others
+       FROM public.users
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+
+    if (!found[0] || (found[0].role === 'super_admin' && found[0].others === 0)) {
+      await client.query('ROLLBACK');
+      return found[0] ? 'last_super_admin' : 'not_found';
+    }
+
+    const { rows: deleted } = await client.query(
+      `DELETE FROM public.users
+       WHERE id = $1
+       RETURNING email`,
+      [id]
+    );
+    await client.query('DELETE FROM public.login_failures WHERE email = $1', [deleted[0].email]);
+    await client.query('COMMIT');
+
+    return 'deleted';
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  countActiveSuperAdminsExcept,
+  deleteUser,
   findUserDetailById,
   findProfileById,
   updateProfile,
@@ -584,6 +708,11 @@ module.exports = {
   withPasswordResetLock,
   findPasswordHash,
   countPasswordResetEvents,
+  recordPasswordChangeFailure,
+  deletePasswordChangeFailure,
+  countLoginFailures,
+  recordLoginFailure,
+  deleteLoginFailure,
   findByPasswordResetToken,
   resetPasswordByToken,
   createFirstSuperAdmin,

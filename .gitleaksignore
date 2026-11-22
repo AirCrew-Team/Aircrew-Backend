@@ -1,0 +1,4 @@
+# Falsos positivos en datos de prueba ya publicados (tokens inventados de tests del gateway).
+# El contenido actual ya no los tiene; se ignoran solo en el historial.
+376f4705f399ae1edc138db7e6d649b528d0a4d2:services/gateway/test/sessionCheck.test.js:generic-api-key:145
+376f4705f399ae1edc138db7e6d649b528d0a4d2:services/gateway/test/sessionCheck.test.js:generic-api-key:356

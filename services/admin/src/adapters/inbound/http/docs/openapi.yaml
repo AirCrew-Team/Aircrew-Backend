@@ -57,9 +57,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthResult'
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Falta el email o la contraseña, o el email tiene más de 254 caracteres (no se cuenta ni se
+            guarda). `error`: «Se requieren email y password.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '401':
-          description: Credenciales inválidas o cuenta sin activar
+          description: |
+            Credenciales inválidas o cuenta sin activar. Cada 401 cuenta como un fallo del correo
+            (normalizado: sin espacios y en minúsculas), exista o no la cuenta. Sin cuenta, la contraseña
+            se compara igual contra un hash ficticio: tarda lo mismo exista o no.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            El correo ya tiene 5 fallos en los últimos 15 minutos: no se busca la cuenta ni se compara la
+            contraseña hasta que salgan de la ventana. Responde lo mismo exista o no la cuenta. Un login
+            correcto no borra los fallos anteriores. Cada intento se registra antes de comparar y cuenta
+            para el límite (más de 5 → 429), así que intentos simultáneos no pasan todos; el 429 no
+            queda registrado.
+            `error`: «Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -85,6 +105,10 @@ paths:
       description: |
         La cuenta del usuario del token. Sirve para restaurar la sesión al recargar la página.
         Un token emitido antes del último cambio de contraseña (con sesión o por recuperación) ya no vale.
+        El gateway llama a esta ruta antes de pasar cualquier petición con token (salvo `/api/admin/auth/*`)
+        y reenvía su 401 tal cual. Con la sesión anulada (cuenta inexistente o desactivada, o token anterior
+        al último cambio de contraseña) el 401 lleva `code: "session_revoked"`; con el token vencido,
+        `token_expired`; inválido, `invalid_token`; sin token, `auth_required`.
       security:
         - bearerAuth: []
       responses:
@@ -327,7 +351,10 @@ paths:
         `aircrew_token` nueva, igual que el login, con un token del mismo segundo del cambio o posterior.
         Comparte con la recuperación el límite de 3 cambios en 24 horas, así que
         tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día.
-        La contraseña actual se comprueba antes que el límite: con las dos condiciones responde 400.
+        La contraseña actual se comprueba antes que ese límite: con las dos condiciones responde 400.
+        Cada contraseña actual incorrecta se registra; con 5 en los últimos 15 minutos responde 429
+        antes de compararla. El intento se registra antes de comparar (cuenta para el límite aunque
+        lleguen varios a la vez) y se borra si la contraseña actual es correcta o si responde 429.
       security:
         - bearerAuth: []
       requestBody:
@@ -370,8 +397,11 @@ paths:
         '401': { $ref: '#/components/responses/SessionUnauthorized' }
         '429':
           description: |
-            La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas. La contraseña no cambia.
-            `error`: «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
+            Límite de la cuenta. La contraseña no cambia. `error` es uno de:
+            - 5 contraseñas actuales incorrectas en los últimos 15 minutos (no se compara la enviada):
+              «Demasiados intentos con una contraseña actual incorrecta. Espera unos minutos e intenta de nuevo.»
+            - 3 cambios en las últimas 24 horas:
+              «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -567,7 +597,7 @@ paths:
         `phone` se guarda sin espacios y debe cumplir `^\+?\d{7,15}$`. `residence` debe ser una ciudad de
         `GET /catalogs/us-cities`: se compara sin distinguir mayúsculas y se guarda con la forma del catálogo.
         `phone` y `residence` vacíos se guardan como `null`. `notifications` solo admite las claves del rol;
-        un super_admin no puede enviarlas (ni vacías ni `null`) y recibe `400`. Las preferencias se guardan, pero notification todavía no las aplica. Los datos laborales no se
+        un super_admin no puede enviarlas (ni vacías ni `null`) y recibe `400`. Notification las aplica al stream en vivo y a la campana (con hasta 60 s de caché). Los datos laborales no se
         cambian aquí. Responde lo mismo que `GET /users/me`.
       security:
         - bearerAuth: []
@@ -579,7 +609,7 @@ paths:
               type: object
               minProperties: 1
               properties:
-                phone: { type: string, nullable: true, example: '+57 300 123 4567' }
+                phone: { type: string, nullable: true, example: '+1 212 555 0123' }
                 residence: { type: string, nullable: true, example: 'Atlanta, GA' }
                 notifications: { $ref: '#/components/schemas/Notifications' }
       responses:
@@ -777,7 +807,7 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
     delete:
       tags: [Usuarios]
-      summary: Desactivar un usuario (solo super_admin)
+      summary: Desactivar un usuario (solo super_admin; para borrarlo, DELETE /users/{id}/permanent)
       description: |
         No borra el registro (ausencias y asignaciones guardan su id): lo deja con
         `is_active=false` y ya no puede iniciar sesión. Si es tripulante, su perfil en Crew
@@ -812,6 +842,71 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /users/{id}/permanent:
+    delete:
+      tags: [Usuarios]
+      summary: Eliminar un usuario definitivamente (solo super_admin)
+      description: |
+        Borra la cuenta y todo lo suyo, para cualquier rol y estado (activa, inactiva o con la
+        invitación pendiente). El correo queda libre y los enlaces de invitación y de recuperación
+        dejan de servir. `DELETE /users/{id}` sigue siendo «Desactivar».
+
+        Orden (cada paso es un borrado que se puede repetir):
+        1. flights: borra sus asignaciones. En los vuelos que aún no salen (ni cancelados ni
+           terminados), su puesto queda vacante y la tripulación deja de estar confirmada. Si era un
+           reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado y Crew devuelve esa
+           ausencia a la cola.
+        2. notification: una alerta `flight:slot_vacated` a los supervisores por cada puesto vacante
+           y después se borran sus avisos y sus lecturas.
+        3. recommendation: las sugerencias de la IA que lo nombran.
+        4. crew: perfil, certificación (con archivo e historial) y ausencias (con sus hijas,
+           comprobantes y eventos).
+        5. admin: la cuenta (con foto y eventos de contraseña) y sus fallos de login.
+
+        Si un servicio falla, responde 502 y la cuenta sigue existiendo: lo ya borrado no se deshace
+        y un reintento termina el borrado. En el reintento, `vacated_flights` sale vacío (Flights ya
+        liberó los puestos). Se conservan los registros de otras personas que lo nombran como
+        aprobador (`approved_by`, `approved_by_name`, `crew_confirmed_by`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Usuario eliminado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  vacated_flights:
+                    type: array
+                    description: Vuelos futuros donde su puesto quedó vacante en este intento.
+                    items: { $ref: '#/components/schemas/VacatedFlight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Usuario no encontrado («Usuario no encontrado.»)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            `code: cannot_delete_self` («No puedes eliminar tu propia cuenta.») o
+            `code: last_super_admin` («No se puede eliminar al último super_admin.»). No se borra nada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodedError' }
+        '502':
+          description: |
+            `code: user_delete_incomplete`. Un servicio no respondió; la cuenta sigue existiendo y se
+            puede reintentar. Por ejemplo: «No se pudo eliminar el usuario: el servicio de
+            recomendaciones no respondió. La cuenta sigue existiendo; vuelve a intentarlo.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodedError' }
 
   /users/{id}/resend-invitation:
     post:
@@ -894,48 +989,6 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /users/crew-registration:
-    post:
-      tags: [Interno]
-      summary: Crear cuenta pendiente de tripulante y enviar invitación
-      description: |
-        Lo llama Crew al registrar un tripulante. Crea la cuenta con rol `crew`, sin contraseña,
-        y envía el correo de activación con Resend, por SMTP o con Brevo, según `EMAIL_PROVIDER`.
-        Si el correo no se puede enviar, la cuenta pendiente se borra y se puede reintentar.
-      security:
-        - serviceKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name, email]
-              properties:
-                name: { type: string }
-                email: { type: string, format: email }
-      responses:
-        '201':
-          description: Cuenta pendiente creada y correo enviado
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/User' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/DuplicateEmail' }
-        '502':
-          description: |
-            No se pudo enviar el correo de invitación. El mensaje es genérico y el detalle
-            queda en el log del servicio. La cuenta pendiente se borra.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '503':
-          description: Falta configuración del correo o EMAIL_PROVIDER no es válido. La cuenta pendiente se borra.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-
   /catalogs/us-cities:
     get:
       tags: [Catálogos]
@@ -1009,12 +1062,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  unit: { type: string, example: Jefatura de Operaciones de Vuelo }
-                  hq_code: { type: string, example: BOG-HQ }
-                  base_name: { type: string, example: Base Eldorado }
-                  city: { type: string, example: Bogotá }
-                  iata: { type: string, example: BOG }
-                  icao: { type: string, example: SKBO }
+                  unit: { type: string, example: Operaciones de Vuelo Nueva York JFK }
+                  hq_code: { type: string, example: JFK-HQ }
+                  base_name: { type: string, example: John F. Kennedy International }
+                  city: { type: string, example: Nueva York }
+                  iata: { type: string, example: JFK }
+                  icao: { type: string, example: KJFK }
                   operational_condition: { type: string, enum: [normal, degraded, critical] }
         '404':
           description: 'El usuario no tiene base (code: no_base)'
@@ -1084,6 +1137,21 @@ components:
       type: object
       properties:
         error: { type: string }
+    CodedError:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+    VacatedFlight:
+      type: object
+      properties:
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
+        destination: { type: string, example: LAX }
+        departure_at: { type: string, format: date-time }
+        slot_id: { type: string, nullable: true, example: fa-1 }
+        role: { type: string, example: flight_attendant }
     UserSummary:
       type: object
       properties:
@@ -1106,8 +1174,8 @@ components:
         label: { type: string }
     CrewStatus:
       type: string
-      description: available (Disponible), on_duty (De guardia), in_flight (En vuelo) o medical_leave (Permiso médico).
-      enum: [available, on_duty, in_flight, medical_leave]
+      description: available (Disponible), on_duty (De guardia), in_flight (En vuelo), medical_leave (Permiso médico) o vacation (Vacaciones).
+      enum: [available, on_duty, in_flight, medical_leave, vacation]
     CrewProfileInput:
       type: object
       description: |
@@ -1184,7 +1252,7 @@ components:
           properties:
             is_active: { type: boolean }
             created_at: { type: string, format: date-time }
-            phone: { type: string, nullable: true, example: '+573001234567' }
+            phone: { type: string, nullable: true, example: '+12125550123' }
             residence: { type: string, nullable: true }
             password_changed_at: { type: string, format: date-time, nullable: true }
             photo_updated_at: { type: string, format: date-time, nullable: true }

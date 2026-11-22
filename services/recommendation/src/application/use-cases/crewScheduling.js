@@ -1,6 +1,5 @@
+const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
 const {
-  bogotaDate,
-  bogotaDayRange,
   monthWindowForDay,
   evaluateForSlot,
   buildPlannedFlight,
@@ -17,22 +16,19 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const basePattern = /^[A-Z]{3}$/;
 const MAX_DAYS = 14;
 
-// ?base=BOG: solo los vuelos que salen de esa base. Sin base, todos.
+// ?base=ATL: solo los vuelos que salen de esa base, y los días van en su zona
+// horaria. Sin base, todos los vuelos y los días de Nueva York.
 function parseBase(base) {
   if (base === undefined || base === '') return null;
   const code = String(base).toUpperCase();
   if (!basePattern.test(code)) {
-    throw new DomainError('base debe ser un código IATA de 3 letras, por ejemplo BOG.', 400, { field: 'base' });
+    throw new DomainError('base debe ser un código IATA de 3 letras, por ejemplo ATL.', 400, { field: 'base' });
   }
   return code;
 }
 
 function departingFrom(flights, base) {
   return base ? flights.filter((flight) => flight.origin === base) : flights;
-}
-
-function todayInBogota() {
-  return bogotaDate(new Date());
 }
 
 function addDays(date, days) {
@@ -53,13 +49,16 @@ function createCrewScheduling({
   ai,
   aiCallRepository,
   serviceAuthorization,
+  now = () => new Date(),
 }) {
+  // Un vuelo suelto se fecha en la zona de su aeropuerto de salida.
   async function loadPlan(flightId, authorization) {
     const plan = await flightsClient.getCrewPlan(flightId, authorization);
-    const date = bogotaDate(plan.departure_at);
+    const zone = hubTimezone(plan.origin);
+    const date = localDate(plan.departure_at, zone);
     const [members, assignments] = await Promise.all([
       crewClient.getCrewMembers(authorization),
-      flightsClient.getAssignments(monthWindowForDay(date), authorization),
+      flightsClient.getAssignments(monthWindowForDay(date, zone), authorization),
     ]);
     return { plan, members, assignments };
   }
@@ -78,7 +77,8 @@ function createCrewScheduling({
   // Resumen de los próximos días: cuántos vuelos y cuántos sin tripulación confirmada.
   async function getScheduleDays({ from, days, base } = {}, authorization) {
     const origin = parseBase(base);
-    const start = from || todayInBogota();
+    const zone = hubTimezone(origin);
+    const start = from || localDate(now(), zone);
     const count = days === undefined ? 7 : Number(days);
     if (!datePattern.test(start)) {
       throw new DomainError('from debe tener el formato AAAA-MM-DD.', 400, { field: 'from' });
@@ -89,13 +89,16 @@ function createCrewScheduling({
 
     const end = addDays(start, count);
     const flights = departingFrom(
-      await flightsClient.listFlights({ from: bogotaDayRange(start).from, to: bogotaDayRange(end).from }, authorization),
+      await flightsClient.listFlights(
+        { from: localDayRange(start, zone).from, to: localDayRange(end, zone).from },
+        authorization
+      ),
       origin
     );
 
     return Array.from({ length: count }, (_, index) => {
       const date = addDays(start, index);
-      const ofDay = flights.filter((flight) => bogotaDate(flight.departure_at) === date);
+      const ofDay = flights.filter((flight) => localDate(flight.departure_at, zone) === date);
       return {
         date,
         flight_count: ofDay.length,
@@ -107,15 +110,16 @@ function createCrewScheduling({
   // Vuelos de un día con sus puestos.
   async function getSchedule({ date, base } = {}, authorization) {
     const origin = parseBase(base);
-    const day = date || todayInBogota();
+    const zone = hubTimezone(origin);
+    const day = date || localDate(now(), zone);
     if (!datePattern.test(day)) {
       throw new DomainError('date debe tener el formato AAAA-MM-DD.', 400, { field: 'date' });
     }
 
-    const flights = departingFrom(await flightsClient.listFlights(bogotaDayRange(day), authorization), origin);
+    const flights = departingFrom(await flightsClient.listFlights(localDayRange(day, zone), authorization), origin);
     const [members, assignments] = await Promise.all([
       crewClient.getCrewMembers(authorization),
-      flightsClient.getAssignments(monthWindowForDay(day), authorization),
+      flightsClient.getAssignments(monthWindowForDay(day, zone), authorization),
     ]);
 
     return flights.map((flight) => {
@@ -130,7 +134,8 @@ function createCrewScheduling({
       return buildPlannedFlight(
         { ...flight, crew_status: crewStatus, assignments: onFlight },
         members,
-        assignments
+        assignments,
+        zone
       );
     });
   }
@@ -244,7 +249,7 @@ function createCrewScheduling({
     }
 
     try {
-      if (!ai.isEnabled()) throw new Error('La IA está desactivada (AI_ENABLED=false).');
+      if (!ai.isEnabled()) throw new Error(ai.disabledReason);
       const result = await ai.decide({
         system: SCHEDULE_SYSTEM_PROMPT,
         data: request,
@@ -268,8 +273,9 @@ function createCrewScheduling({
     await aiCallRepository.saveAiCall({ kind: 'schedule', subjectId: plan.id, request, ...audit });
 
     if (chosen.size === 0) {
+      // Si la IA está apagada, el error dice por qué (p. ej. falta el token).
       throw new DomainError(
-        'La IA no pudo sugerir la tripulación. Intenta de nuevo en unos minutos.',
+        ai.isEnabled() ? 'La IA no pudo sugerir la tripulación. Intenta de nuevo en unos minutos.' : ai.disabledReason,
         503,
         { code: 'ai_unavailable' }
       );

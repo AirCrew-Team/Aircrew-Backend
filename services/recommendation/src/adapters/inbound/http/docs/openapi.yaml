@@ -11,7 +11,8 @@ info:
     2. **Reglas (código):** se descarta a quien no cumple alguna de las 8 reglas: rango del puesto,
        habilitación en la familia del avión, certificado médico vigente, disponibilidad
        (no ausente, incapacitado ni de vacaciones), sin vuelos que se crucen, 10 h de descanso,
-       máximo 90 h de vuelo en el mes e inglés OACI 4 para pilotos en vuelos internacionales.
+       máximo 100 h de vuelo en el mes local de su base (14 CFR 117.23, el mismo tope de Mis Vuelos)
+       e inglés OACI 4 para pilotos en vuelos internacionales.
     3. **Prioridad:** de guardia en la base de salida → libre en la base → otra base (si alcanza a llegar).
     4. **IA (Claude):** ordena de 3 a 5 candidatos y explica en español por qué. Proveedor
        configurable: Claude Code (`AI_PROVIDER=claude_code`, suscripción) o la API (`AI_PROVIDER=api`).
@@ -78,11 +79,12 @@ paths:
       description: |
         Vuelve a aplicar las reglas y la IA con datos frescos y devuelve los candidatos nuevos
         (mismo formato que GET /candidates). Quien ya dejó vencer su plazo no se vuelve a proponer.
-        Responde 503 con code ai_unavailable si la IA no responde.
+        Responde 503 con code ai_unavailable si la IA no responde o no está configurada
+        (p. ej. «La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.»).
         Con Claude Code puede tardar entre 10 y 40 segundos.
 
         **reason** (opcional, máx. 300 caracteres): preferencia del supervisor, por ejemplo
-        «Preferir a alguien con experiencia en la ruta BOG-MIA». Se le pasa a Claude como dato,
+        «Preferir a alguien con experiencia en la ruta JFK-LAX». Se le pasa a Claude como dato,
         solo para ordenar y explicar: las 8 reglas se aplican antes y no se las puede saltar.
         El rationale de cada candidato dice cómo se tuvo en cuenta. Queda guardado con la ronda
         y se devuelve en `reason`. Vacío o ausente: busca igual que siempre.
@@ -97,7 +99,7 @@ paths:
             schema:
               type: object
               properties:
-                reason: { type: string, maxLength: 300, example: Preferir a alguien con experiencia en la ruta BOG-MIA }
+                reason: { type: string, maxLength: 300, example: Preferir a alguien con experiencia en la ruta JFK-LAX }
       responses:
         '200':
           description: Candidatos de la nueva ronda
@@ -191,7 +193,7 @@ paths:
       parameters:
         - name: from
           in: query
-          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          description: AAAA-MM-DD. Por defecto, hoy en la zona de la base (sin base, Nueva York).
           schema: { type: string, example: '2026-11-19' }
         - name: days
           in: query
@@ -199,8 +201,8 @@ paths:
           schema: { type: integer, example: 7 }
         - name: base
           in: query
-          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
-          schema: { type: string, example: BOG }
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí, por días de su zona horaria. Sin base, todos y los días de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Un elemento por día
@@ -225,12 +227,12 @@ paths:
       parameters:
         - name: date
           in: query
-          description: AAAA-MM-DD (hora de Colombia). Por defecto, hoy.
+          description: AAAA-MM-DD, día local de la base (sin base, Nueva York). Por defecto, hoy.
           schema: { type: string, example: '2026-11-20' }
         - name: base
           in: query
-          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
-          schema: { type: string, example: BOG }
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí, por días de su zona horaria. Sin base, todos y los días de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Vuelos programados
@@ -381,7 +383,8 @@ paths:
       description: |
         Para cada puesto vacío: las 8 reglas filtran a los elegibles y Claude elige al mejor
         para cada puesto (sin repetir personas), buscando repartir la carga, cuidar el descanso
-        y equilibrar la experiencia. Si Claude no responde: 503 ai_unavailable. Cada asignación queda con
+        y equilibrar la experiencia. Si Claude no responde o la IA no está configurada: 503 ai_unavailable
+        (el mensaje dice qué falta). Cada asignación queda con
         `source` (ai o rule) y `rationale`. El vuelo **nunca se confirma solo**.
         Con Claude Code tarda entre 20 y 40 segundos.
       security:
@@ -441,6 +444,31 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /internal/users/{userId}/suggestions:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: borrar las sugerencias que nombran a una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`): borra las filas de
+        `replacement_suggestions` con ese `crew_user_id`. Repetirlo no falla: devuelve 0. El gateway
+        responde 404 a `/api/recommendation/internal/*`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Sugerencias borradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -474,8 +502,8 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-9344 }
-        origin: { type: string, example: BOG }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
         destination: { type: string, example: MIA }
         departure_at: { type: string, format: date-time }
         arrival_at: { type: string, format: date-time }
@@ -489,14 +517,14 @@ components:
         full_name: { type: string, nullable: true, example: Andrés Gómez }
         employee_code: { type: string, example: EMP-021 }
         rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        base: { type: string, example: BOG }
+        base: { type: string, example: JFK }
         rank_position: { type: integer, example: 1, description: Lugar en la lista (1 = primera opción). }
         affinity: { type: integer, minimum: 0, maximum: 100, example: 96 }
         affinity_label: { type: string, enum: [optimal, high, acceptable], description: 'optimal ≥ 90, high 75–89, acceptable < 75' }
         checks:
           type: array
           items: { type: string }
-          example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', Margen de 90 h en el mes]
+          example: [Habilitado en A320, 'De guardia, a 12 min de la rampa', 10 h de margen este mes]
         rationale: { type: string, example: 'Es el más rápido en llegar: 12 min a la rampa frente a 174 min hasta la salida...' }
         source: { type: string, enum: [ai], description: 'Siempre ai: ordenado por Claude.' }
         status: { type: string, enum: [proposed, offered, missed, accepted, discarded] }
@@ -531,9 +559,9 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-4021 }
+        flight_number: { type: string, example: DL0044 }
         date: { type: string, example: '2026-11-20' }
-        origin: { type: object, properties: { code: { type: string, example: BOG }, city: { type: string, example: Bogotá } } }
+        origin: { type: object, properties: { code: { type: string, example: JFK }, city: { type: string, example: Nueva York } } }
         destination: { type: object, properties: { code: { type: string, example: MAD }, city: { type: string, example: Madrid } } }
         departure_at: { type: string, format: date-time }
         arrival_at: { type: string, format: date-time }

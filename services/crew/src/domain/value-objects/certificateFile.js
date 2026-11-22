@@ -1,9 +1,9 @@
 const { DomainError } = require('../errors');
+const { normalizeFileName } = require('./fileName');
 
 // Copia del certificado: PDF, PNG o JPG de hasta 5 MB (el mismo límite del
 // formulario), en base64 dentro del JSON, sin el prefijo data:.
 const MAX_CERTIFICATE_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_FILE_NAME_LENGTH = 255;
 const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
 
 // Primeros bytes y extensión de cada tipo permitido.
@@ -31,12 +31,6 @@ function parseCertificateFile(file) {
     );
   }
 
-  if (fileName.trim().length > MAX_FILE_NAME_LENGTH) {
-    throw new DomainError(
-      `El nombre del archivo puede tener máximo ${MAX_FILE_NAME_LENGTH} caracteres.`
-    );
-  }
-
   // Map: un tipo como «constructor» no encuentra nada heredado.
   const type = FILE_TYPES.get(mimeType);
   if (!type) {
@@ -57,12 +51,8 @@ function parseCertificateFile(file) {
     throw new DomainError('El archivo no coincide con el tipo indicado.');
   }
 
-  // La extensión sale del tipo comprobado: un PDF llamado «licencia.html» se
-  // descarga como licencia.pdf.
-  const baseName = fileName.trim().replace(/\.[^.]*$/, '').trim();
-
   return {
-    fileName: `${baseName || 'certificado'}${type.extension}`,
+    fileName: normalizeFileName(fileName, type.extension, 'certificado'),
     mimeType,
     sizeBytes: data.length,
     data,

@@ -90,7 +90,7 @@ test('los códigos se normalizan, sin repetidos y en el orden del catálogo', ()
 
 test('la copia: PDF, PNG o JPG de hasta 5 MB y del tipo indicado', () => {
   const file = parseCertificateFile(pdfFile('licencia.html'));
-  assert.equal(file.fileName, 'licencia.pdf');
+  assert.equal(file.fileName, 'licencia.html.pdf');
   assert.equal(file.sizeBytes, PDF.length);
 
   assert.throws(() => parseCertificateFile({ ...pdfFile(), mime_type: 'image/gif' }), /PDF, PNG o JPG/);
@@ -100,6 +100,21 @@ test('la copia: PDF, PNG o JPG de hasta 5 MB y del tipo indicado', () => {
     () => parseCertificateFile({ file_name: 'x.pdf', mime_type: 'application/pdf', data_base64: big.toString('base64') }),
     /supera los 5 MB/
   );
+});
+
+// Solo se quita una extensión conocida (.pdf, .png, .jpg, .jpeg) y se pone la
+// del tipo; la base se recorta para que el total no pase de 255 caracteres.
+test('el nombre de la copia conserva sus puntos y lleva la extensión del tipo', () => {
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]);
+  const jpegFile = (name) => ({ file_name: name, mime_type: 'image/jpeg', data_base64: JPEG.toString('base64') });
+
+  assert.equal(parseCertificateFile(pdfFile('Dr. Pérez.pdf')).fileName, 'Dr. Pérez.pdf');
+  assert.equal(parseCertificateFile(pdfFile('Dr. Pérez')).fileName, 'Dr. Pérez.pdf');
+  assert.equal(parseCertificateFile(jpegFile('foto.JPG')).fileName, 'foto.jpg');
+  assert.equal(parseCertificateFile(jpegFile('foto.jpeg')).fileName, 'foto.jpg');
+  assert.equal(parseCertificateFile(pdfFile('.pdf')).fileName, 'certificado.pdf');
+  assert.equal(parseCertificateFile(pdfFile('a'.repeat(300))).fileName, `${'a'.repeat(251)}.pdf`);
+  assert.equal(parseCertificateFile(pdfFile(`${'a'.repeat(300)}.PDF`)).fileName.length, 255);
 });
 
 test('historial: registrar, verificar y editar', () => {
@@ -374,4 +389,42 @@ test('si Notification falla, la certificación queda guardada igual', async (t) 
   await flush();
 
   assert.equal(detail.status, 'verified');
+});
+
+// ------------------------------------------------------------ descarga
+
+// App mínima con la ruta de descarga: las cabeceras pasan por el servidor
+// HTTP real de Node, que rechaza caracteres inválidos.
+async function downloadCertificate(file) {
+  const express = require('express');
+  const { once } = require('node:events');
+  const createCertificationController = require('../src/adapters/inbound/http/controllers/certification.controller');
+  const controller = createCertificationController({ getCertificationFile: async () => file });
+  const app = express();
+  app.get('/certifications/:userId/file', controller.downloadFile);
+  const server = app.listen(0);
+  await once(server, 'listening');
+  try {
+    return await fetch(`http://127.0.0.1:${server.address().port}/certifications/${PILOT_ID}/file`);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('F11b: la copia se descarga con filename ASCII y filename* UTF-8 con las tildes', async () => {
+  const response = await downloadCertificate({ file_name: 'Licencia Pérez (2).pdf', mime_type: 'application/pdf', data: PDF });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get('content-disposition'),
+    "attachment; filename=\"Licencia Perez (2).pdf\"; filename*=UTF-8''Licencia%20P%C3%A9rez%20%282%29.pdf"
+  );
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+});
+
+test('F11b: una copia cuyo nombre queda vacío se descarga como «certificado»', async () => {
+  const response = await downloadCertificate({ file_name: '""', mime_type: 'application/pdf', data: PDF });
+
+  assert.equal(response.headers.get('content-disposition'), "attachment; filename=\"certificado\"; filename*=UTF-8''certificado");
 });

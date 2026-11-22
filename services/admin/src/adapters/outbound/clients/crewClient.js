@@ -1,6 +1,7 @@
 const { crewServiceUrl, adminServiceKey } = require('../../../config/env');
 
-// Perfiles de tripulante en Crew (rutas /internal/crew-members, con x-service-key).
+// Perfiles de tripulante en Crew (rutas /internal/crew-members y /internal/users,
+// con x-service-key).
 // Los errores de datos de Crew (400, 404, 409) llegan tal cual a quien llamó;
 // si Crew no responde o falla, es 502.
 const PASSTHROUGH_STATUSES = [400, 404, 409];
@@ -22,7 +23,7 @@ async function request(path, { method = 'GET', body } = {}) {
   let response;
 
   try {
-    response = await fetch(`${crewServiceUrl}/internal/crew-members${path}`, {
+    response = await fetch(`${crewServiceUrl}/internal${path}`, {
       method,
       headers: {
         Accept: 'application/json',
@@ -55,23 +56,40 @@ async function request(path, { method = 'GET', body } = {}) {
 }
 
 function listProfiles() {
-  return request('');
+  return request('/crew-members');
 }
 
 function getProfile(userId) {
-  return request(`/${encodeURIComponent(userId)}`);
+  return request(`/crew-members/${encodeURIComponent(userId)}`);
 }
 
 function createProfile(profile) {
-  return request('', { method: 'POST', body: profile });
+  return request('/crew-members', { method: 'POST', body: profile });
 }
 
 function updateProfile(userId, changes) {
-  return request(`/${encodeURIComponent(userId)}`, { method: 'PATCH', body: changes });
+  return request(`/crew-members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: changes });
 }
 
 function deleteProfile(userId) {
-  return request(`/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  return request(`/crew-members/${encodeURIComponent(userId)}`, { method: 'DELETE' });
 }
 
-module.exports = { listProfiles, getProfile, createProfile, updateProfile, deleteProfile };
+// Al eliminar la cuenta: borra todo lo del tripulante. Repetirlo no falla. Aquí
+// cualquier error es 502: un 404 de Crew no debe llegar como «usuario no encontrado».
+async function eraseUser(userId) {
+  try {
+    return await request(`/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  } catch (error) {
+    throw error.status === 502 ? error : unavailable(error);
+  }
+}
+
+module.exports = {
+  listProfiles,
+  getProfile,
+  createProfile,
+  updateProfile,
+  deleteProfile,
+  eraseUser,
+};

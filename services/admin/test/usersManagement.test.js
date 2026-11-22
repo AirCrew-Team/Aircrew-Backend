@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 // Pantalla Usuarios del super_admin: todo entra por Admin. Admin crea la cuenta
 // de cualquier rol y, si es tripulante, le pide a Crew su perfil.
 
+// Antes de cargar src: config/env fija JWT_SECRET con el primer require (en CI
+// no hay .env).
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-de-prueba';
+
 const { createUser: buildUser } = require('../src/domain/entities/user');
 const { createCreateUser } = require('../src/application/use-cases/createUser');
 const createManageUsers = require('../src/application/use-cases/manageUsers');
@@ -106,7 +110,7 @@ test('un super_admin y un supervisor no tienen perfil de Crew', () => {
 
 // --------------------------------------------------------------- alta
 
-function setupCreate({ createError, crewError, sendError, deleteError } = {}) {
+function setupCreate({ createError, crewError, sendError, deleteError, deleteProfileError } = {}) {
   const steps = [];
   const userRepository = {
     async createPendingUser(data) {
@@ -137,6 +141,7 @@ function setupCreate({ createError, crewError, sendError, deleteError } = {}) {
     },
     async deleteProfile(id) {
       steps.push(['delete-crew-profile', id]);
+      if (deleteProfileError) throw deleteProfileError;
     },
   };
   const emailClient = {
@@ -185,6 +190,48 @@ test('si Crew rechaza el perfil, se borra la cuenta y no sale ningún correo', a
 
   await assert.rejects(createUser(crewInput()), (error) => error === crewError);
   assert.deepEqual(steps.map(([step]) => step), ['account', 'crew-profile', 'delete-account']);
+});
+
+// Un 502 de Crew es un resultado desconocido: pudo crear el perfil y cortarse
+// la respuesta (timeout). Al deshacer se intenta borrar también el perfil.
+test('si Crew responde 502 al crear el perfil, se intenta borrar el perfil y después la cuenta', async () => {
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({ crewError });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.deepEqual(steps.map(([step]) => step), [
+    'account',
+    'crew-profile',
+    'delete-crew-profile',
+    'delete-account',
+  ]);
+  assert.equal(steps[2][1], CREW_ID);
+});
+
+test('tras un 502 de Crew, un 404 al borrar el perfil (no llegó a crearse) no queda en el log', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({
+    crewError,
+    deleteProfileError: httpError(404, 'Tripulante no encontrado.'),
+  });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.deepEqual(steps.slice(-2).map(([step]) => step), ['delete-crew-profile', 'delete-account']);
+  assert.equal(log.mock.callCount(), 0);
+});
+
+test('tras un 502 de Crew, si el borrado del perfil también falla, queda en el log y llega el 502', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({
+    crewError,
+    deleteProfileError: httpError(502, 'No se pudo comunicar con el servicio de tripulación.'),
+  });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.equal(steps.at(-1)[0], 'delete-account');
+  assert.equal(log.mock.callCount(), 1);
 });
 
 test('si el correo falla, se borran el perfil de Crew y la cuenta, y llega el error del correo', async () => {
@@ -471,7 +518,6 @@ test('si Crew no responde, la ficha sale sin el perfil', async (t) => {
 test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y estados', async (t) => {
   const { once } = require('node:events');
   const jwt = require('jsonwebtoken');
-  process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-de-prueba';
   const app = require('../src/app');
   const tokenFor = (role) =>
     jwt.sign({ role }, process.env.JWT_SECRET, { subject: ADMIN_ID, issuer: 'aircrew-admin', expiresIn: '1h' });
@@ -495,12 +541,13 @@ test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y 
 
   const { status, body } = await get('super_admin');
   assert.equal(status, 200);
-  assert.equal(body.bases.length, 12); // 9 hubs de Delta + BOG, MDE y CLO (datos de demo)
+  assert.equal(body.bases.length, 9); // los 9 hubs de Delta (BE-4: fuera BOG, MDE y CLO)
   assert.deepEqual(body.bases[0], { code: 'ATL', label: 'Base ATL / Atlanta' });
   assert.deepEqual(body.crew_positions, ['Comandante', 'Copiloto', 'Auxiliar de Vuelo', 'Sobrecargo Principal', 'Sobrecargo']);
   assert.deepEqual(body.shifts.map((shift) => shift.code), ['morning', 'afternoon', 'night']);
   assert.equal(body.shifts[0].label, 'Turno 1 (mañana)');
-  assert.deepEqual(body.crew_statuses.map((item) => item.code), ['available', 'on_duty', 'in_flight', 'medical_leave']);
+  assert.deepEqual(body.crew_statuses.map((item) => item.code), ['available', 'on_duty', 'in_flight', 'medical_leave', 'vacation']);
+  assert.deepEqual(body.crew_statuses.at(-1), { code: 'vacation', label: 'Vacaciones' });
   assert.deepEqual(body.supervisor_statuses.map((item) => item.code), ['available', 'on_duty', 'off_duty', 'leave']);
 });
 

@@ -88,6 +88,18 @@ function createFakeRepository({ user, events = [], clock }) {
     calls,
     findPasswordHash,
     countPasswordResetEvents,
+    // BE-2: fallo de la contraseña actual (evento change_failed, con el pool). Revisión
+    // final: se registra antes de comparar (devuelve su id) y se borra si era correcta.
+    async recordPasswordChangeFailure(userId) {
+      calls.push('recordPasswordChangeFailure');
+      const id = `intento-${state.events.length + 1}-${Math.random()}`;
+      state.events.push({ id, userId, event: 'change_failed', createdAt: clock.now() });
+      return id;
+    },
+    async deletePasswordChangeFailure(id) {
+      calls.push('deletePasswordChangeFailure');
+      state.events = state.events.filter((event) => event.id !== id);
+    },
     async withPasswordResetLock(userId, fn) {
       calls.push('withPasswordResetLock');
       if (hold) {
@@ -285,9 +297,14 @@ test('CF-B3: bcrypt corre antes del bloqueo; con la cuenta bloqueada solo se rel
 
   await context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT });
 
+  // BE-2: antes de comparar se cuentan los fallos recientes (fuera del bloqueo). Revisión
+  // final: el intento se registra antes de contar y, con la contraseña correcta, se borra.
   assert.deepEqual(context.userRepository.calls, [
     'findPasswordHash',
+    'recordPasswordChangeFailure',
+    'countPasswordResetEvents',
     'compare',
+    'deletePasswordChangeFailure',
     'hash',
     'withPasswordResetLock',
     'findPasswordHash',
@@ -306,7 +323,14 @@ test('CF-B3: con la contraseña actual incorrecta no llega a bloquear la cuenta'
     }),
     rejectsWith(400, WRONG_MESSAGE)
   );
-  assert.deepEqual(context.userRepository.calls, ['findPasswordHash', 'compare']);
+  // BE-2 y revisión final: registra el intento, cuenta los fallos incluyéndolo y
+  // compara; con la contraseña incorrecta el registro se queda.
+  assert.deepEqual(context.userRepository.calls, [
+    'findPasswordHash',
+    'recordPasswordChangeFailure',
+    'countPasswordResetEvents',
+    'compare',
+  ]);
 });
 
 test('CF-B3: si la contraseña cambia mientras la petición espera el bloqueo, responde 400 y no guarda nada', async () => {
@@ -512,4 +536,123 @@ test('CF-B3 (HTTP): con 3 cambios en 24 h responde 429 con { error } y el mensaj
 
   assert.equal(res.statusCode, 429);
   assert.deepEqual(res.body, { error: CHANGES_MESSAGE });
+});
+
+// --- BE-2 (D2): 5 fallos de la contraseña actual en 15 min → 429 ---
+
+const FAILED_MESSAGE =
+  'Demasiados intentos con una contraseña actual incorrecta. Espera unos minutos e intenta de nuevo.';
+const WRONG_INPUT = { current_password: 'c'.repeat(12), new_password: NEXT };
+
+function failedEvents(count, ago) {
+  return Array.from({ length: count }, (_, index) => ({
+    userId: USER_ID,
+    event: 'change_failed',
+    createdAt: new Date(START - ago - index * MINUTE),
+  }));
+}
+
+const failedCount = (context) =>
+  context.userRepository.state.events.filter(({ event }) => event === 'change_failed').length;
+
+test('BE-2: cada contraseña actual incorrecta registra un evento change_failed', async () => {
+  const context = setup();
+
+  await assert.rejects(context.changePassword(context.requester, WRONG_INPUT), rejectsWith(400, WRONG_MESSAGE));
+  await assert.rejects(context.changePassword(context.requester, WRONG_INPUT), rejectsWith(400, WRONG_MESSAGE));
+
+  assert.equal(failedCount(context), 2);
+});
+
+test('BE-2: con 5 fallos en los últimos 15 min responde 429 sin comparar la contraseña', async () => {
+  const context = setup({ events: failedEvents(5, MINUTE) });
+
+  await assert.rejects(
+    context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT }),
+    rejectsWith(429, FAILED_MESSAGE)
+  );
+  assert.ok(!context.userRepository.calls.includes('compare'), 'no debe comparar con el límite alcanzado');
+  assert.equal(failedCount(context), 5, 'el 429 no registra otro fallo');
+  assert.equal(context.userRepository.state.user.password_hash, `hash:${CURRENT}`);
+});
+
+test('BE-2: con 4 fallos, el quinto responde 400 y el sexto intento 429 aunque la contraseña sea correcta', async () => {
+  const context = setup({ events: failedEvents(4, MINUTE) });
+
+  await assert.rejects(context.changePassword(context.requester, WRONG_INPUT), rejectsWith(400, WRONG_MESSAGE));
+  await assert.rejects(
+    context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT }),
+    rejectsWith(429, FAILED_MESSAGE)
+  );
+});
+
+test('BE-2: los fallos de hace más de 15 min no cuentan', async () => {
+  const context = setup({ events: failedEvents(5, 15 * MINUTE) });
+
+  const result = await context.changePassword(context.requester, {
+    current_password: CURRENT,
+    new_password: NEXT,
+  });
+
+  assert.equal(typeof result.token, 'string');
+});
+
+test('BE-2: con 4 fallos, la contraseña correcta cambia la contraseña', async () => {
+  const context = setup({ events: failedEvents(4, MINUTE) });
+
+  await context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT });
+
+  assert.equal(context.userRepository.state.user.password_hash, `hash:${NEXT}`);
+});
+
+test('BE-2: la contraseña que cambia mientras se espera el bloqueo no cuenta como fallo', async () => {
+  const context = setup();
+  const gate = context.userRepository.holdNextLock();
+  const waiting = context.changePassword(context.requester, {
+    current_password: CURRENT,
+    new_password: 'c'.repeat(12),
+  });
+  await gate.arrived;
+
+  await context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT });
+  gate.release();
+
+  await assert.rejects(waiting, rejectsWith(400, WRONG_MESSAGE));
+  assert.equal(failedCount(context), 0);
+});
+
+test('BE-2 (HTTP): con 5 fallos en 15 min responde 429 con { error } y el mensaje exacto', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const context = setup({ events: failedEvents(5, MINUTE) });
+
+  const res = await changeResponse(context.changePassword, WRONG_INPUT);
+
+  assert.equal(res.statusCode, 429);
+  assert.deepEqual(res.body, { error: FAILED_MESSAGE });
+  assert.deepEqual(res.cookieCalls, []);
+});
+
+// --- Revisión final: carrera en el límite de contraseñas actuales incorrectas ---
+
+test('Revisión: 10 cambios simultáneos con la contraseña actual incorrecta: como mucho 5 llegan a comparar', async () => {
+  const context = setup();
+
+  const results = await Promise.allSettled(
+    Array.from({ length: 10 }, () => context.changePassword(context.requester, WRONG_INPUT))
+  );
+
+  const compares = context.userRepository.calls.filter((call) => call === 'compare').length;
+  assert.ok(compares <= 5, `compararon ${compares}`);
+  const statuses = results.map(({ reason }) => reason.status);
+  assert.equal(statuses.filter((status) => status === 400).length, compares);
+  assert.equal(statuses.filter((status) => status === 429).length, 10 - compares);
+  assert.equal(failedCount(context), compares, 'los intentos con 429 no quedan registrados');
+});
+
+test('Revisión: con la contraseña actual correcta el intento registrado se borra', async () => {
+  const context = setup({ events: failedEvents(3, MINUTE) });
+
+  await context.changePassword(context.requester, { current_password: CURRENT, new_password: NEXT });
+
+  assert.equal(failedCount(context), 3);
 });

@@ -1,17 +1,4 @@
-// Nombre para Content-Disposition: sin rutas, comillas ni saltos de línea y
-// solo en ASCII (Node rechaza otros caracteres en las cabeceras).
-function toSafeFileName(name) {
-  const safe = String(name)
-    .split(/[\\/]/)
-    .pop()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/["\u0000-\u001f\u007f]/g, '')
-    .replace(/[^\x20-\x7e]/g, '_')
-    .trim();
-
-  return safe || 'certificado';
-}
+const { attachmentDisposition } = require('./contentDisposition');
 
 // Ejecuta un caso de uso y responde con el status indicado (204: sin cuerpo).
 function respond(status, run) {
@@ -32,7 +19,7 @@ function createCertificationController(manageCertifications) {
       const file = await manageCertifications.getCertificationFile(req.params.userId);
       res.set({
         'Content-Type': file.mime_type,
-        'Content-Disposition': `attachment; filename="${toSafeFileName(file.file_name)}"`,
+        'Content-Disposition': attachmentDisposition(file.file_name, 'certificado'),
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
       });
@@ -55,6 +42,7 @@ function createCertificationController(manageCertifications) {
       })
     ),
     getById: respond(200, (req) => manageCertifications.getCertification(req.params.userId)),
+    mine: respond(200, (req) => manageCertifications.getMyCertification(req.user)),
     save: respond(200, (req) =>
       manageCertifications.saveCertification(req.user, req.params.userId, req.body)
     ),

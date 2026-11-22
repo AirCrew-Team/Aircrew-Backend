@@ -21,7 +21,7 @@ function isEnabled() {
 
 async function decide({ system, data, schema, effort = 'medium' }) {
   if (!ai.enabled) {
-    throw new Error('IA desactivada (AI_ENABLED=false o sin ANTHROPIC_API_KEY).');
+    throw new Error(ai.disabledReason);
   }
 
   const started = Date.now();
@@ -61,4 +61,4 @@ async function decide({ system, data, schema, effort = 'medium' }) {
   };
 }
 
-module.exports = { decide, isEnabled, model: ai.model };
+module.exports = { decide, isEnabled, disabledReason: ai.disabledReason, model: ai.model };

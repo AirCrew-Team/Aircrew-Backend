@@ -7,8 +7,8 @@ const certificationRepository = require('../../../outbound/persistence/repositor
 const createManageCertifications = require('../../../../application/use-cases/manageCertifications');
 const createCertificationController = require('../controllers/certification.controller');
 
-// Pantalla Certificaciones: todo es solo del super_admin. El supervisor y el
-// tripulante reciben 403.
+// Pantalla Certificaciones: todo es solo del super_admin, salvo GET /me, que es
+// del tripulante (su propia certificación). Los demás roles reciben 403.
 const router = express.Router();
 const controller = createCertificationController(
   createManageCertifications({ certificationRepository, findUsersByIds, notifyCertification })
@@ -18,6 +18,9 @@ const superAdmin = allowRoles('super_admin');
 // La copia viaja en base64 dentro del JSON (5 MB ≈ 6,7 MB en base64). El body se
 // lee después de comprobar la sesión y el rol (app.js no lo lee en esta ruta).
 const certificationBody = express.json({ limit: '8mb' });
+
+// Antes del router.use: el tripulante no pasa por el filtro del super_admin.
+router.get('/me', verifyJwt, allowRoles('crew'), controller.mine);
 
 router.use(verifyJwt, superAdmin);
 

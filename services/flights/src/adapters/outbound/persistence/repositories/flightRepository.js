@@ -43,7 +43,8 @@ async function createFlight({
 }
 
 // Vuelo con los datos que usan la programación y las reglas: familia y sillas
-// del avión, ciudades, y si es internacional (algún aeropuerto fuera de Colombia).
+// del avión, ciudades, y si es internacional. Doméstico solo si los dos aeropuertos
+// están en public.airports con country 'US': uno desconocido cuenta como internacional.
 const flightDetail = `
   SELECT f.id, f.flight_number, f.aircraft_id, f.origin, f.destination,
          f.departure_at, f.arrival_at, f.status, f.gate, f.crew_confirmed_at,
@@ -52,8 +53,8 @@ const flightDetail = `
          ac.name AS aircraft_name, ac.registration AS aircraft_registration,
          o.city AS origin_city, d.city AS destination_city,
          o.name AS origin_name, d.name AS destination_name,
-         CASE WHEN COALESCE(o.country, 'CO') <> 'CO' OR COALESCE(d.country, 'CO') <> 'CO'
-              THEN 'international' ELSE 'domestic' END AS scope
+         CASE WHEN o.country IS NOT DISTINCT FROM 'US' AND d.country IS NOT DISTINCT FROM 'US'
+              THEN 'domestic' ELSE 'international' END AS scope
   FROM public.flights f
   JOIN public.aircraft ac ON ac.id = f.aircraft_id
   LEFT JOIN public.airports o ON o.code = f.origin

@@ -343,6 +343,6 @@ test('el catálogo trae modelos, bases y motivos con sus tareas', () => {
   const options = manage.getAircraftOptions();
 
   assert.equal(options.models.length, 7);
-  assert.equal(options.bases.length, 8);
+  assert.equal(options.bases.length, 9); // los 9 hubs de Delta (BE-4: entra LGA)
   assert.equal(options.maintenance_types.find((type) => type.code === 'motor').tasks.length, 5);
 });

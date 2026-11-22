@@ -130,6 +130,12 @@ ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS rank TEXT
 -- se copia una sola vez para las bases creadas antes y ya no se escribe.
 ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS base_code TEXT;
 UPDATE public.crew_members SET base = base_code WHERE base IS NULL AND base_code IS NOT NULL;
+-- Las bases son los hubs de Delta. BOG, MDE y CLO (datos de demo antiguos) quedan
+-- sin base, como en admin_db.sql; se limpian las dos columnas para que la copia de
+-- arriba no las vuelva a poner en la siguiente ejecución.
+UPDATE public.crew_members
+SET base = NULL, base_code = NULL
+WHERE base IN ('BOG', 'MDE', 'CLO') OR base_code IN ('BOG', 'MDE', 'CLO');
 ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS ratings TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE public.crew_members ADD COLUMN IF NOT EXISTS english_level SMALLINT
   CHECK (english_level BETWEEN 1 AND 6);

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   employee_code             VARCHAR(30),
   base                      VARCHAR(3)
     CONSTRAINT users_base_check
-    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO')),
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA')),
   shift                     TEXT
     CONSTRAINT users_shift_check
     CHECK (shift IN ('morning', 'afternoon', 'night')),
@@ -53,15 +53,21 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS base VARCHAR(3);
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS shift TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS operational_status TEXT;
 
+-- Las bases son los 9 hubs de Delta (shared/domain/hubs.js). BOG, MDE y CLO eran
+-- de los datos de demo antiguos: los supervisores que las tenían quedan sin base
+-- (un super_admin les asigna un hub). Va antes del CHECK, que ya no las admite.
+UPDATE public.users
+SET base = NULL
+WHERE base IN ('BOG', 'MDE', 'CLO');
+
 -- Los ALTER de restricciones van en DO para poder ejecutar el script varias veces.
 DO $$
 BEGIN
-  -- Se vuelve a crear siempre para que una base nueva en la lista llegue a las bases ya creadas.
-  -- BOG, MDE y CLO: bases de los datos de demo (database/seed-demo.js).
+  -- Se vuelve a crear siempre para que un cambio en la lista llegue a las bases ya creadas.
   ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_base_check;
   ALTER TABLE public.users
     ADD CONSTRAINT users_base_check
-    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO'));
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'));
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -117,16 +123,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_employee_code_unique
   ON public.users (employee_code)
   WHERE employee_code IS NOT NULL;
 
--- Solicitudes de enlace y cambios de contraseña: sirven para los límites por cuenta.
+-- Solicitudes de enlace, cambios de contraseña y contraseñas actuales incorrectas
+-- en el cambio con sesión (change_failed): sirven para los límites por cuenta.
 CREATE TABLE IF NOT EXISTS public.password_reset_events (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID        NOT NULL REFERENCES public.users (id) ON DELETE CASCADE,
-  event      VARCHAR(20) NOT NULL CHECK (event IN ('requested', 'changed')),
+  event      VARCHAR(20) NOT NULL
+    CONSTRAINT password_reset_events_event_check
+    CHECK (event IN ('requested', 'changed', 'change_failed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Bases creadas antes de change_failed: se vuelve a crear el CHECK (repetible).
+ALTER TABLE public.password_reset_events DROP CONSTRAINT IF EXISTS password_reset_events_event_check;
+ALTER TABLE public.password_reset_events
+  ADD CONSTRAINT password_reset_events_event_check
+  CHECK (event IN ('requested', 'changed', 'change_failed'));
+
 CREATE INDEX IF NOT EXISTS password_reset_events_user_event_created_idx
   ON public.password_reset_events (user_id, event, created_at);
+
+-- Fallos de login por correo normalizado (exista o no la cuenta): más de 5 en 15 min
+-- dan 429. Cada intento se guarda antes de comparar y se borra si no fue un fallo.
+-- TEXT: el login ya rechaza correos de más de 254 caracteres, pero el largo no se
+-- vuelve a validar aquí (un VARCHAR convertiría un cambio de esa regla en un 500).
+CREATE TABLE IF NOT EXISTS public.login_failures (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email      TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS login_failures_email_created_idx
+  ON public.login_failures (email, created_at);
+
+-- Cada fallo nuevo purga los de más de 1 día (de cualquier correo) con este índice.
+CREATE INDEX IF NOT EXISTS login_failures_created_idx
+  ON public.login_failures (created_at);
 
 -- Foto de perfil: una por cuenta, PNG, JPEG o WEBP de hasta 2 MB.
 CREATE TABLE IF NOT EXISTS public.user_photos (
@@ -148,3 +180,22 @@ CREATE TABLE IF NOT EXISTS public.bases (
   operational_condition TEXT NOT NULL DEFAULT 'normal'
     CHECK (operational_condition IN ('normal', 'degraded', 'critical'))
 );
+
+-- Fuera las bases de los datos de demo antiguos (Colombia): ningún usuario puede
+-- tenerlas (CHECK de users.base) y ninguna llave foránea apunta a esta tabla.
+DELETE FROM public.bases WHERE code IN ('BOG', 'MDE', 'CLO');
+
+-- Los 9 hubs de Delta, con los mismos datos que shared/domain/hubs.js (un test lo
+-- comprueba). Repetible: actualiza los datos fijos y no toca operational_condition.
+INSERT INTO public.bases (code, icao, name, city, unit, hq_code) VALUES
+  ('ATL', 'KATL', 'Hartsfield-Jackson Atlanta International', 'Atlanta', 'Operaciones de Vuelo Atlanta', 'ATL-HQ'),
+  ('BOS', 'KBOS', 'Boston Logan International', 'Boston', 'Operaciones de Vuelo Boston', 'BOS-HQ'),
+  ('DTW', 'KDTW', 'Detroit Metropolitan Wayne County', 'Detroit', 'Operaciones de Vuelo Detroit', 'DTW-HQ'),
+  ('LAX', 'KLAX', 'Los Angeles International', 'Los Ángeles', 'Operaciones de Vuelo Los Ángeles', 'LAX-HQ'),
+  ('MSP', 'KMSP', 'Minneapolis-Saint Paul International', 'Minneapolis-St. Paul', 'Operaciones de Vuelo Minneapolis', 'MSP-HQ'),
+  ('JFK', 'KJFK', 'John F. Kennedy International', 'Nueva York', 'Operaciones de Vuelo Nueva York JFK', 'JFK-HQ'),
+  ('LGA', 'KLGA', 'LaGuardia', 'Nueva York', 'Operaciones de Vuelo Nueva York LaGuardia', 'LGA-HQ'),
+  ('SLC', 'KSLC', 'Salt Lake City International', 'Salt Lake City', 'Operaciones de Vuelo Salt Lake City', 'SLC-HQ'),
+  ('SEA', 'KSEA', 'Seattle-Tacoma International', 'Seattle', 'Operaciones de Vuelo Seattle', 'SEA-HQ')
+ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, name = EXCLUDED.name, city = EXCLUDED.city,
+  unit = EXCLUDED.unit, hq_code = EXCLUDED.hq_code;

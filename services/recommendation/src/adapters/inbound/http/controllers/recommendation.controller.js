@@ -15,7 +15,7 @@ function createRecommendationController({
   }
 
   // Interno (lo llama Crew al reportar): responde de inmediato y busca en
-  // segundo plano; el resultado llega por socket (absence:suggestions_ready).
+  // segundo plano; el resultado llega por SSE (absence:suggestions_ready).
   function suggest(req, res) {
     const { authorization } = req.headers;
     const { id } = req.params;

@@ -1,41 +1,49 @@
 const express = require('express');
 const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
-const socketPublisher = require('../../../outbound/publishers/socketPublisher');
+const ssePublisher = require('../../../outbound/publishers/ssePublisher');
+const notificationRepository = require('../../../outbound/persistence/repositories/notificationRepository');
 const {
   createAbsenceReportedAlert,
   createAbsenceCoveredAlert,
   createSuggestionsReadyAlert,
   createDeadlineMissedAlert,
   createAssignmentReplacementAlert,
+  createCertificationAlert,
 } = require('../../../../domain/alerts');
 const createPublishAlert = require('../../../../application/use-cases/publishAlert');
+const createNotifyUser = require('../../../../application/use-cases/notifyUser');
 const createEventController = require('../controllers/event.controller');
 
 const router = express.Router();
+const notifyUser = createNotifyUser({ notificationRepository, publisher: ssePublisher });
+
 const publishSuggestionsReady = createPublishAlert({
   buildAlert: createSuggestionsReadyAlert,
-  publisher: socketPublisher,
+  publisher: ssePublisher,
+  notificationRepository,
   fromInput: (input) => input,
 });
 
 const publishDeadlineMissed = createPublishAlert({
   buildAlert: createDeadlineMissedAlert,
-  publisher: socketPublisher,
+  publisher: ssePublisher,
+  notificationRepository,
   fromInput: (input) => input,
 });
 
-// Va a la sala personal del tripulante, no a los supervisores.
-function publishAssignmentReplacement(input) {
-  const alert = createAssignmentReplacementAlert(input);
-  const deliveredTo = socketPublisher.publishToUser(alert.crew_user_id, alert);
-  return { type: alert.type, message: alert.message, delivered_to: deliveredTo };
+// Avisos para un tripulante: se guardan en su historial y se entregan en vivo.
+function notifyCrewMember(buildAlert) {
+  return (input) => {
+    const alert = buildAlert(input);
+    return notifyUser(alert.crew_user_id, alert);
+  };
 }
 
 function respond(publish) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     try {
-      return res.status(202).json(publish(req.body));
+      return res.status(202).json(await publish(req.body));
     } catch (error) {
       return next(error);
     }
@@ -45,11 +53,13 @@ function respond(publish) {
 const controller = createEventController({
   publishAbsenceReported: createPublishAlert({
     buildAlert: createAbsenceReportedAlert,
-    publisher: socketPublisher,
+    publisher: ssePublisher,
+    notificationRepository,
   }),
   publishAbsenceCovered: createPublishAlert({
     buildAlert: createAbsenceCoveredAlert,
-    publisher: socketPublisher,
+    publisher: ssePublisher,
+    notificationRepository,
   }),
 });
 
@@ -64,13 +74,7 @@ router.post(
 );
 
 // Recommendation avisa (token de servicio) que terminó la búsqueda de candidatos.
-router.post('/suggestions-ready', verifyJwt, allowRoles('service'), (req, res, next) => {
-  try {
-    return res.status(202).json(publishSuggestionsReady(req.body));
-  } catch (error) {
-    return next(error);
-  }
-});
+router.post('/suggestions-ready', verifyJwt, allowRoles('service'), respond(publishSuggestionsReady));
 
 // Recommendation: el reemplazo no confirmó a tiempo.
 router.post('/deadline-missed', verifyJwt, allowRoles('service'), respond(publishDeadlineMissed));
@@ -79,7 +83,14 @@ router.post(
   '/assignment-replacement',
   verifyJwt,
   allowRoles('supervisor', 'super_admin', 'service'),
-  respond(publishAssignmentReplacement)
+  respond(notifyCrewMember(createAssignmentReplacementAlert))
+);
+// Crew (token de servicio): el super_admin le registró o verificó su certificación.
+router.post(
+  '/certification',
+  verifyJwt,
+  allowRoles('service'),
+  respond(notifyCrewMember(createCertificationAlert))
 );
 
 module.exports = router;

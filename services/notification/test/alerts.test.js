@@ -49,7 +49,7 @@ test('AU-B9: las fechas cambian de mes y de año con su abreviatura', () => {
   assert.equal(alert.message, 'Un tripulante no podrá trabajar del 30 dic al 2 ene (fatiga).');
 });
 
-test('AU-B9: publicar la alerta de una ausencia por fechas no falla', () => {
+test('AU-B9: publicar la alerta de una ausencia por fechas no falla', async () => {
   const published = [];
   const publishAlert = createPublishAlert({
     buildAlert: createAbsenceReportedAlert,
@@ -61,12 +61,13 @@ test('AU-B9: publicar la alerta de una ausencia por fechas no falla', () => {
     },
   });
 
-  const result = publishAlert({ absence: BY_DATES });
+  const result = await publishAlert({ absence: BY_DATES });
 
   assert.deepEqual(result, {
     type: 'absence:reported',
     message: 'EMP-001 no podrá trabajar del 20 nov al 22 nov (incapacidad).',
     delivered_to: 2,
+    saved: false,
   });
   assert.equal(published.length, 1);
 });

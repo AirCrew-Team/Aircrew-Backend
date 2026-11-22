@@ -19,7 +19,7 @@ info:
        `suggestions_state: "error"` y el supervisor recibe el aviso; puede pedir otra ronda
        (`POST /absences/{id}/regenerate`), que responde 503 `ai_unavailable` si la IA sigue sin responder.
     6. Se guardan los candidatos y la auditoría de la decisión, y los supervisores reciben
-       `absence:suggestions_ready` por socket.
+       `absence:suggestions_ready` por SSE.
 
     **Al confirmar** un candidato, la ausencia queda `pending_ack` y el elegido recibe
     `assignment:replacement`. Cuando pulsa «Enterado» (`POST /api/flights/assignments/{id}/acknowledge`)
@@ -172,7 +172,7 @@ paths:
     post:
       tags: [Interno]
       summary: Buscar candidatos en segundo plano (token de servicio)
-      description: Lo llama Crew al reportarse una ausencia. Responde de inmediato y avisa por socket al terminar.
+      description: Lo llama Crew al reportarse una ausencia. Responde de inmediato y avisa por SSE al terminar.
       security:
         - bearerAuth: []
       parameters:

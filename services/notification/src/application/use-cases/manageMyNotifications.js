@@ -1,0 +1,62 @@
+const { DomainError } = require('../../domain/errors');
+
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function notFound() {
+  return new DomainError('Notificación no encontrada.', 404);
+}
+
+// La campana: los avisos de la persona con sesión y las alertas de su rol
+// (los supervisores ven las de ausencias). Cada uno marca como leídos solo los suyos.
+function toItem(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    message: row.message,
+    data: row.data,
+    read: row.read_at !== null,
+    read_at: row.read_at,
+    created_at: row.created_at,
+  };
+}
+
+function createManageMyNotifications({ notificationRepository }) {
+  async function listMine(user, { limit } = {}) {
+    const size = limit === undefined || limit === '' ? DEFAULT_LIMIT : Number(limit);
+
+    if (!Number.isInteger(size) || size < 1 || size > MAX_LIMIT) {
+      throw new DomainError(`limit debe ser un entero de 1 a ${MAX_LIMIT}.`);
+    }
+
+    const [rows, unread] = await Promise.all([
+      notificationRepository.findVisible(user, { limit: size }),
+      notificationRepository.countUnread(user),
+    ]);
+
+    return { items: rows.map(toItem), unread_count: unread };
+  }
+
+  async function markRead(user, id) {
+    const row =
+      typeof id === 'string' && uuidPattern.test(id)
+        ? await notificationRepository.markRead(user, id)
+        : null;
+
+    if (!row) {
+      throw notFound();
+    }
+
+    return toItem(row);
+  }
+
+  async function markAllRead(user) {
+    return { updated: await notificationRepository.markAllRead(user) };
+  }
+
+  return { listMine, markRead, markAllRead };
+}
+
+module.exports = createManageMyNotifications;

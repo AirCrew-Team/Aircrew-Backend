@@ -16,8 +16,21 @@ router.get('/health', (req, res) => {
 const TIMEOUTS = { recommendation: 120000 };
 
 router.use(cookieToAuthorization);
+
+// Notification: GET /stream es una conexión SSE que queda abierta (avisos en vivo),
+// así que va sin límite de tiempo. El resto de sus rutas, con el de siempre.
+const notificationStream = createServiceProxy('notification', services.notification, 0);
+const notificationProxy = createServiceProxy('notification', services.notification);
+router.use('/api/notification', (req, res, next) =>
+  /^\/stream\/?(\?|$)/.test(req.url)
+    ? notificationStream(req, res, next)
+    : notificationProxy(req, res, next)
+);
+
 for (const [name, target] of Object.entries(services)) {
-  router.use(`/api/${name}`, createServiceProxy(name, target, TIMEOUTS[name]));
+  if (name !== 'notification') {
+    router.use(`/api/${name}`, createServiceProxy(name, target, TIMEOUTS[name]));
+  }
 }
 
 router.use((req, res) => {

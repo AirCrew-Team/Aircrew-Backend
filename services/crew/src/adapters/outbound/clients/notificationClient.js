@@ -29,4 +29,21 @@ function notifyAbsenceCovered(absence) {
   return post('/events/absence-covered', { absence }, serviceAuthorization(), 'ausencia cubierta');
 }
 
-module.exports = { notifyAbsenceReported, notifyAbsenceCovered };
+// El super_admin registró o verificó la certificación de un tripulante: aviso para él.
+// event: 'registered' o 'verified'. Token de servicio.
+function notifyCertification({ crewUserId, event, actorName, licenseNumber, certificates }) {
+  return post(
+    '/events/certification',
+    {
+      crew_user_id: crewUserId,
+      event,
+      actor_name: actorName,
+      license_number: licenseNumber,
+      certificates,
+    },
+    serviceAuthorization(),
+    'certificación'
+  );
+}
+
+module.exports = { notifyAbsenceReported, notifyAbsenceCovered, notifyCertification };

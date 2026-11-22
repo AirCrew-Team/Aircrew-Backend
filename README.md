@@ -60,6 +60,7 @@ Cada servicio tiene su propia base en PostgreSQL. Crea las bases y ejecuta el sc
 | `crew_db` | `database/crew_db.sql` |
 | `flights_db` | `database/flights_db.sql` |
 | `recommendation_db` | `database/recommendation_db.sql` |
+| `notification_db` | `database/notification_db.sql` |
 
 Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
 
@@ -227,6 +228,23 @@ Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en e
 - El comprobante se guarda en la tabla `absence_attachments` (`BYTEA`) de `database/crew_db.sql`. El script también deja opcionales las columnas del vuelo y añade `start_date` y `end_date`, y se puede volver a ejecutar sobre una base existente.
 - Tests: `npm test -w @vuelos/crew`, y lo mismo con `@vuelos/notification` y `@vuelos/recommendation`.
 
+## Notificaciones (servicio notification)
+
+Las notificaciones llegan en vivo por **SSE** (Server-Sent Events), no por Socket.IO. El contrato completo está en el Swagger de notification.
+
+- `GET /api/notification/stream` abre la conexión con la cookie de sesión: `new EventSource('/api/notification/stream', { withCredentials: true })`. Responde `401` sin sesión o con el token vencido, y `403` con un token de servicio. El gateway no le pone límite de tiempo.
+- Quién recibe qué:
+  - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered` y `absence:deadline_missed`;
+  - **crew** (solo los suyos): `assignment:replacement`, `certification:registered` y `certification:verified`;
+  - **super_admin:** ninguna.
+- Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión; después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
+- Todos los avisos se guardan para la campana, así se ven aunque la persona no estuviera conectada. Los del tripulante se guardan para él; las alertas del supervisor, una sola vez para el rol, y cada supervisor marca como leídas las suyas:
+  - `GET /api/notification/notifications?limit=20` responde `{ items, unread_count }`. `limit` va de 1 a 100;
+  - `PATCH /api/notification/notifications/:id/read` marca uno como leído. Responde `404` si no existe o no es de esa persona;
+  - `POST /api/notification/notifications/read-all` marca todos y responde `{ updated }`.
+- Crew avisa `certification:registered` cuando el super_admin registra la certificación por primera vez, y `certification:verified` cuando la marca como verificada. Si notification no responde, la certificación se guarda igual.
+- Requiere la base `notification_db` con `database/notification_db.sql` y las variables `DB_*` en `services/notification/.env`; ver `services/notification/.env.example`.
+
 ## Despliegue en Railway
 
 Todo el sistema vive en un solo proyecto de Railway: el frontend, los seis servicios y PostgreSQL. **Solo el frontend tiene dominio público.** Sirve la app y reenvía `/api/*` al gateway por la red privada, así que el navegador ve un único dominio y la cookie `SameSite=Lax` funciona en todos los navegadores. El despliegue del frontend está en el README del repositorio del frontend.
@@ -258,12 +276,13 @@ En cada servicio del backend:
 
 - **En los seis servicios:** `PORT`, el de la tabla anterior. Debe ser fijo, porque las URL internas llevan el puerto.
 - **En admin, crew, flights, notification y recommendation:** `JWT_SECRET`, con **el mismo valor** en todos. Conviene crearlo como variable compartida del proyecto. El gateway no lo usa.
-- **admin y crew:** `CREW_SERVICE_KEY`, con **el mismo valor** en los dos.
-- **admin, crew y flights (base de datos):**
+- **admin y crew:** `CREW_SERVICE_KEY` y `ADMIN_SERVICE_KEY`, cada una con **el mismo valor** en los dos. Son claves distintas.
+- **admin, crew, flights y notification (base de datos):**
   - `DB_HOST=${{Postgres.PGHOST}}`, `DB_PORT=${{Postgres.PGPORT}}`, `DB_USER=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}`;
-  - `DB_NAME`: `admin_db`, `crew_db` o `flights_db`, según el servicio.
+  - `DB_NAME`: `admin_db`, `crew_db`, `flights_db` o `notification_db`, según el servicio.
 - **URL internas:** `http://${{<servicio>.RAILWAY_PRIVATE_DOMAIN}}:<puerto>`.
   - gateway: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
+  - admin: `CREW_SERVICE_URL`;
   - crew: `ADMIN_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
   - recommendation: `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`.
 - **admin (además):**
@@ -272,11 +291,11 @@ En cada servicio del backend:
   - `SUPER_ADMIN_BOOTSTRAP_KEY`: una clave larga, solo para crear el primer `super_admin`;
   - correo: `EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` y, opcional, `BREVO_SENDER_NAME`. Railway bloquea el SMTP en los planes Free, Trial y Hobby, así que Gmail por SMTP no funciona allí (ver «Proveedor del correo»);
   - `JWT_EXPIRES_IN`: opcional, por defecto `1h`.
-- **gateway y notification:** `CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`, sin barra final. Es opcional, porque las peticiones llegan del mismo origen a través del proxy.
+- **gateway:** `CORS_ORIGINS=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}`, sin barra final. Es opcional, porque las peticiones llegan del mismo origen a través del proxy.
 
 ### 3. Bases de datos
 
-Una sola instancia de PostgreSQL con tres bases. La carga inicial se hace una vez desde tu equipo, con Docker, sin instalar `psql`:
+Una sola instancia de PostgreSQL con varias bases. La carga inicial se hace una vez desde tu equipo, con Docker, sin instalar `psql`:
 
 1. En el servicio `Postgres`, activa temporalmente el **TCP proxy** (Settings → Networking) y copia los datos de conexión pública: host, puerto, usuario y contraseña.
 2. En PowerShell, desde la raíz de este repositorio, pon esos datos en variables de entorno de tu terminal. La contraseña se pide con `Read-Host`, así no se ve en pantalla ni queda en el historial de PowerShell (`ConsoleHost_history.txt`):
@@ -291,10 +310,11 @@ Una sola instancia de PostgreSQL con tres bases. La carga inicial se hace una ve
 3. Crea las bases y carga cada script:
 
    ```powershell
-   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:17-alpine psql -d railway -c "CREATE DATABASE admin_db;" -c "CREATE DATABASE crew_db;" -c "CREATE DATABASE flights_db;"
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD postgres:17-alpine psql -d railway -c "CREATE DATABASE admin_db;" -c "CREATE DATABASE crew_db;" -c "CREATE DATABASE flights_db;" -c "CREATE DATABASE notification_db;"
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d admin_db -f /sql/admin_db.sql
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d crew_db -f /sql/crew_db.sql
    docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d flights_db -f /sql/flights_db.sql
+   docker run --rm -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -v "${PWD}/database:/sql" postgres:17-alpine psql -v ON_ERROR_STOP=1 -d notification_db -f /sql/notification_db.sql
    ```
 
    Con `ON_ERROR_STOP=1`, psql se detiene en el primer error y lo muestra. Los scripts se pueden volver a ejecutar sin error; los `CREATE DATABASE`, no: al repetirlos, el «already exists» es esperable. Si la base `railway` tiene otro nombre en tu proyecto, usa el de `PGDATABASE`.

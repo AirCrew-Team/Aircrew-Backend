@@ -1,23 +1,23 @@
 const { DomainError } = require('./errors');
 
-// Eventos que reciben los supervisores conectados por WebSocket.
+// Eventos que se entregan en vivo por SSE (GET /stream).
 const ALERT_EVENTS = {
+  // Para los supervisores conectados.
   absenceReported: 'absence:reported',
   absenceCovered: 'absence:covered',
   suggestionsReady: 'absence:suggestions_ready',
   deadlineMissed: 'absence:deadline_missed',
-  // Solo para el tripulante afectado (sala personal).
+  // Para un tripulante; también se guardan en su historial (campana).
   assignmentReplacement: 'assignment:replacement',
+  certificationRegistered: 'certification:registered',
+  certificationVerified: 'certification:verified',
 };
 
-// Solo los supervisores reciben las alertas operativas.
-const SUPERVISOR_ROLES = ['supervisor', 'super_admin'];
-const SUPERVISORS_ROOM = 'supervisors';
-
-// Sala personal de cada usuario, para avisos dirigidos a una sola persona.
-function userRoom(userId) {
-  return `user:${userId}`;
-}
+// Las alertas operativas son solo de los supervisores. El super_admin no recibe
+// ninguna: nadie le reporta a él.
+const SUPERVISOR_ROLES = ['supervisor'];
+// Rol al que se guardan las alertas operativas en la campana.
+const SUPERVISOR_AUDIENCE = 'supervisor';
 
 const REASON_LABELS = {
   illness: 'incapacidad',
@@ -186,13 +186,53 @@ function createAssignmentReplacementAlert(input) {
   };
 }
 
+const CERTIFICATION_EVENTS = {
+  registered: ALERT_EVENTS.certificationRegistered,
+  verified: ALERT_EVENTS.certificationVerified,
+};
+
+// Aviso para el tripulante: el super_admin le registró o le verificó su certificación.
+function createCertificationAlert(input) {
+  const {
+    crew_user_id: crewUserId,
+    event,
+    actor_name: actorName,
+    license_number: licenseNumber,
+    certificates,
+  } = input || {};
+
+  if (typeof crewUserId !== 'string' || !uuidPattern.test(crewUserId)) {
+    throw new DomainError('Se requiere crew_user_id.');
+  }
+
+  if (!Object.hasOwn(CERTIFICATION_EVENTS, event)) {
+    throw new DomainError('event debe ser registered o verified.');
+  }
+
+  const who = isNonEmptyString(actorName) ? actorName.trim() : 'Un administrador';
+  const license = isNonEmptyString(licenseNumber) ? ` ${licenseNumber.trim()}` : '';
+
+  return {
+    type: CERTIFICATION_EVENTS[event],
+    message:
+      event === 'registered'
+        ? `${who} te registró un certificado.`
+        : `Tu certificado${license} fue verificado.`,
+    crew_user_id: crewUserId,
+    license_number: isNonEmptyString(licenseNumber) ? licenseNumber.trim() : null,
+    certificates: Array.isArray(certificates) ? certificates.filter(isNonEmptyString) : [],
+    actor_name: isNonEmptyString(actorName) ? actorName.trim() : null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   ALERT_EVENTS,
+  SUPERVISOR_AUDIENCE,
   createDeadlineMissedAlert,
   createAssignmentReplacementAlert,
+  createCertificationAlert,
   createSuggestionsReadyAlert,
-  SUPERVISORS_ROOM,
-  userRoom,
   canReceiveAlerts,
   createAbsenceReportedAlert,
   createAbsenceCoveredAlert,

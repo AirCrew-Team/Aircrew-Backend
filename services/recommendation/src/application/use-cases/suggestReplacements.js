@@ -13,7 +13,7 @@ const { DomainError } = require('../../domain/errors');
 // 3. CLAUDE    → elige y ordena de 3 a 5, y explica en español.
 // 4. VALIDAR   → descarta crew_id que no estaban en la lista o repetidos.
 // 5. GUARDAR   → la ronda de candidatos y la auditoría de la llamada.
-// 6. AVISAR    → Crew (estado y línea de tiempo) y supervisores por socket,
+// 6. AVISAR    → Crew (estado y línea de tiempo) y supervisores por SSE,
 //                siempre con token de servicio (son endpoints internos).
 // Si Claude no responde o responde algo inválido, la ausencia queda con
 // suggestions_state = "error" y el supervisor puede pedir otra ronda.
@@ -27,7 +27,7 @@ function createSuggestReplacements({
   serviceAuthorization,
 }) {
   // Informa el resultado a Crew (estado y línea de tiempo) y a los supervisores
-  // por socket. Son endpoints internos: siempre con token de servicio.
+  // por SSE. Son endpoints internos: siempre con token de servicio.
   async function report(absence, state, count) {
     await crewClient.updateSuggestionsState(
       absence.id,

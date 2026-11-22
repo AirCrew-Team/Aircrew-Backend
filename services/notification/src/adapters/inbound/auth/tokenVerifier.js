@@ -5,7 +5,7 @@ const { jwtSecret, jwtIssuer } = require('../../../config/env');
 // sin usuario (por ejemplo, la IA que corre en segundo plano).
 const allowedRoles = new Set(['crew', 'supervisor', 'super_admin', 'service']);
 
-// Valida un JWT de Admin. Lo usan el middleware HTTP y el WebSocket.
+// Valida un JWT de Admin. Lo usan el middleware HTTP y la conexión SSE.
 // Devuelve { user, expiresAt } si es válido, o { reason } si no:
 // 'expired' (venció) o 'invalid' (mal firmado, otro emisor o datos raros).
 function verifyToken(token) {

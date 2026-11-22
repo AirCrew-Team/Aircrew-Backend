@@ -2,6 +2,7 @@ const express = require('express');
 const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
 const { findUsersByIds } = require('../../../outbound/clients/adminClient');
+const { notifyCertification } = require('../../../outbound/clients/notificationClient');
 const certificationRepository = require('../../../outbound/persistence/repositories/certificationRepository');
 const createManageCertifications = require('../../../../application/use-cases/manageCertifications');
 const createCertificationController = require('../controllers/certification.controller');
@@ -10,7 +11,7 @@ const createCertificationController = require('../controllers/certification.cont
 // tripulante reciben 403.
 const router = express.Router();
 const controller = createCertificationController(
-  createManageCertifications({ certificationRepository, findUsersByIds })
+  createManageCertifications({ certificationRepository, findUsersByIds, notifyCertification })
 );
 
 const superAdmin = allowRoles('super_admin');

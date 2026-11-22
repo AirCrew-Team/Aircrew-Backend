@@ -202,6 +202,16 @@ Pantalla Aeronaves del super_admin. El contrato completo está en el Swagger de 
 - Requiere volver a ejecutar `database/flights_db.sql`: agrega las columnas nuevas, quita `initial_destination` y `final_destination`, y crea `aircraft_photos` y `aircraft_maintenance_orders`.
 - Tests: `npm test -w @vuelos/flights`.
 
+## Certificaciones (servicio crew)
+
+Pantalla Certificaciones del super_admin. El contrato completo está en el Swagger de crew.
+
+- Todas las rutas son solo del super_admin; el supervisor y el tripulante reciben `403`.
+- `GET /certifications` (paginado: `page`, `page_size` de 5 por defecto, `search` por nombre, ID o licencia, y `status`: `verified`, `pending_verification` o `uncertified`), `GET /certifications/stats`, `GET /certifications/options` (certificados por cargo) y `GET /certifications/uncertified` (tripulantes para «Registrar certificado»).
+- `PUT /certifications/:userId` registra o edita: `{ license_number, certificates, verified, file? }`. El número de licencia es de 5 a 10 dígitos. Pilotos: PPL, CPL, ATP, IR y ME, con al menos una licencia; Auxiliar de Vuelo: CDP; Sobrecargos: CDP (obligatorio), LID, CONF y ADU. `file` va en base64 (PDF, PNG o JPG de hasta 5 MB); sin `file` se deja la copia y con `null` se quita.
+- `GET /certifications/:userId` trae la copia (sin bytes) y el historial; `GET /certifications/:userId/file` descarga la copia. `DELETE /certifications/:userId` deja al tripulante sin certificado.
+- Requiere las tablas `crew_certifications`, `crew_certification_files` y `crew_certification_events` de `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
+
 ## Ausencias (servicio crew)
 
 Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en el Swagger de crew.

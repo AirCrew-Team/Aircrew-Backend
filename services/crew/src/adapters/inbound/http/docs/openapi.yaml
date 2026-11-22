@@ -606,6 +606,298 @@ paths:
                   fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
                   rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
                   sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
+  /certifications:
+    get:
+      tags: [Certificaciones]
+      summary: Tabla de certificaciones, paginada (solo super_admin)
+      description: |
+        Tripulantes activos con su certificación. Primero los sin certificado, luego por verificar y verificados.
+        `search` busca en nombre, ID (código) y número de licencia, sin mayúsculas ni tildes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 5 } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/CertificationStatus' } }
+      responses:
+        '200':
+          description: Página
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/CrewCertification' } }
+                  page: { type: integer }
+                  page_size: { type: integer }
+                  total: { type: integer }
+        '400':
+          description: Parámetros inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/stats:
+    get:
+      tags: [Certificaciones]
+      summary: Indicadores y conteos de los filtros (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  by_status:
+                    type: object
+                    properties:
+                      verified: { type: integer }
+                      pending_verification: { type: integer }
+                      uncertified: { type: integer }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/options:
+    get:
+      tags: [Certificaciones]
+      summary: Certificados y los que permite cada cargo (solo super_admin)
+      description: |
+        Pilotos (Comandante, Copiloto) PPL, CPL, ATP, IR y ME, con al menos una licencia (PPL, CPL o ATP).
+        Auxiliar de Vuelo solo CDP. Sobrecargos CDP (obligatorio), LID, CONF y ADU.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catálogo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  certificates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string, example: ATP }
+                        name: { type: string, example: Airline Transport Pilot (ATP) }
+                        short: { type: string, example: ATP }
+                  by_position:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        area: { type: string, enum: [flight_deck, cabin] }
+                        certificates: { type: array, items: { type: string } }
+                  pilot_licenses: { type: array, items: { type: string } }
+                  cabin_license: { type: string }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/uncertified:
+    get:
+      tags: [Certificaciones]
+      summary: Tripulantes activos sin certificado, para «Registrar certificado» (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tripulantes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/CrewCertification' } }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/{userId}:
+    get:
+      tags: [Certificaciones]
+      summary: Ficha de la certificación, con copia e historial (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Ficha
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificationDetail' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Tripulante no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [Certificaciones]
+      summary: Registrar o editar la certificación (solo super_admin)
+      description: |
+        `verified: true` la deja «verificada»; `false`, «por verificar» (así también se quita la verificación).
+        `file` en base64: PDF, PNG o JPG de hasta 5 MB; sin `file` se deja la copia que había y con `null` se quita.
+        Deja en el historial «registrado» o «actualizado», y «verificado» cuando pasa a verificada. Esta ruta
+        acepta un body de hasta 8 MB y lo lee después de comprobar la sesión.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [license_number, certificates, verified]
+              properties:
+                license_number: { type: string, pattern: '^[0-9]{5,10}$', example: '2775981' }
+                certificates: { type: array, minItems: 1, items: { type: string }, example: [ATP, IR, ME] }
+                verified: { type: boolean }
+                file:
+                  type: object
+                  nullable: true
+                  properties:
+                    file_name: { type: string }
+                    mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+                    data_base64: { type: string }
+      responses:
+        '200':
+          description: Ficha actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CertificationDetail' }
+        '400':
+          description: Licencia, certificados o copia inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Tripulante no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El tripulante está desactivado o su cargo no tiene certificados definidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: El body supera 8 MB
+    delete:
+      tags: [Certificaciones]
+      summary: Eliminar la certificación (solo super_admin)
+      description: El tripulante queda «sin certificado», sin licencia, certificados, copia ni historial.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Eliminada
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Tripulante no encontrado o sin certificación
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/{userId}/file:
+    get:
+      tags: [Certificaciones]
+      summary: Descargar la copia del certificado (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: El archivo original, con Content-Disposition attachment, nosniff y sin caché
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Sin certificación o sin copia
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /internal/crew-members:
     get:
       tags: [Interno]
@@ -897,6 +1189,48 @@ components:
         status: { $ref: '#/components/schemas/CrewStatus' }
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }
+    CertificationStatus:
+      type: string
+      description: verified (Verificado), pending_verification (Por verificar) o uncertified (Sin certificado).
+      enum: [verified, pending_verification, uncertified]
+    CrewCertification:
+      type: object
+      description: Fila de la tabla. Se identifica por user_id; employee_code es el ID que se muestra.
+      properties:
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string, example: AC-1108 }
+        name: { type: string, nullable: true, description: Desde Admin (null si no responde). }
+        email: { type: string, nullable: true }
+        position: { type: string, example: Comandante }
+        area: { type: string, nullable: true, enum: [flight_deck, cabin] }
+        base: { type: string, nullable: true, example: ATL }
+        license_number: { type: string, nullable: true }
+        certificates: { type: array, items: { type: string } }
+        status: { $ref: '#/components/schemas/CertificationStatus' }
+        updated_at: { type: string, format: date-time, nullable: true }
+    CertificationDetail:
+      allOf:
+        - $ref: '#/components/schemas/CrewCertification'
+        - type: object
+          properties:
+            file:
+              type: object
+              nullable: true
+              properties:
+                file_name: { type: string }
+                mime_type: { type: string }
+                size_bytes: { type: integer }
+            history:
+              type: array
+              description: Del más reciente al más antiguo.
+              items:
+                type: object
+                properties:
+                  event: { type: string, enum: [registered, verified, updated] }
+                  by_user_id: { type: string, format: uuid }
+                  by: { type: string, nullable: true, description: Nombre del super_admin. }
+                  note: { type: string, nullable: true }
+                  created_at: { type: string, format: date-time }
     Error:
       type: object
       properties:

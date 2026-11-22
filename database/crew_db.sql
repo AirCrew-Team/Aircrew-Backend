@@ -207,3 +207,45 @@ ALTER TABLE public.absence_events ADD CONSTRAINT absence_events_type_check
 
 CREATE INDEX IF NOT EXISTS absence_events_absence_id_idx
   ON public.absence_events (absence_id, created_at);
+
+-- ===== Certificaciones FAA (pantalla Certificaciones del super_admin) =====
+
+-- Una certificación por tripulante; sin fila, está «sin certificado». La
+-- registran, editan, verifican y eliminan solo los super_admin.
+CREATE TABLE IF NOT EXISTS public.crew_certifications (
+  crew_user_id   UUID        PRIMARY KEY
+    REFERENCES public.crew_members (user_id) ON DELETE CASCADE,
+  license_number VARCHAR(10) NOT NULL CHECK (license_number ~ '^[0-9]{5,10}$'),
+  certificates   TEXT[]      NOT NULL CHECK (cardinality(certificates) > 0),
+  status         TEXT        NOT NULL
+    CHECK (status IN ('verified', 'pending_verification')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Copia del certificado (PDF, PNG o JPG de hasta 5 MB). data solo se lee al descargar.
+CREATE TABLE IF NOT EXISTS public.crew_certification_files (
+  crew_user_id UUID        PRIMARY KEY
+    REFERENCES public.crew_certifications (crew_user_id) ON DELETE CASCADE,
+  file_name    TEXT        NOT NULL,
+  mime_type    TEXT        NOT NULL
+    CHECK (mime_type IN ('application/pdf', 'image/png', 'image/jpeg')),
+  size_bytes   INTEGER     NOT NULL CHECK (size_bytes BETWEEN 1 AND 5242880),
+  data         BYTEA       NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Historial: registrado, verificado y actualizado. actor_user_id es el super_admin
+-- en admin_db. clock_timestamp(): los eventos de un mismo guardado quedan en orden.
+CREATE TABLE IF NOT EXISTS public.crew_certification_events (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  crew_user_id  UUID        NOT NULL
+    REFERENCES public.crew_certifications (crew_user_id) ON DELETE CASCADE,
+  event         TEXT        NOT NULL CHECK (event IN ('registered', 'verified', 'updated')),
+  actor_user_id UUID        NOT NULL,
+  note          TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS crew_certification_events_user_created_idx
+  ON public.crew_certification_events (crew_user_id, created_at DESC);

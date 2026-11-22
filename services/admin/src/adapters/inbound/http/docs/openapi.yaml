@@ -587,7 +587,7 @@ paths:
         `phone` se guarda sin espacios y debe cumplir `^\+?\d{7,15}$`. `residence` debe ser una ciudad de
         `GET /catalogs/us-cities`: se compara sin distinguir mayúsculas y se guarda con la forma del catálogo.
         `phone` y `residence` vacíos se guardan como `null`. `notifications` solo admite las claves del rol;
-        un super_admin no puede enviarlas (ni vacías ni `null`) y recibe `400`. Las preferencias se guardan, pero notification todavía no las aplica. Los datos laborales no se
+        un super_admin no puede enviarlas (ni vacías ni `null`) y recibe `400`. Notification las aplica al stream en vivo y a la campana (con hasta 60 s de caché). Los datos laborales no se
         cambian aquí. Responde lo mismo que `GET /users/me`.
       security:
         - bearerAuth: []

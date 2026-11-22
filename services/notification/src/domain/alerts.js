@@ -51,6 +51,24 @@ function canReceiveAlerts(user) {
   return Boolean(user) && SUPERVISOR_ROLES.includes(user.role);
 }
 
+// Preferencia de la persona (notifications de GET /users/me en admin) que apaga cada
+// tipo. Los tipos que no están aquí no tienen preferencia: siempre se envían.
+const ALERT_PREFERENCES = {
+  [ALERT_EVENTS.absenceReported]: 'absence_reported',
+  [ALERT_EVENTS.absenceCovered]: 'absence_covered',
+  [ALERT_EVENTS.assignmentReplacement]: 'replacement_assigned',
+};
+
+// Tipos que la persona apagó. Solo cuenta un false explícito: sin preferencias
+// (super_admin, null) o sin la clave, se envía.
+function disabledAlertTypes(notifications) {
+  if (!notifications || typeof notifications !== 'object') return [];
+
+  return Object.keys(ALERT_PREFERENCES).filter(
+    (type) => notifications[ALERT_PREFERENCES[type]] === false
+  );
+}
+
 // Las ausencias antiguas son por vuelo; las nuevas, por fechas.
 function requireAbsence(absence) {
   if (
@@ -234,6 +252,7 @@ module.exports = {
   createCertificationAlert,
   createSuggestionsReadyAlert,
   canReceiveAlerts,
+  disabledAlertTypes,
   createAbsenceReportedAlert,
   createAbsenceCoveredAlert,
 };

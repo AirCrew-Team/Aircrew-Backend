@@ -17,11 +17,20 @@ info:
     **Quién recibe qué:**
     - **supervisor:** las alertas operativas (`absence:*`).
     - **crew:** solo los avisos dirigidos a él (`assignment:replacement`, `certification:*`).
-    - **super_admin:** ninguna.
+    - **super_admin:** ninguna: `/stream` y la campana le responden `403`.
 
     Todos los avisos se guardan también en la campana (`/notifications`), así se ven aunque la
     persona no estuviera conectada. Las alertas del supervisor se guardan una vez para el rol y
     cada supervisor marca como leídas las suyas.
+
+    **Preferencias:** se respetan las que la persona guarda en Configuración (`notifications` de
+    `GET /users/me` en Admin, leído con su propio token y guardado 60 s por persona):
+    `absence_reported` → `absence:reported`, `absence_covered` → `absence:covered` (supervisor) y
+    `replacement_assigned` → `assignment:replacement` (crew). Solo un `false` apaga el tipo: no llega
+    en vivo ni sale en la campana (lista y `unread_count`). Los demás tipos siempre se envían. Si Admin
+    no responde, no se filtra nada (mejor recibir de más que perder una alerta). Con la conexión
+    abierta, las preferencias se vuelven a leer cada 60 s, así que un cambio se aplica en un par de
+    minutos como mucho, sin reconectar.
 
     **Eventos que emite el servidor** (en `data`, un JSON con `type` y `message`):
     - `connected`: confirmación al conectarse.
@@ -51,10 +60,12 @@ paths:
   /stream:
     get:
       tags: [Tiempo real]
-      summary: Abrir la conexión SSE (cualquier usuario con sesión)
+      summary: Abrir la conexión SSE (crew y supervisor)
       description: |
         Desde el frontend: `/api/notification/stream`. La sesión sale de la cookie `aircrew_token`
         o del header `Authorization: Bearer`. La conexión queda abierta; el gateway no la corta.
+        Antes de abrirla se leen las preferencias de la persona en Admin (hasta 2 s de espera):
+        no recibe los tipos que apagó.
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -77,12 +88,15 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorWithCode' }
-        '403': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /notifications:
     get:
       tags: [Campana]
-      summary: Mis avisos y los de mi rol, del más nuevo al más viejo
+      summary: Mis avisos y los de mi rol, del más nuevo al más viejo (crew y supervisor)
+      description: |
+        Sin los tipos que la persona apagó en sus preferencias: no salen en `items` ni cuentan en
+        `unread_count`. Si Admin no responde, se listan todos.
       security:
         - cookieAuth: []
         - bearerAuth: []
@@ -104,7 +118,7 @@ paths:
                   unread_count: { type: integer, example: 2 }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /notifications/{id}/read:
     patch:
@@ -125,6 +139,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Notification' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
         '404':
           description: No existe o no es de esta persona
           content:
@@ -148,6 +163,7 @@ paths:
                 properties:
                   updated: { type: integer, example: 2 }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
 
   /health:
     get:
@@ -267,7 +283,7 @@ components:
             properties:
               type: { type: string, example: 'absence:reported' }
               message: { type: string, example: EMP-004 no podrá volar AC201 (incapacidad). }
-              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron. }
+              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron (sin contar las de quienes apagaron ese tipo). }
               saved: { type: boolean, description: Quedó en la campana de los supervisores. false si no se pudo guardar; igual se envía en vivo. }
     Notified:
       description: Aviso guardado en el historial del tripulante y enviado a sus conexiones abiertas
@@ -278,7 +294,7 @@ components:
             properties:
               type: { type: string, example: 'certification:registered' }
               message: { type: string, example: Asley Torres te registró un certificado. }
-              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas). }
+              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas); 0 si apagó ese tipo. }
               saved: { type: boolean, description: false si no se pudo guardar; igual se envía en vivo. }
     Error:
       description: Datos inválidos, falta autenticación o el rol no tiene permiso
@@ -288,6 +304,14 @@ components:
             type: object
             properties:
               error: { type: string }
+    NoNotifications:
+      description: |
+        Token de servicio («No tienes permisos para esta acción.») o super_admin, que no recibe
+        notificaciones.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorWithCode' }
+          example: { error: El super_admin no recibe notificaciones., code: forbidden }
 
   schemas:
     ErrorWithCode:

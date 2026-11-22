@@ -17,31 +17,34 @@ async function insertNotification({ userId = null, audienceRole = null, type, me
 }
 
 // Los avisos que ve una persona, los más recientes primero, con su read_at.
-async function findVisible(viewer, { limit }) {
+// excludeTypes: tipos que apagó en sus preferencias (con [] no se excluye nada).
+async function findVisible(viewer, { limit, excludeTypes = [] }) {
   const { rows } = await pool.query(
     `SELECT n.id, n.type, n.message, n.data, r.read_at, n.created_at
      FROM public.notifications n
      LEFT JOIN public.notification_reads r
        ON r.notification_id = n.id AND r.user_id = $1
      WHERE ${visibleTo}
+       AND n.type <> ALL($4::text[])
      ORDER BY n.created_at DESC
      LIMIT $3`,
-    [viewer.id, viewer.role, limit]
+    [viewer.id, viewer.role, limit, excludeTypes]
   );
 
   return rows;
 }
 
-async function countUnread(viewer) {
+async function countUnread(viewer, { excludeTypes = [] } = {}) {
   const { rows } = await pool.query(
     `SELECT count(*)::int AS unread
      FROM public.notifications n
      WHERE ${visibleTo}
+       AND n.type <> ALL($3::text[])
        AND NOT EXISTS (
          SELECT 1 FROM public.notification_reads r
          WHERE r.notification_id = n.id AND r.user_id = $1
        )`,
-    [viewer.id, viewer.role]
+    [viewer.id, viewer.role, excludeTypes]
   );
 
   return rows[0].unread;

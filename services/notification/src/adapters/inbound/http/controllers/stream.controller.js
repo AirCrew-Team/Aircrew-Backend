@@ -6,16 +6,27 @@ const { tokenFromRequest } = require('../../auth/sessionToken');
 const HEARTBEAT_MS = 25000;
 // Si se cae la conexión, el navegador (EventSource) reintenta a los 5 s.
 const RETRY_MS = 5000;
+// Con la conexión abierta, las preferencias se vuelven a leer (pasando por la caché
+// de 60 s): un cambio en Configuración se aplica sin reconectar.
+const PREFERENCES_MS = 60000;
 
 // GET /stream: conexión SSE de la persona con sesión. Recibe sus avisos y, si es
-// supervisor, las alertas operativas. Antes de que venza el token se envía
-// auth:expired y se cierra.
-function createStreamController({ publisher, heartbeatMs = HEARTBEAT_MS, now = () => Date.now() }) {
-  return function stream(req, res, next) {
+// supervisor, las alertas operativas, menos los tipos que apagó en sus preferencias
+// (loadDisabledTypes). El super_admin no recibe notificaciones: 403. Antes de que
+// venza el token se envía auth:expired y se cierra.
+function createStreamController({
+  publisher,
+  loadDisabledTypes,
+  heartbeatMs = HEARTBEAT_MS,
+  preferencesMs = PREFERENCES_MS,
+  now = () => Date.now(),
+}) {
+  return async function stream(req, res, next) {
+    const token = tokenFromRequest(req);
     let result;
 
     try {
-      result = verifyToken(tokenFromRequest(req));
+      result = verifyToken(token);
     } catch (error) {
       error.status = 500;
       return next(error);
@@ -38,6 +49,18 @@ function createStreamController({ publisher, heartbeatMs = HEARTBEAT_MS, now = (
       return res.status(403).json({ error: 'No tienes permisos para esta acción.' });
     }
 
+    if (result.user.role === 'super_admin') {
+      return res
+        .status(403)
+        .json({ error: 'El super_admin no recibe notificaciones.', code: 'forbidden' });
+    }
+
+    const { user, expiresAt } = result;
+    const preferences = { disabledTypes: await loadDisabledTypes(user, token) };
+
+    // Se fue mientras se leían las preferencias: ya no hay a quién escribirle.
+    if (req.destroyed) return undefined;
+
     res.status(200).set({
       'Content-Type': 'text/event-stream; charset=utf-8',
       // no-transform: el proxy del frontend (Caddy) no la comprime ni la retiene.
@@ -48,11 +71,14 @@ function createStreamController({ publisher, heartbeatMs = HEARTBEAT_MS, now = (
     res.flushHeaders();
     res.write(`retry: ${RETRY_MS}\n\n`);
 
-    const { user, expiresAt } = result;
-    const removeConnection = publisher.addConnection(user, res);
+    const removeConnection = publisher.addConnection(user, res, preferences);
     publisher.writeEvent(res, 'connected', { message: 'Conectado a las notificaciones de AirCrew.' });
 
     const heartbeat = setInterval(() => res.write(': ping\n\n'), heartbeatMs);
+    // loadDisabledTypes nunca falla: si admin no responde, deja de filtrar.
+    const refresh = setInterval(async () => {
+      preferences.disabledTypes = await loadDisabledTypes(user, token);
+    }, preferencesMs);
     const expiry = expiresAt
       ? setTimeout(() => {
           publisher.writeEvent(res, 'auth:expired', {
@@ -64,6 +90,7 @@ function createStreamController({ publisher, heartbeatMs = HEARTBEAT_MS, now = (
 
     req.on('close', () => {
       clearInterval(heartbeat);
+      clearInterval(refresh);
       if (expiry) clearTimeout(expiry);
       removeConnection();
     });

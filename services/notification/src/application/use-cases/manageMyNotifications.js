@@ -23,17 +23,20 @@ function toItem(row) {
   };
 }
 
-function createManageMyNotifications({ notificationRepository }) {
-  async function listMine(user, { limit } = {}) {
+// loadDisabledTypes(user, token): tipos que la persona apagó en sus preferencias; la
+// lista y el contador de no leídos los excluyen. Sin él no se excluye nada.
+function createManageMyNotifications({ notificationRepository, loadDisabledTypes = async () => [] }) {
+  async function listMine(user, { limit, token } = {}) {
     const size = limit === undefined || limit === '' ? DEFAULT_LIMIT : Number(limit);
 
     if (!Number.isInteger(size) || size < 1 || size > MAX_LIMIT) {
       throw new DomainError(`limit debe ser un entero de 1 a ${MAX_LIMIT}.`);
     }
 
+    const excludeTypes = await loadDisabledTypes(user, token);
     const [rows, unread] = await Promise.all([
-      notificationRepository.findVisible(user, { limit: size }),
-      notificationRepository.countUnread(user),
+      notificationRepository.findVisible(user, { limit: size, excludeTypes }),
+      notificationRepository.countUnread(user, { excludeTypes }),
     ]);
 
     return { items: rows.map(toItem), unread_count: unread };

@@ -11,8 +11,10 @@ function writeEvent(res, type, data) {
 }
 
 // Registra una conexión; devuelve la función que la quita al cerrarse.
-function addConnection(user, res) {
-  const connection = { user, res };
+// preferences.disabledTypes: tipos que la persona apagó; se lee en cada envío, así que
+// quien abrió la conexión puede actualizarlo mientras siga abierta.
+function addConnection(user, res, preferences = { disabledTypes: [] }) {
+  const connection = { user, res, preferences };
   connections.add(connection);
   return () => connections.delete(connection);
 }
@@ -21,7 +23,7 @@ function sendTo(filter, alert) {
   let delivered = 0;
 
   for (const connection of connections) {
-    if (filter(connection.user)) {
+    if (filter(connection.user) && !connection.preferences.disabledTypes.includes(alert.type)) {
       writeEvent(connection.res, alert.type, alert);
       delivered += 1;
     }

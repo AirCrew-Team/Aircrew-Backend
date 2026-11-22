@@ -1,4 +1,4 @@
-const { parseStatusFilter } = require('../../domain/entities/absence');
+const { parseStatusFilter, parseKindFilter } = require('../../domain/entities/absence');
 
 const NAME_FIELDS = { crew_user_id: 'crew_name', replacement_user_id: 'replacement_name' };
 
@@ -34,9 +34,10 @@ async function attachFlightDetails(absences, flightsClient, authorization) {
 }
 
 function createGetAbsences(absenceRepository, attachUserNames, flightsClient) {
-  return async function getAbsences({ status } = {}, authorization) {
+  return async function getAbsences({ status, kind } = {}, authorization) {
     const absences = await absenceRepository.findAbsences({
       status: parseStatusFilter(status),
+      kind: parseKindFilter(kind),
     });
     const named = await attachUserNames(absences, NAME_FIELDS);
     return attachFlightDetails(named, flightsClient, authorization);

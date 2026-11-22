@@ -5,9 +5,10 @@ const passwordHasher = require('../../../outbound/security/passwordHasher');
 
 const createGetUserById = require('../../../../application/use-cases/getUserById');
 const { createCreateUser } = require('../../../../application/use-cases/createUser');
-const createInviteCrewUser = require('../../../../application/use-cases/inviteCrewUser');
 const createManageUsers = require('../../../../application/use-cases/manageUsers');
-const emailClient = require('../../../outbound/clients/resendClient');
+const createManageProfile = require('../../../../application/use-cases/manageProfile');
+const { emailClient } = require('../../../outbound/clients/emailClient');
+const crewClient = require('../../../outbound/clients/crewClient');
 
 const {
   verifyJwt,
@@ -18,33 +19,46 @@ const { allowRoles } = require('../middlewares/roles.middleware');
 const {
   createGetUserByIdController,
   createCreateUserController,
-  createCrewUserController,
   createManageUsersController,
+  createProfileController,
 } = require('../controllers/user.controller');
 
 const router = express.Router();
 
-const getUserById = createGetUserById(userRepository);
-const createUser = createCreateUser({ userRepository, passwordHasher });
-const inviteCrewUser = createInviteCrewUser({
+const getUserById = createGetUserById(userRepository, { crewClient });
+const createUser = createCreateUser({
   userRepository,
   passwordHasher,
   emailClient,
+  crewClient,
 });
 
 const getByIdController = createGetUserByIdController(getUserById);
 const createUserController = createCreateUserController(createUser);
-const createCrewUser = createCrewUserController(inviteCrewUser);
 
-const manageUsers = createManageUsersController(createManageUsers(userRepository));
+const manageUsers = createManageUsersController(
+  createManageUsers(userRepository, { crewClient })
+);
 const superAdmin = allowRoles('super_admin');
+const profile = createProfileController(createManageProfile(userRepository));
+// La foto viaja en base64 dentro del JSON. El body se lee después de comprobar
+// la sesión (app.js no lo lee en esta ruta).
+const photoBody = express.json({ limit: '3mb' });
+
+// Las rutas /me van antes de /:id: si no, /:id las atraparía (y PATCH exige super_admin).
+router.get('/me', verifyJwt, profile.me);
+router.patch('/me', verifyJwt, profile.update);
+router.get('/me/photo', verifyJwt, profile.photo);
+router.put('/me/photo', verifyJwt, photoBody, profile.savePhoto);
+router.delete('/me/photo', verifyJwt, profile.deletePhoto);
 
 router.get('/', verifyJwt, superAdmin, manageUsers.list);
+// Antes de /:id, que la atraparía.
+router.get('/stats', verifyJwt, superAdmin, manageUsers.stats);
 router.get('/:id', verifyJwt, getByIdController);
 router.post('/', verifyJwt, superAdmin, createUserController);
 router.patch('/:id', verifyJwt, superAdmin, manageUsers.update);
 router.delete('/:id', verifyJwt, superAdmin, manageUsers.deactivate);
-router.post('/crew-registration', verifyCrewServiceKey, createCrewUser);
 router.post('/lookup', verifyCrewServiceKey, manageUsers.lookup);
 
 module.exports = router;

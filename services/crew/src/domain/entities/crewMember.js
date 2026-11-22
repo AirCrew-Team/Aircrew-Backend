@@ -10,107 +10,119 @@ const CREW_RANKS = ['captain', 'first_officer', 'purser', 'flight_attendant'];
 
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
-function isNonEmptyString(value) {
-  return typeof value === 'string' && value.trim() !== '';
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const employeeCodePattern = /^[A-Z0-9-]{3,30}$/;
+// Código IATA del aeropuerto, p. ej. ATL. Admin decide cuáles hubs se usan.
+const basePattern = /^[A-Z]{3}$/;
+const MAX_POSITION_LENGTH = 40;
+
+const EMPLOYEE_CODE_MESSAGE =
+  'employee_code debe tener de 3 a 30 caracteres: letras, números o guiones.';
+const POSITION_MESSAGE = `position debe ser un texto de 1 a ${MAX_POSITION_LENGTH} caracteres.`;
+const BASE_MESSAGE = 'base debe ser un código IATA de 3 letras.';
+const STATUS_MESSAGE = `status debe ser uno de: ${CREW_STATUSES.join(', ')}.`;
+
+function isValidCrewUserId(id) {
+  return typeof id === 'string' && uuidPattern.test(id);
 }
 
-function optionalText(value, name) {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (!isNonEmptyString(value)) {
-    throw new DomainError(`${name} debe ser un texto no vacío.`, 400, { field: name });
-  }
-
-  return value.trim();
+function parseEmployeeCode(value) {
+  const code = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  if (!employeeCodePattern.test(code)) throw new DomainError(EMPLOYEE_CODE_MESSAGE);
+  return code;
 }
 
-function optionalDate(value, name) {
-  if (value === undefined || value === null) {
-    return null;
+function parsePosition(value) {
+  const position = typeof value === 'string' ? value.trim() : '';
+  if (position === '' || position.length > MAX_POSITION_LENGTH) {
+    throw new DomainError(POSITION_MESSAGE);
   }
+  return position;
+}
 
-  if (typeof value !== 'string' || !isoDatePattern.test(value)) {
-    throw new DomainError(`${name} debe ser una fecha AAAA-MM-DD.`, 400, { field: name });
-  }
+// null o vacío → sin base.
+function parseBase(value) {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new DomainError(BASE_MESSAGE);
+  const base = value.trim().toUpperCase();
+  if (base === '') return null;
+  if (!basePattern.test(base)) throw new DomainError(BASE_MESSAGE);
+  return base;
+}
 
+function parseStatus(value) {
+  if (!CREW_STATUSES.includes(value)) throw new DomainError(STATUS_MESSAGE);
   return value;
 }
 
-// Valida y normaliza los datos de un tripulante nuevo.
-// name y email son de la cuenta en Admin; el resto es el perfil en Crew.
-function createCrewMember({
-  name,
-  email,
-  employeeCode,
+// Perfil de un tripulante nuevo. Lo pide Admin después de crear la cuenta;
+// el nombre y el correo son de la cuenta y se quedan en Admin.
+function createCrewProfile({
+  user_id: userId,
+  employee_code: employeeCode,
   position,
-  rank,
-  baseCode = null,
-  ratings = [],
-  englishLevel = null,
-  medicalExpiresOn = null,
-  hireDate = null,
-  phone = null,
-  currentLocation = null,
+  base = null,
   status = 'available',
-  isActive = true,
-}) {
-  if (
-    !isNonEmptyString(name) ||
-    !isNonEmptyString(email) ||
-    !isNonEmptyString(employeeCode) ||
-    !isNonEmptyString(position)
-  ) {
-    throw new DomainError('Se requieren name, email, employeeCode y position.');
+} = {}) {
+  if (!isValidCrewUserId(userId)) {
+    throw new DomainError('Se requiere un user_id válido.');
   }
 
-  if (!CREW_RANKS.includes(rank)) {
-    throw new DomainError(`rank debe ser uno de: ${CREW_RANKS.join(', ')}.`, 400, {
-      field: 'rank',
-    });
-  }
-
-  if (!CREW_STATUSES.includes(status)) {
-    throw new DomainError(`status debe ser uno de: ${CREW_STATUSES.join(', ')}.`, 400, {
-      field: 'status',
-    });
-  }
-
-  if (!Array.isArray(ratings) || !ratings.every(isNonEmptyString)) {
-    throw new DomainError('ratings debe ser una lista de familias de avión, por ejemplo ["A320"].', 400, {
-      field: 'ratings',
-    });
-  }
-
-  if (
-    englishLevel !== null &&
-    (!Number.isInteger(englishLevel) || englishLevel < 1 || englishLevel > 6)
-  ) {
-    throw new DomainError('englishLevel debe ser un número de 1 a 6 (nivel OACI).', 400, {
-      field: 'englishLevel',
-    });
-  }
-
-  const base = optionalText(baseCode, 'baseCode');
-  const location = optionalText(currentLocation, 'currentLocation');
+  const profileBase = parseBase(base);
 
   return {
-    name: name.trim(),
-    email: email.trim().toLowerCase(),
-    employeeCode: employeeCode.trim(),
-    position: position.trim(),
-    rank,
-    baseCode: base ? base.toUpperCase() : null,
-    ratings: [...new Set(ratings.map((item) => item.trim().toUpperCase()))],
-    englishLevel,
-    medicalExpiresOn: optionalDate(medicalExpiresOn, 'medicalExpiresOn'),
-    hireDate: optionalDate(hireDate, 'hireDate'),
-    phone: optionalText(phone, 'phone'),
-    currentLocation: location ? location.toUpperCase() : null,
-    status,
-    isActive,
+    userId,
+    employeeCode: parseEmployeeCode(employeeCode),
+    position: parsePosition(position),
+    base: profileBase,
+    // Recién creado, el tripulante está en su base.
+    currentLocation: profileBase,
+    status: parseStatus(status),
   };
 }
 
-module.exports = { CREW_STATUSES, CREW_RANKS, createCrewMember };
+// Cambios que Admin puede hacer al perfil. Solo se aplican los campos enviados.
+function validateCrewProfileUpdate(input) {
+  const {
+    employee_code: employeeCode,
+    position,
+    base,
+    status,
+    is_active: isActive,
+  } = input || {};
+  const changes = {};
+
+  if (employeeCode !== undefined) changes.employeeCode = parseEmployeeCode(employeeCode);
+  if (position !== undefined) changes.position = parsePosition(position);
+  if (base !== undefined) changes.base = parseBase(base);
+  if (status !== undefined) changes.status = parseStatus(status);
+
+  if (isActive !== undefined) {
+    if (typeof isActive !== 'boolean') {
+      throw new DomainError('is_active debe ser true o false.');
+    }
+    changes.isActive = isActive;
+  }
+
+  if (Object.keys(changes).length === 0) {
+    throw new DomainError(
+      'Envía al menos uno de: employee_code, position, base, status, is_active.'
+    );
+  }
+
+  return changes;
+}
+
+// Solo un tripulante disponible puede proponerse como reemplazo.
+function isAvailable(crewMember) {
+  return crewMember.status === 'available' && crewMember.isActive !== false;
+}
+
+module.exports = {
+  CREW_STATUSES,
+  isValidCrewUserId,
+  createCrewProfile,
+  validateCrewProfileUpdate,
+  isAvailable,
+};

@@ -1,6 +1,7 @@
 const express = require('express');
 const { services } = require('../../../config/env');
 const { createServiceProxy } = require('../../outbound/http/serviceProxy');
+const { cookieToAuthorization } = require('./cookieAuth');
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.get('/health', (req, res) => {
 // sugerir una tripulación completa): se le da más tiempo que al resto.
 const TIMEOUTS = { recommendation: 120000 };
 
+router.use(cookieToAuthorization);
 for (const [name, target] of Object.entries(services)) {
   router.use(`/api/${name}`, createServiceProxy(name, target, TIMEOUTS[name]));
 }

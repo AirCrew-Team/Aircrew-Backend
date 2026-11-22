@@ -108,7 +108,12 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409':
-          description: La ausencia ya tiene un reemplazo esperando confirmación, está cubierta o el vuelo ya no admite cambios
+          description: 'La ausencia ya está cubierta, no tiene vuelo («Esta ausencia no tiene un vuelo asociado.»), el vuelo ya no admite reemplazos o el ausente ya no está en el vuelo'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '502':
+          description: Crew o Flights no respondieron
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

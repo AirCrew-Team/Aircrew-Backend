@@ -31,14 +31,17 @@ function verifyJwt(req, res, next) {
     if (
       typeof payload === 'string' ||
       typeof payload.sub !== 'string' ||
-      typeof payload.role !== 'string'
+      typeof payload.role !== 'string' ||
+      typeof payload.iat !== 'number'
     ) {
       return res.status(401).json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
     }
 
+    // iat (segundos): las rutas que leen la cuenta lo comparan con password_changed_at.
     req.user = {
       id: payload.sub,
       role: payload.role,
+      iat: payload.iat,
     };
 
     return next();

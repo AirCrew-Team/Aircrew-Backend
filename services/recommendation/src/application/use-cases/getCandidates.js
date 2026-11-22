@@ -35,6 +35,12 @@ function createGetCandidates({ crewClient, flightsClient, suggestionRepository }
     }
 
     const absence = await crewClient.getAbsence(absenceId, authorization);
+
+    // Las ausencias por fechas no tienen un vuelo en el que reemplazar: sus
+    // solicitudes son las ausencias por vuelo que salieron de ella.
+    if (!absence.flight_id) {
+      throw new DomainError('Esta ausencia no tiene un vuelo asociado.', 409);
+    }
     const [flight, members, suggestions] = await Promise.all([
       flightsClient.getFlight(absence.flight_id, authorization),
       crewClient.getCrewMembers(authorization),

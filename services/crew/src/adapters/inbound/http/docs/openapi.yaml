@@ -31,69 +31,6 @@ paths:
                   status: { type: string, example: ok }
 
   /crew-members:
-    post:
-      tags: [Tripulantes]
-      summary: Registrar un tripulante (supervisor o super_admin)
-      description: |
-        Crea el perfil en Crew y le pide a Admin la cuenta pendiente con rol `crew`.
-        Admin envía al tripulante un correo para que defina su contraseña.
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name, email, employeeCode, position, rank]
-              properties:
-                name: { type: string, example: Samuel Arredondo }
-                email: { type: string, format: email }
-                employeeCode: { type: string, example: EMP-001 }
-                position: { type: string, example: Primer Oficial, description: Cargo oficial (texto libre). }
-                rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-                baseCode: { type: string, example: BOG }
-                ratings: { type: array, items: { type: string }, example: [A320] }
-                englishLevel: { type: integer, minimum: 1, maximum: 6, example: 5 }
-                medicalExpiresOn: { type: string, example: '2027-05-18' }
-                hireDate: { type: string, example: '2021-02-12' }
-                phone: { type: string, example: '+573001234567' }
-                currentLocation: { type: string, nullable: true, example: BOG }
-                status:
-                  $ref: '#/components/schemas/CrewStatus'
-                isActive: { type: boolean, default: true }
-      responses:
-        '201':
-          description: Tripulante registrado
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CrewMember' }
-        '400':
-          description: Datos inválidos
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '401':
-          description: Falta autenticación o no es válida
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '403':
-          description: El rol no tiene permiso
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '409':
-          description: Ya existe una cuenta con ese email en Admin
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '502':
-          description: Admin o Resend fallaron al crear la cuenta o enviar el correo
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-
     get:
       tags: [Tripulantes]
       summary: Listar tripulantes (supervisor o super_admin)
@@ -153,8 +90,22 @@ paths:
       tags: [Ausencias]
       summary: Reportar una ausencia (crew)
       description: |
-        El tripulante reporta que no podrá cumplir un vuelo que tiene asignado.
-        Crew confirma con Flights que el vuelo sea suyo y que todavía no haya salido.
+        Dos formas:
+
+        **Por vuelo** (`flight_id`, `reason`, `notes`): no podrá cumplir ese vuelo. El vuelo debe ser suyo
+        y no haber salido (404 `flight_not_assigned`, 409 `flight_departed`, 409 `duplicate_absence`).
+        Es una solicitud de reemplazo: queda con `suggestions_state: searching` y Recommendation busca
+        candidatos con Claude en segundo plano.
+
+        **Por fechas** (`start_date`, `end_date`, `reason`, `notes`, `attachment`): no podrá trabajar esos días.
+        Por cada vuelo suyo que salga en esas fechas (hora de Colombia) y no haya salido, se crea además
+        una ausencia por vuelo con `parent_absence_id` = esta, y cada una es una solicitud de reemplazo.
+        La respuesta las trae en `replacement_requests`. Si Flights no responde, la ausencia se guarda
+        igual, sin solicitudes.
+        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y `end_date` es igual o posterior, con 30 días como máximo entre ambas.
+        - El comprobante es obligatorio si el motivo es `illness`. Va en base64: PDF, PNG o JPG de hasta 10 MB ya decodificado, y sus primeros bytes deben coincidir con `mime_type`.
+        - La ausencia y el comprobante se guardan en una sola transacción. Esta ruta acepta un body JSON de hasta 15 MB; las demás, 100 kB.
+        - Avisa en segundo plano a los supervisores conectados.
       security:
         - bearerAuth: []
       requestBody:
@@ -163,19 +114,30 @@ paths:
           application/json:
             schema:
               type: object
-              required: [flight_id, reason]
+              required: [reason]
+              description: Envía flight_id (por vuelo) o start_date y end_date (por fechas).
               properties:
-                flight_id: { type: string, format: uuid, description: Id del vuelo asignado. }
+                flight_id: { type: string, format: uuid, description: Solo para la ausencia por vuelo. }
+                start_date: { type: string, format: date, example: '2026-11-20' }
+                end_date: { type: string, format: date, example: '2026-11-22' }
                 reason: { $ref: '#/components/schemas/AbsenceReason' }
                 notes: { type: string, maxLength: 500, nullable: true, example: Fiebre alta desde la madrugada. }
+                attachment:
+                  type: object
+                  nullable: true
+                  required: [file_name, mime_type, data_base64]
+                  properties:
+                    file_name: { type: string, maxLength: 255, example: incapacidad.pdf }
+                    mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+                    data_base64: { type: string, format: byte, description: Contenido del archivo en base64. }
       responses:
         '201':
-          description: Ausencia reportada
+          description: Ausencia reportada, con los metadatos del comprobante y sin sus bytes
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Absence' }
         '400':
-          description: Datos inválidos
+          description: Fechas, motivo, observaciones o comprobante inválidos
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -189,18 +151,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '404':
-          description: El vuelo no está asignado al tripulante
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Ya reportó ausencia para ese vuelo, o el vuelo ya salió
+          description: Ya tiene una ausencia cuyas fechas se cruzan con estas
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '502':
-          description: No se pudo consultar el servicio de vuelos
+              example: { error: Ya tienes una ausencia reportada que se cruza con esas fechas. }
+        '413':
+          description: El body supera los 15 MB
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -209,7 +167,8 @@ paths:
       summary: Listar ausencias (supervisor o super_admin)
       description: |
         Las más recientes primero, con el código y cargo del tripulante.
-        Con `?status=reported` se obtiene la cola de ausencias que todavía necesitan reemplazo.
+        **Cola de reemplazos:** `?status=reported&kind=flight` (solo ausencias por vuelo, por salida más próxima).
+        `kind=dates` lista las ausencias por fechas (con su comprobante). Sin `kind`, todas.
         Cada ausencia trae además gate, origin_name, destination_name y aircraft_family del vuelo
         (en null si el servicio de vuelos no responde).
       security:
@@ -219,6 +178,10 @@ paths:
           in: query
           required: false
           schema: { $ref: '#/components/schemas/AbsenceStatus' }
+        - name: kind
+          in: query
+          required: false
+          schema: { type: string, enum: [flight, dates] }
       responses:
         '200':
           description: Ausencias
@@ -449,6 +412,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /absences/{id}/attachment:
+    get:
+      tags: [Ausencias]
+      summary: Descargar el comprobante de una ausencia (supervisor o super_admin)
+      description: |
+        Responde los bytes del archivo con su `Content-Type`, `Content-Disposition: attachment`
+        con el nombre saneado (solo ASCII, sin rutas, comillas ni saltos de línea) y
+        `X-Content-Type-Options: nosniff`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Comprobante
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: El rol no tiene permiso
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: La ausencia no existe o no tiene comprobante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences/{id}/cover:
     patch:
       tags: [Ausencias]
@@ -602,6 +606,168 @@ paths:
                   fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
                   rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
                   sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
+  /internal/crew-members:
+    get:
+      tags: [Interno]
+      summary: Listar todos los perfiles (solo Admin)
+      description: Lo usa Admin para la lista y los indicadores de la pantalla Usuarios.
+      security:
+        - adminServiceKey: []
+      responses:
+        '200':
+          description: Perfiles, ordenados por código
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CrewProfile' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      tags: [Interno]
+      summary: Crear el perfil de un tripulante (solo Admin)
+      description: |
+        Admin lo llama en POST /users después de crear la cuenta pendiente. `employee_code` se guarda en
+        mayúsculas; `base` es un código IATA de 3 letras y también queda como `current_location`
+        inicial. `status` vale `available` si no se envía.
+      security:
+        - adminServiceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, employee_code, position]
+              properties:
+                user_id: { type: string, format: uuid }
+                employee_code: { type: string, example: AC-1108 }
+                position: { type: string, maxLength: 40, example: Comandante }
+                base: { type: string, nullable: true, example: ATL }
+                status: { $ref: '#/components/schemas/CrewStatus' }
+      responses:
+        '201':
+          description: Perfil creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewProfile' }
+        '400':
+          description: Datos inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Código de empleado repetido o la cuenta ya tiene perfil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /internal/crew-members/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Interno]
+      summary: Perfil de un tripulante (solo Admin)
+      security:
+        - adminServiceKey: []
+      responses:
+        '200':
+          description: Perfil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewProfile' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El tripulante no tiene perfil en Crew
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [Interno]
+      summary: Editar o desactivar el perfil (solo Admin)
+      description: Solo se aplican los campos enviados. `base` en `null` o vacía la quita.
+      security:
+        - adminServiceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                employee_code: { type: string }
+                position: { type: string, maxLength: 40 }
+                base: { type: string, nullable: true }
+                status: { $ref: '#/components/schemas/CrewStatus' }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Perfil actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrewProfile' }
+        '400':
+          description: Datos inválidos o body sin campos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El tripulante no tiene perfil en Crew
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Código de empleado repetido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Interno]
+      summary: Borrar un perfil sin historial (solo Admin)
+      description: |
+        Solo para deshacer un alta que no terminó (por ejemplo, si falló el correo). Un perfil con
+        ausencias nunca se borra: responde 409 y hay que desactivarlo con PATCH.
+      security:
+        - adminServiceKey: []
+      responses:
+        '204':
+          description: Perfil borrado
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El tripulante no tiene perfil en Crew
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El tripulante tiene ausencias registradas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
 components:
   securitySchemes:
@@ -609,6 +775,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    adminServiceKey:
+      type: apiKey
+      in: header
+      name: x-service-key
+      description: ADMIN_SERVICE_KEY, la misma en admin/.env y crew/.env.
 
   schemas:
     AbsenceReason:
@@ -620,10 +791,19 @@ components:
       properties:
         id: { type: string, format: uuid }
         code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
+        kind: { type: string, enum: [flight, dates], description: Por vuelo (solicitud de reemplazo) o por fechas. }
+        parent_absence_id: { type: string, format: uuid, nullable: true, description: Ausencia por fechas de la que salió. }
         crew_user_id: { type: string, format: uuid }
-        flight_id: { type: string, format: uuid }
-        flight_number: { type: string, example: AC201 }
-        flight_departure_at: { type: string, format: date-time }
+        flight_id: { type: string, format: uuid, nullable: true, description: Solo en las ausencias antiguas por vuelo. }
+        flight_number: { type: string, nullable: true, example: AC201 }
+        flight_departure_at: { type: string, format: date-time, nullable: true }
+        start_date: { type: string, format: date, nullable: true, example: '2026-11-20', description: null en las ausencias antiguas por vuelo. }
+        end_date: { type: string, format: date, nullable: true, example: '2026-11-22' }
+        attachment:
+          allOf:
+            - $ref: '#/components/schemas/AbsenceAttachment'
+          nullable: true
+          description: Metadatos del comprobante, o null si no tiene. Nunca incluye los bytes. No viene en la respuesta de cubrir.
         reason: { $ref: '#/components/schemas/AbsenceReason' }
         notes: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/AbsenceStatus' }
@@ -638,6 +818,12 @@ components:
         replacement_user_id: { type: string, format: uuid, nullable: true, description: Quién cubrió la ausencia. }
         covered_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
+    AbsenceAttachment:
+      type: object
+      properties:
+        file_name: { type: string, example: incapacidad.pdf }
+        mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+        size_bytes: { type: integer, example: 48213 }
     AbsenceStatus:
       type: string
       enum: [reported, pending_ack, covered, cancelled]
@@ -698,6 +884,18 @@ components:
       enum: [available, on_duty, in_flight, medical_leave, vacation]
       description: on_duty = de guardia en el aeropuerto
       default: available
+    CrewProfile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string, example: AC-1108 }
+        position: { type: string, example: Comandante }
+        base: { type: string, nullable: true, example: ATL }
+        current_location: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/CrewStatus' }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -721,7 +919,8 @@ components:
         name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). Solo en las consultas GET. }
         employee_code: { type: string }
         position: { type: string }
-        current_location: { type: string, nullable: true }
+        base: { type: string, nullable: true, description: Hub del tripulante (código IATA). Lo asigna Admin. }
+        current_location: { type: string, nullable: true, description: Dónde está ahora; empieza en su base. }
         status: { $ref: '#/components/schemas/CrewStatus' }
         is_active: { type: boolean }
         created_at: { type: string, format: date-time }

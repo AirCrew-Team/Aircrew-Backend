@@ -29,6 +29,12 @@ function createLoadReplacementContext({ crewClient, flightsClient }) {
     }
 
     const absence = await crewClient.getAbsence(absenceId, authorization);
+
+    // Las ausencias por fechas no tienen un vuelo en el que reemplazar.
+    if (!absence.flight_id) {
+      throw new DomainError('Esta ausencia no tiene un vuelo asociado.', 409);
+    }
+
     const [flight, members] = await Promise.all([
       flightsClient.getFlight(absence.flight_id, authorization),
       crewClient.getCrewMembers(authorization),

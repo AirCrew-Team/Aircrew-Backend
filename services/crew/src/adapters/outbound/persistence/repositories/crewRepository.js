@@ -1,58 +1,58 @@
 const pool = require('../pool');
 
+// base: la asigna Admin y es la única fuente. Sale también como base_code porque
+// así la leen las reglas, el turno y Recommendation.
 // Las fechas sin hora salen como texto AAAA-MM-DD: si se dejan como DATE, el
 // driver las convierte a medianoche local y en Colombia se correrían un día.
-const crewMemberColumns = `id, user_id, employee_code, position, rank, base_code,
-       ratings, english_level,
+const crewColumns = `id, user_id, employee_code, position, base, base AS base_code,
+       rank, ratings, english_level,
        to_char(medical_expires_on, 'YYYY-MM-DD') AS medical_expires_on,
        to_char(hire_date, 'YYYY-MM-DD') AS hire_date,
        phone, radio_channel, current_location, status, standby_location,
        minutes_to_ramp, standby_until, is_active, created_at`;
 
+// 23505: el código de empleado o la cuenta ya tienen perfil.
+function toDuplicateError(cause) {
+  if (cause.code === '23505') {
+    const error = new Error(
+      cause.constraint && cause.constraint.includes('employee_code')
+        ? 'Ya existe un tripulante con ese código de empleado.'
+        : 'Esa cuenta ya tiene un perfil de tripulante.'
+    );
+    error.status = 409;
+    return error;
+  }
+
+  return cause;
+}
+
 async function createCrewMember({
   userId,
   employeeCode,
   position,
-  rank,
-  baseCode = null,
-  ratings = [],
-  englishLevel = null,
-  medicalExpiresOn = null,
-  hireDate = null,
-  phone = null,
+  base = null,
   currentLocation = null,
   status = 'available',
   isActive = true,
 }) {
-  const { rows } = await pool.query(
-    `INSERT INTO public.crew_members
-       (user_id, employee_code, position, rank, base_code, ratings, english_level,
-        medical_expires_on, hire_date, phone, current_location, status, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-     RETURNING ${crewMemberColumns}`,
-    [
-      userId,
-      employeeCode,
-      position,
-      rank,
-      baseCode,
-      ratings,
-      englishLevel,
-      medicalExpiresOn,
-      hireDate,
-      phone,
-      currentLocation,
-      status,
-      isActive,
-    ]
-  );
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO public.crew_members
+         (user_id, employee_code, position, base, current_location, status, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING ${crewColumns}`,
+      [userId, employeeCode, position, base, currentLocation, status, isActive]
+    );
 
-  return rows[0];
+    return rows[0];
+  } catch (cause) {
+    throw toDuplicateError(cause);
+  }
 }
 
 async function findCrewMembers() {
   const { rows } = await pool.query(
-    `SELECT ${crewMemberColumns}
+    `SELECT ${crewColumns}
      FROM public.crew_members
      ORDER BY employee_code`
   );
@@ -62,7 +62,7 @@ async function findCrewMembers() {
 
 async function findCrewMemberByUserId(userId) {
   const { rows } = await pool.query(
-    `SELECT ${crewMemberColumns}
+    `SELECT ${crewColumns}
      FROM public.crew_members
      WHERE user_id = $1`,
     [userId]
@@ -71,4 +71,63 @@ async function findCrewMemberByUserId(userId) {
   return rows[0] || null;
 }
 
-module.exports = { createCrewMember, findCrewMembers, findCrewMemberByUserId };
+// Actualiza solo los campos recibidos. base enviada puede pasar a null.
+async function updateCrewMember(
+  userId,
+  { employeeCode, position, base, status, isActive }
+) {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE public.crew_members
+       SET employee_code = COALESCE($2, employee_code),
+           position = COALESCE($3, position),
+           base = CASE WHEN $4::boolean THEN $5 ELSE base END,
+           status = COALESCE($6, status),
+           is_active = COALESCE($7, is_active),
+           updated_at = now()
+       WHERE user_id = $1
+       RETURNING ${crewColumns}`,
+      [
+        userId,
+        employeeCode ?? null,
+        position ?? null,
+        base !== undefined,
+        base ?? null,
+        status ?? null,
+        isActive ?? null,
+      ]
+    );
+
+    return rows[0] || null;
+  } catch (cause) {
+    throw toDuplicateError(cause);
+  }
+}
+
+// Borra un perfil sin historial. Lo usa Admin cuando el alta no se pudo
+// terminar; un perfil con ausencias nunca se borra. Devuelve:
+// 'deleted', 'not_found' o 'has_history'.
+async function deleteCrewMemberWithoutHistory(userId) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM public.crew_members cm
+     WHERE cm.user_id = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM public.absences a WHERE a.crew_user_id = cm.user_id
+       )`,
+    [userId]
+  );
+
+  if (rowCount > 0) {
+    return 'deleted';
+  }
+
+  return (await findCrewMemberByUserId(userId)) ? 'has_history' : 'not_found';
+}
+
+module.exports = {
+  createCrewMember,
+  findCrewMembers,
+  findCrewMemberByUserId,
+  updateCrewMember,
+  deleteCrewMemberWithoutHistory,
+};

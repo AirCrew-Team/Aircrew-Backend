@@ -8,6 +8,8 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET,
   jwtIssuer: 'aircrew-admin',
   crewServiceKey: process.env.CREW_SERVICE_KEY,
+  // Admin la usa para crear, editar y desactivar perfiles de tripulante.
+  adminServiceKey: process.env.ADMIN_SERVICE_KEY,
   nameService: 'crew',
   port: Number(process.env.PORT) || 3002,
   adminServiceUrl:

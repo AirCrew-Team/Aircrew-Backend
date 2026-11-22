@@ -1,92 +1,82 @@
 const { Resend } = require('resend');
+const env = require('../../../config/env');
 const {
-  resendApiKey,
-  resendFromEmail,
-  crewActivationUrl,
-} = require('../../../config/env');
+  buildCrewInvitation,
+  buildPasswordReset,
+  configError,
+  getPasswordResetUrl,
+  sendFailedError,
+} = require('./invitationEmail');
 
-function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    };
-
-    return entities[character];
-  });
-}
-
-function getActivationUrl(token) {
-  if (!resendApiKey || !resendFromEmail || !crewActivationUrl) {
-    const error = new Error(
-      'Deben configurarse RESEND_API_KEY, RESEND_FROM_EMAIL y CREW_ACTIVATION_URL.'
-    );
-    error.status = 503;
-    throw error;
+// Envío con Resend. En modo de prueba solo entrega al correo del dueño de la cuenta.
+// createResend se inyecta en los tests.
+function createResendClient({
+  config = env,
+  createResend = (apiKey) => new Resend(apiKey),
+} = {}) {
+  // Falla con 503 si falta la configuración de Resend. No envía nada.
+  function checkConfig() {
+    if (!config.resendApiKey || !config.resendFromEmail) {
+      throw configError('Deben configurarse RESEND_API_KEY y RESEND_FROM_EMAIL.');
+    }
   }
 
-  let activationUrl;
-
-  try {
-    activationUrl = new URL(crewActivationUrl);
-  } catch {
-    const error = new Error('CREW_ACTIVATION_URL debe ser una URL válida.');
-    error.status = 503;
-    throw error;
-  }
-
-  if (!['http:', 'https:'].includes(activationUrl.protocol)) {
-    const error = new Error(
-      'CREW_ACTIVATION_URL debe usar HTTP o HTTPS.'
-    );
-    error.status = 503;
-    throw error;
-  }
-
-  if (token) {
-    activationUrl.searchParams.set('token', token);
-  }
-
-  return activationUrl;
-}
-
-async function sendCrewInvitation({ email, name, token }) {
-  const activationUrl = getActivationUrl(token);
-  const safeName = escapeHtml(name);
-  const url = escapeHtml(activationUrl.toString());
-  const resend = new Resend(resendApiKey);
-
-  let result;
-
-  try {
-    result = await resend.emails.send(
-      {
-        from: resendFromEmail,
-        to: [email],
-        subject: 'Activa tu cuenta de AirCrew',
-        html: `<p>Hola ${safeName},</p><p>Para activar tu cuenta y crear tu contraseña, abre este enlace:</p><p><a href="${url}">Activar cuenta</a></p><p>Si no solicitaste esta cuenta, puedes ignorar este correo.</p>`,
-        text: `Hola ${name},\n\nPara activar tu cuenta y crear tu contraseña, abre este enlace:\n${activationUrl.toString()}\n\nSi no solicitaste esta cuenta, puedes ignorar este correo.`,
-      },
+  // Resend no lanza cuando rechaza el correo: lo devuelve en result.error.
+  async function deliver(email, content) {
+    const resend = createResend(config.resendApiKey);
+    const result = await resend.emails.send(
+      { from: config.resendFromEmail, to: [email], ...content },
       { signal: AbortSignal.timeout(10000) }
     );
-  } catch (cause) {
-    const error = new Error('No se pudo conectar con Resend.', { cause });
-    error.status = 502;
-    throw error;
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    return result.data;
   }
 
-  if (result.error) {
-    const error = new Error(
-      `Resend no pudo enviar la invitación al tripulante: ${result.error.message}`
-    );
-    error.status = 502;
-    throw error;
+  async function sendCrewInvitation({ email, name, token }) {
+    checkConfig();
+
+    const content = buildCrewInvitation({
+      name,
+      token,
+      crewActivationUrl: config.crewActivationUrl,
+    });
+
+    try {
+      return await deliver(email, content);
+    } catch (cause) {
+      throw sendFailedError('Resend', cause);
+    }
   }
 
-  return result.data;
+  // Comprobación previa de la recuperación: proveedor y PASSWORD_RESET_URL.
+  function checkPasswordResetConfig() {
+    checkConfig();
+    getPasswordResetUrl(null, config.passwordResetUrl);
+  }
+
+  // Se envía en segundo plano: el fallo lo registra quien lanza el envío.
+  async function sendPasswordReset({ email, name, token }) {
+    checkConfig();
+
+    const content = buildPasswordReset({
+      name,
+      token,
+      passwordResetUrl: config.passwordResetUrl,
+    });
+
+    return deliver(email, content);
+  }
+
+  return {
+    provider: 'resend',
+    sendCrewInvitation,
+    checkPasswordResetConfig,
+    sendPasswordReset,
+  };
 }
 
-module.exports = { getActivationUrl, sendCrewInvitation };
+module.exports = { createResendClient };

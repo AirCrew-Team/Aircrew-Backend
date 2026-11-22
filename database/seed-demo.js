@@ -81,6 +81,7 @@ const supervisor = {
   key: 'camila.restrepo',
   name: 'Camila Restrepo',
   phone: '+573001112233',
+  employeeCode: 'SUP-BOG-01',
   base: 'BOG',
   shift: 'afternoon',
 };
@@ -220,13 +221,14 @@ async function main() {
       const cabin = Math.ceil(seats / 50);
       const { rows } = await flightsDb.query(
         `INSERT INTO public.aircraft
-           (name, registration, capacity, minimum_crew, initial_destination,
-            final_destination, status, family)
-         VALUES ($1, $2, $3, $4, 'BOG', 'BOG', $5, $6)
+           (name, registration, capacity, minimum_crew, base, status, maintenance_type, family)
+         VALUES ($1, $2, $3, $4, 'BOG', $5, $6, $7)
          ON CONFLICT (registration) DO UPDATE
-           SET name = $1, capacity = $3, minimum_crew = $4, status = $5, family = $6
+           SET name = $1, capacity = $3, minimum_crew = $4, status = $5,
+               maintenance_type = $6, family = $7
          RETURNING id`,
-        [model, registration, seats, 2 + cabin, status, family]
+        [model, registration, seats, 2 + cabin, status,
+          status === 'maintenance' ? 'revision_programada' : null, family]
       );
       aircraftIds[registration] = rows[0].id;
     }
@@ -234,17 +236,19 @@ async function main() {
     // 3. Usuarios en Admin.
     await admin.query(
       `INSERT INTO public.users
-         (id, name, email, password_hash, role, phone, base_code, shift, password_changed_at)
-       VALUES ($1, $2, $3, $4, 'supervisor', $5, $6, $7, now())`,
+         (id, name, email, password_hash, role, phone, employee_code, base, shift,
+          operational_status, password_changed_at)
+       VALUES ($1, $2, $3, $4, 'supervisor', $5, $6, $7, $8, 'available', now())`,
       [userId(supervisor.key), supervisor.name, `${supervisor.key}${DEMO_DOMAIN}`, passwordHash,
-        supervisor.phone, supervisor.base, supervisor.shift]
+        supervisor.phone, supervisor.employeeCode, supervisor.base, supervisor.shift]
     );
 
-    for (const [key, name, , , base] of crew) {
+    // En Admin solo los supervisores tienen base; la del tripulante está en Crew.
+    for (const [key, name] of crew) {
       await admin.query(
-        `INSERT INTO public.users (id, name, email, password_hash, role, base_code, password_changed_at)
-         VALUES ($1, $2, $3, $4, 'crew', $5, now())`,
-        [userId(key), name, `${key}${DEMO_DOMAIN}`, passwordHash, base]
+        `INSERT INTO public.users (id, name, email, password_hash, role, password_changed_at)
+         VALUES ($1, $2, $3, $4, 'crew', now())`,
+        [userId(key), name, `${key}${DEMO_DOMAIN}`, passwordHash]
       );
     }
 
@@ -252,7 +256,7 @@ async function main() {
     for (const [index, [key, , code, rank, base, ratings, english, medicalDays, status, standby]] of crew.entries()) {
       await crewDb.query(
         `INSERT INTO public.crew_members
-           (user_id, employee_code, position, rank, base_code, ratings, english_level,
+           (user_id, employee_code, position, rank, base, ratings, english_level,
             medical_expires_on, hire_date, phone, radio_channel, current_location, status,
             standby_location, minutes_to_ramp, standby_until)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,

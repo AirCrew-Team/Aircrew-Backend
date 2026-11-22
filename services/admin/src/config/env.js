@@ -7,9 +7,33 @@ module.exports = {
   jwtIssuer: 'aircrew-admin',
   superAdminBootstrapKey: process.env.SUPER_ADMIN_BOOTSTRAP_KEY,
   crewServiceKey: process.env.CREW_SERVICE_KEY,
+  // Admin la usa para crear, editar y desactivar perfiles de tripulante en Crew.
+  adminServiceKey: process.env.ADMIN_SERVICE_KEY,
+  crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
   resendApiKey: process.env.RESEND_API_KEY,
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,
+  // Pantalla del frontend para restablecer la contraseña; el correo agrega ?token=.
+  passwordResetUrl: process.env.PASSWORD_RESET_URL,
+  // Quién envía los correos: resend (por defecto), smtp o brevo.
+  emailProvider: process.env.EMAIL_PROVIDER?.trim().toLowerCase(),
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT) || 465,
+    // Sin valor queda undefined y el cliente lo deduce del puerto (465 → true).
+    secure: process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE.trim().toLowerCase() === 'true'
+      : undefined,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM,
+  },
+  // Brevo (API HTTPS): para donde el SMTP está bloqueado, como Railway en Hobby.
+  brevo: {
+    apiKey: process.env.BREVO_API_KEY,
+    senderEmail: process.env.BREVO_SENDER_EMAIL,
+    senderName: process.env.BREVO_SENDER_NAME,
+  },
   activationTokenExpiresMinutes:
     Number(process.env.ACTIVATION_TOKEN_EXPIRES_MINUTES) || 1440,
   nameService: 'admin',

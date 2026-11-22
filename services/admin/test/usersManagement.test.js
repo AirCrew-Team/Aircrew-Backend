@@ -106,7 +106,7 @@ test('un super_admin y un supervisor no tienen perfil de Crew', () => {
 
 // --------------------------------------------------------------- alta
 
-function setupCreate({ createError, crewError, sendError, deleteError } = {}) {
+function setupCreate({ createError, crewError, sendError, deleteError, deleteProfileError } = {}) {
   const steps = [];
   const userRepository = {
     async createPendingUser(data) {
@@ -137,6 +137,7 @@ function setupCreate({ createError, crewError, sendError, deleteError } = {}) {
     },
     async deleteProfile(id) {
       steps.push(['delete-crew-profile', id]);
+      if (deleteProfileError) throw deleteProfileError;
     },
   };
   const emailClient = {
@@ -185,6 +186,48 @@ test('si Crew rechaza el perfil, se borra la cuenta y no sale ningún correo', a
 
   await assert.rejects(createUser(crewInput()), (error) => error === crewError);
   assert.deepEqual(steps.map(([step]) => step), ['account', 'crew-profile', 'delete-account']);
+});
+
+// Un 502 de Crew es un resultado desconocido: pudo crear el perfil y cortarse
+// la respuesta (timeout). Al deshacer se intenta borrar también el perfil.
+test('si Crew responde 502 al crear el perfil, se intenta borrar el perfil y después la cuenta', async () => {
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({ crewError });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.deepEqual(steps.map(([step]) => step), [
+    'account',
+    'crew-profile',
+    'delete-crew-profile',
+    'delete-account',
+  ]);
+  assert.equal(steps[2][1], CREW_ID);
+});
+
+test('tras un 502 de Crew, un 404 al borrar el perfil (no llegó a crearse) no queda en el log', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({
+    crewError,
+    deleteProfileError: httpError(404, 'Tripulante no encontrado.'),
+  });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.deepEqual(steps.slice(-2).map(([step]) => step), ['delete-crew-profile', 'delete-account']);
+  assert.equal(log.mock.callCount(), 0);
+});
+
+test('tras un 502 de Crew, si el borrado del perfil también falla, queda en el log y llega el 502', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const crewError = httpError(502, 'No se pudo comunicar con el servicio de tripulación.');
+  const { steps, createUser } = setupCreate({
+    crewError,
+    deleteProfileError: httpError(502, 'No se pudo comunicar con el servicio de tripulación.'),
+  });
+
+  await assert.rejects(createUser(crewInput()), (error) => error === crewError);
+  assert.equal(steps.at(-1)[0], 'delete-account');
+  assert.equal(log.mock.callCount(), 1);
 });
 
 test('si el correo falla, se borran el perfil de Crew y la cuenta, y llega el error del correo', async () => {

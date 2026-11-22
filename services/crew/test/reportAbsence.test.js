@@ -265,6 +265,11 @@ for (const [label, dates, message] of [
     { start_date: '2026-11-18', end_date: '2026-11-22' },
     'La fecha de inicio no puede ser anterior a hoy.',
   ],
+  [
+    'con un inicio a más de 365 días de hoy',
+    { start_date: '2027-11-21', end_date: '2027-11-21' },
+    'La fecha de inicio no puede ser posterior a 365 días desde hoy.',
+  ],
 ]) {
   test(`AU-B4: responde 400 ${label}`, async (t) => {
     t.mock.method(console, 'error', () => {});
@@ -281,6 +286,7 @@ for (const [label, dates, message] of [
 for (const [label, dates] of [
   ['un inicio de ayer (margen de zona horaria)', { start_date: '2026-11-19', end_date: '2026-11-19' }],
   ['exactamente 30 días entre ambas', { start_date: '2026-11-20', end_date: '2026-12-20' }],
+  ['un inicio a exactamente 365 días de hoy', { start_date: '2027-11-20', end_date: '2027-11-20' }],
 ]) {
   test(`AU-B4: acepta ${label}`, async () => {
     const context = setup();
@@ -362,12 +368,17 @@ for (const [label, file] of [
   });
 }
 
-// El nombre guardado lleva la extensión de su tipo, no la que traiga.
+// El nombre guardado lleva la extensión de su tipo. Solo se quita la que
+// traiga si es una conocida (.pdf, .png, .jpg, .jpeg): el resto es del nombre.
 for (const [label, file, expected] of [
-  ['un PDF llamado informe.html', attachment(PDF, 'application/pdf', 'informe.html'), 'informe.pdf'],
+  ['un PDF llamado informe.html', attachment(PDF, 'application/pdf', 'informe.html'), 'informe.html.pdf'],
   ['un PNG sin extensión', attachment(PNG, 'image/png', 'foto'), 'foto.png'],
   ['un JPEG llamado Foto.JPEG', attachment(JPEG, 'image/jpeg', 'Foto.JPEG'), 'Foto.jpg'],
-  ['un PDF cuyo nombre es solo la extensión', attachment(PDF, 'application/pdf', '.html'), 'comprobante.pdf'],
+  ['un JPEG llamado foto.JPG', attachment(JPEG, 'image/jpeg', 'foto.JPG'), 'foto.jpg'],
+  ['un JPEG llamado foto.png', attachment(JPEG, 'image/jpeg', 'foto.png'), 'foto.jpg'],
+  ['un PDF llamado Dr. Pérez.pdf', attachment(PDF, 'application/pdf', 'Dr. Pérez.pdf'), 'Dr. Pérez.pdf'],
+  ['un PDF llamado Dr. Pérez', attachment(PDF, 'application/pdf', 'Dr. Pérez'), 'Dr. Pérez.pdf'],
+  ['un PDF cuyo nombre es solo la extensión', attachment(PDF, 'application/pdf', ' .PDF '), 'comprobante.pdf'],
 ]) {
   test(`AU-B5: guarda ${label} como ${expected}`, async () => {
     const context = setup();
@@ -379,6 +390,44 @@ for (const [label, file, expected] of [
     assert.equal(res.body.attachment.file_name, expected);
   });
 }
+
+// Un nombre largo no da 400: la base se recorta para que, con la extensión
+// del tipo, el total sea de 255 caracteres.
+for (const [label, fileName] of [
+  ['de 300 caracteres sin extensión', 'a'.repeat(300)],
+  ['de 300 caracteres más .pdf', `${'a'.repeat(300)}.pdf`],
+]) {
+  test(`AU-B5: un nombre ${label} se guarda con 255 caracteres y la extensión del tipo`, async () => {
+    const context = setup();
+
+    const res = await post(context, {
+      ...VALID,
+      reason: 'illness',
+      attachment: attachment(PDF, 'application/pdf', fileName),
+    });
+
+    assert.equal(res.statusCode, 201);
+    const saved = context.absenceRepository.state.attachments[0].fileName;
+    assert.equal(saved, `${'a'.repeat(251)}.pdf`);
+    assert.equal(saved.length, 255);
+  });
+}
+
+test('AU-B5: el recorte no parte un carácter de dos unidades (emoji)', async () => {
+  const context = setup();
+  const fileName = `${'a'.repeat(250)}😀${'b'.repeat(10)}`;
+
+  const res = await post(context, {
+    ...VALID,
+    reason: 'illness',
+    attachment: attachment(PDF, 'application/pdf', fileName),
+  });
+
+  assert.equal(res.statusCode, 201);
+  const saved = context.absenceRepository.state.attachments[0].fileName;
+  assert.equal(saved, `${'a'.repeat(250)}.pdf`);
+  assert.ok(saved.isWellFormed());
+});
 
 // --- AU-B6 ---
 

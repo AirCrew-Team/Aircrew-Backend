@@ -17,12 +17,15 @@ const { newActivationLink } = require('./activationLink');
 // Orden: cuenta pendiente → perfil en Crew (solo tripulantes) → correo.
 // Si un paso falla, se deshacen los anteriores y nadie recibe un enlace.
 function createCreateUser({ userRepository, passwordHasher, emailClient, crewClient }) {
-  async function undo(user, { crewProfileCreated }) {
-    if (crewProfileCreated) {
+  async function undo(user, { deleteCrewProfile }) {
+    if (deleteCrewProfile) {
       try {
         await crewClient.deleteProfile(user.id);
       } catch (error) {
-        console.error(`No se pudo borrar el perfil de Crew de ${user.id}:`, error);
+        // 404: el perfil no existe, no hay nada que borrar.
+        if (error.status !== 404) {
+          console.error(`No se pudo borrar el perfil de Crew de ${user.id}:`, error);
+        }
       }
     }
 
@@ -61,7 +64,9 @@ function createCreateUser({ userRepository, passwordHasher, emailClient, crewCli
           ...newUser.crewProfile,
         });
       } catch (error) {
-        await undo(user, { crewProfileCreated: false });
+        // 400, 404 o 409: Crew no creó nada. 502: resultado desconocido (pudo
+        // crearlo y cortarse la respuesta por el timeout), así que se borra.
+        await undo(user, { deleteCrewProfile: error.status === 502 });
         throw error;
       }
     }
@@ -69,7 +74,7 @@ function createCreateUser({ userRepository, passwordHasher, emailClient, crewCli
     try {
       await emailClient.sendCrewInvitation({ email: user.email, name: user.name, token });
     } catch (error) {
-      await undo(user, { crewProfileCreated: Boolean(crewProfile) });
+      await undo(user, { deleteCrewProfile: Boolean(crewProfile) });
       throw error;
     }
 

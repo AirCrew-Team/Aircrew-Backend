@@ -1,4 +1,5 @@
 const { DomainError } = require('../errors');
+const { normalizeFileName } = require('../value-objects/fileName');
 
 // illness: incapacidad · fatigue: fatiga
 // emergency: calamidad · transfer: problema de traslado
@@ -23,7 +24,7 @@ const ABSENCE_STATUSES = ['reported', 'pending_ack', 'covered', 'cancelled'];
 const MAX_NOTES_LENGTH = 500;
 const MAX_ABSENCE_DAYS = 30;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_FILE_NAME_LENGTH = 255;
+const MAX_DAYS_AHEAD = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Primeros bytes y extensión de cada tipo de comprobante permitido.
@@ -61,7 +62,7 @@ function parseDay(value) {
 }
 
 // «Hoy» va en UTC y se acepta desde ayer: margen para la zona horaria
-// del tripulante.
+// del tripulante. El inicio puede ser como mucho de dentro de 365 días.
 function validateDates(startDate, endDate, now) {
   const start = parseDay(startDate);
   const end = parseDay(endDate);
@@ -80,6 +81,12 @@ function validateDates(startDate, endDate, now) {
 
   if (start < today - DAY_MS) {
     throw new DomainError('La fecha de inicio no puede ser anterior a hoy.');
+  }
+
+  if (start > today + MAX_DAYS_AHEAD * DAY_MS) {
+    throw new DomainError(
+      `La fecha de inicio no puede ser posterior a ${MAX_DAYS_AHEAD} días desde hoy.`
+    );
   }
 
   if (end < start) {
@@ -115,12 +122,6 @@ function parseAttachment(attachment) {
     );
   }
 
-  if (fileName.trim().length > MAX_FILE_NAME_LENGTH) {
-    throw new DomainError(
-      `El nombre del archivo puede tener máximo ${MAX_FILE_NAME_LENGTH} caracteres.`
-    );
-  }
-
   // hasOwn: un tipo como «constructor» no debe encontrar Object.prototype.
   if (!Object.hasOwn(ATTACHMENT_TYPES, mimeType)) {
     throw new DomainError('El comprobante debe ser un PDF, PNG o JPG.');
@@ -144,12 +145,8 @@ function parseAttachment(attachment) {
     );
   }
 
-  // La extensión sale del tipo comprobado, no de la que traiga el nombre:
-  // así un PDF llamado «informe.html» no se descarga como HTML.
-  const baseName = fileName.trim().replace(/\.[^.]*$/, '').trim();
-
   return {
-    fileName: `${baseName || 'comprobante'}${extension}`,
+    fileName: normalizeFileName(fileName, extension, 'comprobante'),
     mimeType,
     sizeBytes: data.length,
     data,

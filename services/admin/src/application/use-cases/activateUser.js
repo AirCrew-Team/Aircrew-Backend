@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { validateActivation } = require('../../domain/entities/user');
 const { DomainError } = require('../../domain/errors');
+const { MESSAGES } = require('../../domain/activation');
 
 function createActivateUser({ userRepository, passwordHasher }) {
   return async function activateUser(input) {
@@ -18,7 +19,7 @@ function createActivateUser({ userRepository, passwordHasher }) {
     });
 
     if (!user) {
-      throw new DomainError('El token de activación no es válido o ya venció.');
+      throw new DomainError(MESSAGES.invalidToken);
     }
 
     return {

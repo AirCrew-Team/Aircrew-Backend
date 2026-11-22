@@ -108,3 +108,37 @@ test('las demás rutas de crew mantienen el límite de 100 kB', async (t) => {
   const res = await request(`/absences/${CREW_USER_ID}/cover`, { method: 'PATCH', role: 'supervisor', body });
   assert.equal(res.status, 413);
 });
+
+// Errores de express.json (body-parser): mensaje en español y un code fijo,
+// en vez del texto en inglés de la librería.
+const TOO_LARGE = { error: 'El cuerpo de la petición supera el tamaño permitido.', code: 'payload_too_large' };
+const INVALID_JSON = { error: 'El cuerpo de la petición no es un JSON válido.', code: 'invalid_json' };
+
+test('un body demasiado grande responde 413 con el mensaje en español', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  noDatabase(t);
+  const body = JSON.stringify({ replacement_user_id: 'x'.repeat(200 * 1024) });
+  const tooBig = JSON.stringify({ license_number: 'a'.repeat(8 * 1024 * 1024 + 1) });
+
+  const global = await request(`/absences/${CREW_USER_ID}/cover`, { method: 'PATCH', role: 'supervisor', body });
+  const inRoute = await request(`/certifications/${CREW_USER_ID}`, { method: 'PUT', role: 'super_admin', body: tooBig });
+
+  assert.equal(global.status, 413);
+  assert.deepEqual(global.body, TOO_LARGE);
+  assert.equal(inRoute.status, 413);
+  assert.deepEqual(inRoute.body, TOO_LARGE);
+});
+
+test('un JSON mal formado responde 400 con el mensaje en español', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  noDatabase(t);
+  const broken = '{"replacement_user_id": ';
+
+  const global = await request(`/absences/${CREW_USER_ID}/cover`, { method: 'PATCH', role: 'supervisor', body: broken });
+  const inRoute = await request(`/certifications/${CREW_USER_ID}`, { method: 'PUT', role: 'super_admin', body: broken });
+
+  assert.equal(global.status, 400);
+  assert.deepEqual(global.body, INVALID_JSON);
+  assert.equal(inRoute.status, 400);
+  assert.deepEqual(inRoute.body, INVALID_JSON);
+});

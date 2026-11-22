@@ -102,8 +102,9 @@ paths:
         una ausencia por vuelo con `parent_absence_id` = esta, y cada una es una solicitud de reemplazo.
         La respuesta las trae en `replacement_requests`. Si Flights no responde, la ausencia se guarda
         igual, sin solicitudes.
-        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y `end_date` es igual o posterior, con 30 días como máximo entre ambas.
+        - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y como máximo de dentro de 365 días; `end_date` es igual o posterior, con 30 días como máximo entre ambas.
         - El comprobante es obligatorio si el motivo es `illness`. Va en base64: PDF, PNG o JPG de hasta 10 MB ya decodificado, y sus primeros bytes deben coincidir con `mime_type`.
+        - `file_name` se normaliza: solo se quita una extensión conocida (`.pdf`, `.png`, `.jpg`, `.jpeg`, sin distinguir mayúsculas), se añade la del tipo real (`.pdf`, `.png` o `.jpg`) y la base se recorta para que el total no pase de 255 caracteres. «Dr. Pérez» se guarda como «Dr. Pérez.pdf» y un nombre vacío tras quitar la extensión, como «comprobante.pdf».
         - La ausencia y el comprobante se guardan en una sola transacción. Esta ruta acepta un body JSON de hasta 15 MB; las demás, 100 kB.
         - Avisa en segundo plano a los supervisores conectados.
       security:
@@ -127,7 +128,7 @@ paths:
                   nullable: true
                   required: [file_name, mime_type, data_base64]
                   properties:
-                    file_name: { type: string, maxLength: 255, example: incapacidad.pdf }
+                    file_name: { type: string, example: incapacidad.pdf, description: 'Se normaliza con la extensión del tipo real y como máximo 255 caracteres (no da 400 por largo).' }
                     mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
                     data_base64: { type: string, format: byte, description: Contenido del archivo en base64. }
       responses:
@@ -137,7 +138,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Absence' }
         '400':
-          description: Fechas, motivo, observaciones o comprobante inválidos
+          description: |
+            Fechas, motivo, observaciones o comprobante inválidos. Por ejemplo, un `start_date`
+            de más de 365 días desde hoy: «La fecha de inicio no puede ser posterior a 365 días desde hoy.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -417,9 +420,13 @@ paths:
       tags: [Ausencias]
       summary: Descargar el comprobante de una ausencia (supervisor o super_admin)
       description: |
-        Responde los bytes del archivo con su `Content-Type`, `Content-Disposition: attachment`
-        con el nombre saneado (solo ASCII, sin rutas, comillas ni saltos de línea) y
-        `X-Content-Type-Options: nosniff`.
+        Responde los bytes del archivo con su `Content-Type`, `X-Content-Type-Options: nosniff`,
+        `Cache-Control: private, no-store` (documento médico: no queda en cachés) y
+        `Content-Disposition: attachment` con dos parámetros (RFC 6266):
+        - `filename="…"`: el nombre en ASCII, sin rutas, comillas ni saltos de línea, para clientes antiguos.
+        - `filename*=UTF-8''…`: el nombre real codificado en UTF-8, con tildes; los navegadores lo prefieren.
+
+        Ejemplo: `attachment; filename="Dr. Perez.pdf"; filename*=UTF-8''Dr.%20P%C3%A9rez.pdf`.
       security:
         - bearerAuth: []
       parameters:
@@ -783,6 +790,9 @@ paths:
       description: |
         `verified: true` la deja «verificada»; `false`, «por verificar» (así también se quita la verificación).
         `file` en base64: PDF, PNG o JPG de hasta 5 MB; sin `file` se deja la copia que había y con `null` se quita.
+        `file.file_name` se normaliza igual que el comprobante de una ausencia: solo se quita una extensión
+        conocida (`.pdf`, `.png`, `.jpg`, `.jpeg`), se añade la del tipo real y el total queda en 255 caracteres
+        como máximo («certificado.pdf» si el nombre queda vacío).
         Deja en el historial «registrado» o «actualizado», y «verificado» cuando pasa a verificada. Esta ruta
         acepta un body de hasta 8 MB y lo lee después de comprobar la sesión.
       security:
@@ -877,7 +887,10 @@ paths:
         - { name: userId, in: path, required: true, description: user_id del tripulante (UUID)., schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: El archivo original, con Content-Disposition attachment, nosniff y sin caché
+          description: |
+            El archivo original, con `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y
+            `Content-Disposition: attachment; filename="<nombre en ASCII>"; filename*=UTF-8''<nombre real codificado>`
+            (RFC 6266: los navegadores usan `filename*`, que conserva las tildes).
           content:
             application/pdf: { schema: { type: string, format: binary } }
             image/png: { schema: { type: string, format: binary } }
@@ -1114,7 +1127,7 @@ components:
     AbsenceAttachment:
       type: object
       properties:
-        file_name: { type: string, example: incapacidad.pdf }
+        file_name: { type: string, example: incapacidad.pdf, description: Normalizado con la extensión del tipo real. }
         mime_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
         size_bytes: { type: integer, example: 48213 }
     AbsenceStatus:

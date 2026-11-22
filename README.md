@@ -224,12 +224,13 @@ Pantalla Certificaciones del super_admin. El contrato completo está en el Swagg
 Las ausencias se reportan por fechas, sin vuelo. El contrato completo está en el Swagger de crew.
 
 - `POST /absences` (solo `crew`) recibe `{ start_date, end_date, reason, notes?, attachment? }`, con las fechas en `AAAA-MM-DD` y `attachment` como `{ file_name, mime_type, data_base64 }`.
-  - Validaciones: el inicio puede ser como mucho de ayer, que es el margen por la zona horaria; el fin es igual o posterior al inicio, con 30 días como máximo entre ambas; las observaciones tienen hasta 500 caracteres.
+  - Validaciones: el inicio puede ser como mucho de ayer, que es el margen por la zona horaria, y como máximo de dentro de 365 días; el fin es igual o posterior al inicio, con 30 días como máximo entre ambas; las observaciones tienen hasta 500 caracteres.
   - El comprobante es un PDF, PNG o JPG de hasta 10 MB, ya decodificado, y sus primeros bytes deben coincidir con el tipo. Es obligatorio si el motivo es `illness`.
+  - El nombre del archivo se normaliza: solo se quita una extensión conocida (`.pdf`, `.png`, `.jpg` o `.jpeg`), se añade la del tipo real y la base se recorta para que el total no pase de 255 caracteres. «Dr. Pérez» se guarda como «Dr. Pérez.pdf». La copia de una certificación sigue la misma regla.
   - Responde `409` si el tripulante ya tiene una ausencia cuyas fechas se cruzan. La comprobación y el guardado van en una transacción con el tripulante bloqueado (`pg_advisory_xact_lock`), así que dos envíos simultáneos no crean ausencias que se cruzan.
   - Esta ruta acepta un body JSON de hasta 15 MB, por el base64, y lo lee después de comprobar la sesión. Las demás rutas de crew siguen con 100 kB.
 - `GET /absences` y `GET /absences/:id` (supervisor y super_admin) incluyen `start_date`, `end_date` y `attachment: { file_name, mime_type, size_bytes } | null`, nunca los bytes.
-- `GET /absences/:id/attachment` (supervisor y super_admin) descarga el comprobante con su `Content-Type`, `Content-Disposition: attachment` y `X-Content-Type-Options: nosniff`. Responde `404` si la ausencia no existe o no tiene comprobante.
+- `GET /absences/:id/attachment` (supervisor y super_admin) descarga el comprobante con su `Content-Type`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y `Content-Disposition: attachment` con `filename` en ASCII y `filename*=UTF-8''…` con el nombre real (RFC 6266), así el navegador conserva las tildes. Responde `404` si la ausencia no existe o no tiene comprobante.
 - Recommendation responde `409` («Esta ausencia no tiene un vuelo asociado.») si se piden reemplazos para una ausencia sin vuelo.
 - El comprobante se guarda en la tabla `absence_attachments` (`BYTEA`) de `database/crew_db.sql`. El script también deja opcionales las columnas del vuelo y añade `start_date` y `end_date`, y se puede volver a ejecutar sobre una base existente.
 - Tests: `npm test -w @vuelos/crew`, y lo mismo con `@vuelos/notification` y `@vuelos/recommendation`.

@@ -89,19 +89,22 @@ Todas las altas entran por Admin: tripulante, supervisor o super_admin. El super
 
 - `POST /users` (solo super_admin) recibe `{ name, email, role, phone? }` y, según el rol:
   - **Supervisor:** sus datos laborales, opcionales (ver «Datos laborales del supervisor»).
-  - **Tripulante (`crew`):** `employee_code` y `position` (el cargo, por ejemplo «Comandante»), obligatorios, y `base` (un hub de Delta) y `status`, opcionales. Admin le pide a Crew que guarde ese perfil.
+  - **Tripulante (`crew`):** `position`, obligatorio, uno de los cargos de `GET /catalogs/user-options` (por ejemplo «Comandante»); `employee_code`, `base` (un hub de Delta) y `status`, opcionales. Sin código, Crew asigna el siguiente (`AC-0001`, `AC-0002`…). Admin le pide a Crew que guarde ese perfil.
   - **super_admin:** sin datos laborales ni perfil.
   - Enviar `password` responde `400`. `position` o `status` en otro rol responden `400`, igual que `shift` u `operational_status` en un tripulante.
   - Orden: cuenta pendiente en Admin, perfil en Crew (solo tripulantes) y correo. Si un paso falla, se deshacen los anteriores y no sale ningún correo, así que se puede reintentar con el mismo email. Un código de tripulante repetido responde `409` («Ya existe un tripulante con ese código de empleado.»).
 - `GET /users` (solo super_admin) es paginado: `?page=1&page_size=10&search=&role=`, con `page_size` de 1 a 100, y responde `{ items, page, page_size, total }`. `search` busca en nombre, correo, código, base y cargo, sin mayúsculas ni tildes.
   - Cada fila trae `phone`, `employee_code`, `position`, `base`, `status` y `shift`. Del tripulante salen de Crew; del supervisor, de sus datos laborales (`status` es su `operational_status`); al super_admin no le aplican y van en `null`.
   - Si Crew no responde, la lista sale igual con los campos del tripulante en `null`.
-- `GET /users/stats` (solo super_admin) responde `{ total, by_role: { crew, supervisor, super_admin }, in_flight, on_duty, medical_fitness_percent }`. `on_duty` cuenta tripulantes y supervisores. `medical_fitness_percent` es `null` porque todavía no hay datos de aptitud médica.
+- `GET /users/stats` (solo super_admin) responde `{ total, by_role: { crew, supervisor, super_admin }, in_flight, on_duty, crew_available, medical_fitness_percent }`. `on_duty` cuenta tripulantes y supervisores; `crew_available`, tripulantes con la cuenta activa y disponibles. `medical_fitness_percent` es `null` porque todavía no hay datos de aptitud médica.
+- `GET /catalogs/user-options` (solo super_admin) da las opciones del formulario: `bases`, `crew_positions`, `shifts` (Turno 1, 2 y 3), `crew_statuses` y `supervisor_statuses`. Vive en `src/domain/userCatalog.js` y es la única fuente.
 - `GET /users/:id` responde lo mismo que una fila de la lista.
 - `PATCH /users/:id` también recibe `phone`, para cualquier rol. En un tripulante, `employee_code`, `position`, `base` y `status` van a su perfil de Crew. Crew se actualiza primero; si después falla Admin, Crew vuelve a como estaba.
+- `POST /users/:id/resend-invitation` (solo super_admin) reenvía el correo de activación de una cuenta pendiente: genera un enlace nuevo y el anterior deja de servir. Una cuenta ya activa responde `409`.
+- Si se corrige el `email` de una cuenta pendiente con `PATCH /users/:id`, la invitación se reenvía sola al correo nuevo y el enlace del correo anterior deja de servir.
 - `DELETE /users/:id` desactiva la cuenta y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
 - Crew ya no tiene `POST /crew-members`. Admin usa las rutas internas `/internal/crew-members` de Crew con el header `x-service-key`, y `ADMIN_SERVICE_KEY` debe ser igual en `services/admin/.env` y `services/crew/.env`. Admin las encuentra en `CREW_SERVICE_URL` (por defecto `http://localhost:3002`).
-- Requiere la columna `base` de `crew_members` en `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
+- Requiere la columna `base` de `crew_members` y la secuencia `crew_employee_code_seq` de `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
 - Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`.
 
 ### Invitación por correo

@@ -62,11 +62,28 @@ test('un tripulante trae su perfil de Crew normalizado y su celular', () => {
   assert.deepEqual(user.crewProfile, { employee_code: 'AC-1108', position: 'Comandante', base: 'ATL' });
 });
 
-test('un tripulante necesita código y cargo, y su base es un hub', () => {
-  assert.throws(() => buildUser(crewInput({ employee_code: undefined })), rejectsWith(400, 'Un tripulante necesita employee_code.'));
-  assert.throws(() => buildUser(crewInput({ position: ' ' })), rejectsWith(400, 'Un tripulante necesita position (su cargo).'));
+const POSITION_MESSAGE =
+  'position debe ser uno de: Comandante, Copiloto, Auxiliar de Vuelo, Sobrecargo Principal, Sobrecargo.';
+
+test('un tripulante necesita un cargo del catálogo, y su base es un hub', () => {
+  for (const position of [undefined, ' ', 'Mecánico', 'pilot']) {
+    assert.throws(() => buildUser(crewInput({ position })), rejectsWith(400, POSITION_MESSAGE), String(position));
+  }
   assert.throws(() => buildUser(crewInput({ base: 'MEX' })), /base debe ser uno de/);
   assert.throws(() => buildUser(crewInput({ shift: 'night' })), rejectsWith(400, 'Los datos laborales solo aplican a supervisores.'));
+});
+
+test('el cargo se guarda con la forma del catálogo', () => {
+  assert.equal(buildUser(crewInput({ position: '  auxiliar   de VUELO ' })).crewProfile.position, 'Auxiliar de Vuelo');
+});
+
+test('el código del tripulante es opcional: sin él, Crew asigna el siguiente', () => {
+  for (const employeeCode of [undefined, null, '', '  ']) {
+    const user = buildUser(crewInput({ employee_code: employeeCode }));
+    assert.equal('employee_code' in user.crewProfile, false, JSON.stringify(employeeCode));
+  }
+  assert.equal(buildUser(crewInput({ employee_code: 'ac-77' })).crewProfile.employee_code, 'AC-77');
+  assert.throws(() => buildUser(crewInput({ employee_code: 'A' })), /employee_code/);
 });
 
 test('supervisor y super_admin no tienen cargo ni estado de tripulante', () => {
@@ -321,8 +338,26 @@ test('indicadores: total, por rol, en vuelo y de guardia', async () => {
     by_role: { crew: 1, supervisor: 1, super_admin: 1 },
     in_flight: 1,
     on_duty: 1,
+    crew_available: 0,
     medical_fitness_percent: null,
   });
+});
+
+test('crew_available cuenta solo tripulantes activos y disponibles', async () => {
+  const { manageUsers } = setupManage({
+    profiles: [{ ...CREW_PROFILES[0], status: 'available' }],
+  });
+
+  assert.equal((await manageUsers.getUserStats()).crew_available, 1);
+});
+
+test('al editar, el código del tripulante no se puede quitar', async () => {
+  const { manageUsers } = setupManage();
+
+  await assert.rejects(
+    manageUsers.updateUser(REQUESTER, CREW_ID, { employee_code: null }),
+    rejectsWith(400, 'El código de empleado de un tripulante no se puede quitar.')
+  );
 });
 
 // -------------------------------------------------------------- edición
@@ -429,4 +464,168 @@ test('si Crew no responde, la ficha sale sin el perfil', async (t) => {
   const user = await getUserById(REQUESTER, CREW_ID);
 
   assert.equal(user.employee_code, null);
+});
+
+// ---------------------------------------------------------- catálogo (HTTP)
+
+test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y estados', async (t) => {
+  const { once } = require('node:events');
+  const jwt = require('jsonwebtoken');
+  process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-de-prueba';
+  const app = require('../src/app');
+  const tokenFor = (role) =>
+    jwt.sign({ role }, process.env.JWT_SECRET, { subject: ADMIN_ID, issuer: 'aircrew-admin', expiresIn: '1h' });
+
+  const server = app.listen(0);
+  await once(server, 'listening');
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const get = async (role) => {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/catalogs/user-options`, {
+      headers: role ? { Authorization: `Bearer ${tokenFor(role)}` } : {},
+    });
+    return { status: res.status, body: await res.json() };
+  };
+
+  assert.equal((await get()).status, 401);
+  assert.equal((await get('supervisor')).status, 403);
+  assert.equal((await get('crew')).status, 403);
+
+  const { status, body } = await get('super_admin');
+  assert.equal(status, 200);
+  assert.equal(body.bases.length, 12); // 9 hubs de Delta + BOG, MDE y CLO (datos de demo)
+  assert.deepEqual(body.bases[0], { code: 'ATL', label: 'Base ATL / Atlanta' });
+  assert.deepEqual(body.crew_positions, ['Comandante', 'Copiloto', 'Auxiliar de Vuelo', 'Sobrecargo Principal', 'Sobrecargo']);
+  assert.deepEqual(body.shifts.map((shift) => shift.code), ['morning', 'afternoon', 'night']);
+  assert.equal(body.shifts[0].label, 'Turno 1 (mañana)');
+  assert.deepEqual(body.crew_statuses.map((item) => item.code), ['available', 'on_duty', 'in_flight', 'medical_leave']);
+  assert.deepEqual(body.supervisor_statuses.map((item) => item.code), ['available', 'on_duty', 'off_duty', 'leave']);
+});
+
+// ---------------------------------------------------- reenviar invitación
+
+const createResendInvitation = require('../src/application/use-cases/resendInvitation');
+
+function setupResend({ user, renewed = true, sendError } = {}) {
+  const calls = [];
+  const userRepository = {
+    async findById(id) {
+      return user && user.id === id ? { ...user } : null;
+    },
+    async renewActivation(id, data) {
+      calls.push(['renew', id, data]);
+      return renewed ? { id, name: user.name, email: user.email } : null;
+    },
+  };
+  const emailClient = {
+    async sendCrewInvitation(data) {
+      calls.push(['email', data]);
+      if (sendError) throw sendError;
+    },
+  };
+  return { calls, resend: createResendInvitation({ userRepository, emailClient }) };
+}
+
+const PENDING = { id: CREW_ID, name: 'Johan Taborda', email: 'johan@aircrew.test', pending_activation: true };
+
+test('reenviar: enlace nuevo y correo con ese mismo enlace', async () => {
+  const { calls, resend } = setupResend({ user: PENDING });
+
+  const result = await resend(CREW_ID);
+
+  assert.equal(result.email, 'johan@aircrew.test');
+  const [, , saved] = calls.find(([step]) => step === 'renew');
+  const [, sent] = calls.find(([step]) => step === 'email');
+  const crypto = require('node:crypto');
+  assert.equal(crypto.createHash('sha256').update(sent.token).digest('hex'), saved.activationTokenHash);
+  assert.ok(saved.activationExpiresAt > new Date());
+});
+
+test('reenviar a una cuenta activa responde 409 sin enviar nada', async () => {
+  const { calls, resend } = setupResend({ user: { ...PENDING, pending_activation: false } });
+
+  await assert.rejects(resend(CREW_ID), rejectsWith(409, 'La cuenta ya está activa: no tiene una invitación pendiente.'));
+  assert.deepEqual(calls, []);
+});
+
+test('reenviar: usuario inexistente o id inválido es 404', async () => {
+  const { resend } = setupResend({ user: PENDING });
+
+  await assert.rejects(resend(SUPERVISOR_ID), rejectsWith(404));
+  await assert.rejects(resend('no-es-uuid'), rejectsWith(404));
+});
+
+test('reenviar: si la cuenta se activó entretanto responde 409 sin enviar', async () => {
+  const { calls, resend } = setupResend({ user: PENDING, renewed: false });
+
+  await assert.rejects(resend(CREW_ID), rejectsWith(409));
+  assert.ok(!calls.some(([step]) => step === 'email'));
+});
+
+test('reenviar: si el correo falla llega ese error y se puede reintentar', async () => {
+  const sendError = httpError(502, 'No se pudo enviar el correo de invitación.');
+  const { resend } = setupResend({ user: PENDING, sendError });
+
+  await assert.rejects(resend(CREW_ID), (error) => error === sendError);
+});
+
+// ------------------------------- corregir el correo de una cuenta pendiente
+
+function setupEmailFix({ pending = true, resendError } = {}) {
+  const calls = [];
+  const target = { id: SUPERVISOR_ID, name: 'Laura', email: 'mal@aircrew.test', role: 'supervisor', is_active: !pending, pending_activation: pending };
+  const userRepository = {
+    async findById() {
+      return { ...target };
+    },
+    async updateUser(id, changes) {
+      calls.push(['update', changes]);
+      return { ...target, ...changes };
+    },
+  };
+  const resendInvitation = async (id) => {
+    calls.push(['resend', id]);
+    if (resendError) throw resendError;
+  };
+  return { calls, manage: createManageUsers(userRepository, { resendInvitation }) };
+}
+
+test('corregir el correo de una cuenta pendiente reenvía la invitación al correo nuevo', async () => {
+  const { calls, manage } = setupEmailFix();
+
+  await manage.updateUser(REQUESTER, SUPERVISOR_ID, { email: 'Bien@Aircrew.test' });
+
+  assert.deepEqual(calls, [
+    ['update', { email: 'bien@aircrew.test' }],
+    ['resend', SUPERVISOR_ID],
+  ]);
+});
+
+test('cambiar el correo de una cuenta activa no reenvía nada', async () => {
+  const { calls, manage } = setupEmailFix({ pending: false });
+
+  await manage.updateUser(REQUESTER, SUPERVISOR_ID, { email: 'otro@aircrew.test' });
+
+  assert.ok(!calls.some(([step]) => step === 'resend'));
+});
+
+test('editar otra cosa de una cuenta pendiente no reenvía la invitación', async () => {
+  const { calls, manage } = setupEmailFix();
+
+  await manage.updateUser(REQUESTER, SUPERVISOR_ID, { name: 'Laura Gómez' });
+  await manage.updateUser(REQUESTER, SUPERVISOR_ID, { email: 'mal@aircrew.test' });
+
+  assert.ok(!calls.some(([step]) => step === 'resend'));
+});
+
+test('si el reenvío al correo nuevo falla: 502 claro, y el correo ya quedó cambiado', async () => {
+  const { calls, manage } = setupEmailFix({ resendError: httpError(502, 'SMTP caído') });
+
+  await assert.rejects(
+    manage.updateUser(REQUESTER, SUPERVISOR_ID, { email: 'bien@aircrew.test' }),
+    (error) => error.status === 502 && /no se pudo enviar la invitación al correo nuevo/.test(error.message)
+  );
+  assert.deepEqual(calls[0], ['update', { email: 'bien@aircrew.test' }]);
 });

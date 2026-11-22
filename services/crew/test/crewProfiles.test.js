@@ -192,3 +192,48 @@ test('POST /crew-members ya no existe: el alta la hace Admin', async () => {
 
   assert.equal(res.status, 404);
 });
+
+// ------------------------------------------- código de empleado generado
+
+test('sin employee_code, el perfil nuevo lo deja en null para que lo asigne la base', () => {
+  for (const employeeCode of [undefined, null, '']) {
+    const profile = createCrewProfile({ user_id: USER_ID, employee_code: employeeCode, position: 'Copiloto' });
+    assert.equal(profile.employeeCode, null);
+  }
+});
+
+test('el repositorio genera el código con la secuencia y prueba el siguiente si ya existe', async (t) => {
+  const pool = require('../src/adapters/outbound/persistence/pool');
+  const crewRepository = require('../src/adapters/outbound/persistence/repositories/crewRepository');
+  const calls = [];
+  t.mock.method(pool, 'query', async (sql, params) => {
+    calls.push({ sql, params });
+    if (calls.length < 3) {
+      throw Object.assign(new Error('duplicado'), { code: '23505', constraint: 'crew_members_employee_code_key' });
+    }
+    return { rows: [{ user_id: params[0], employee_code: 'AC-0003' }] };
+  });
+
+  const created = await crewRepository.createCrewMember({ userId: USER_ID, employeeCode: null, position: 'Copiloto' });
+
+  assert.equal(created.employee_code, 'AC-0003');
+  assert.equal(calls.length, 3);
+  assert.match(calls[0].sql, /COALESCE\(\$2, 'AC-' \|\| lpad\(nextval\('public\.crew_employee_code_seq'\)::text, 4, '0'\)\)/);
+  assert.equal(calls[0].params[1], null);
+});
+
+test('un código enviado y repetido responde 409 sin reintentar', async (t) => {
+  const pool = require('../src/adapters/outbound/persistence/pool');
+  const crewRepository = require('../src/adapters/outbound/persistence/repositories/crewRepository');
+  let calls = 0;
+  t.mock.method(pool, 'query', async () => {
+    calls += 1;
+    throw Object.assign(new Error('duplicado'), { code: '23505', constraint: 'crew_members_employee_code_key' });
+  });
+
+  await assert.rejects(
+    crewRepository.createCrewMember({ userId: USER_ID, employeeCode: 'AC-1108', position: 'Copiloto' }),
+    (error) => error.status === 409 && /código de empleado/.test(error.message)
+  );
+  assert.equal(calls, 1);
+});

@@ -9,6 +9,16 @@ function createGetUserByIdController(getUserById) {
   };
 }
 
+function createResendInvitationController(resendInvitation) {
+  return async function resend(req, res, next) {
+    try {
+      return res.status(200).json(await resendInvitation(req.params.id));
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 function createCreateUserController(createUser) {
   return async function create(req, res, next) {
     try {
@@ -89,6 +99,7 @@ function createProfileController(manageProfile) {
 }
 
 module.exports = {
+  createResendInvitationController,
   createGetUserByIdController,
   createCreateUserController,
   createManageUsersController,

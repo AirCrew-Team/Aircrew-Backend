@@ -23,7 +23,13 @@ function crewNotFound() {
 // Certificaciones de la tripulación, solo para el super_admin: registrar, editar,
 // verificar o quitar la verificación, eliminar y consultar. El nombre y el correo
 // vienen de Admin; si no responde, quedan en null y la respuesta sale igual.
-function createManageCertifications({ certificationRepository, findUsersByIds }) {
+// notifyCertification avisa al tripulante al registrarla y al verificarla; es un
+// extra: si Notification falla, la certificación queda guardada igual.
+function createManageCertifications({
+  certificationRepository,
+  findUsersByIds,
+  notifyCertification = async () => {},
+}) {
   async function loadUsers(ids) {
     const unique = [...new Set(ids.filter(Boolean))];
     const batches = [];
@@ -158,7 +164,8 @@ function createManageCertifications({ certificationRepository, findUsersByIds })
     const parsedFile = file === undefined || file === null ? file : parseCertificateFile(file);
     const userId = record.member.user_id;
 
-    await certificationRepository.withCertificationLock(userId, async (tx) => {
+    // La certificación que había antes del cambio (null si es nueva).
+    const before = await certificationRepository.withCertificationLock(userId, async (tx) => {
       const previous = await tx.findCertification(userId);
 
       await tx.upsertCertification({
@@ -175,9 +182,30 @@ function createManageCertifications({ certificationRepository, findUsersByIds })
       }
 
       await tx.insertEvents(userId, actor.id, historyEventsFor(previous, next, next.area));
+      return previous;
     });
 
-    return getCertification(userId);
+    const detail = await getCertification(userId);
+    const event = !before
+      ? 'registered'
+      : next.status === 'verified' && before.status !== 'verified'
+        ? 'verified'
+        : null;
+
+    if (event) {
+      // No se espera: el super_admin recibe su respuesta aunque Notification tarde.
+      notifyCertification({
+        crewUserId: userId,
+        event,
+        actorName: detail.history[0] ? detail.history[0].by : null,
+        licenseNumber: next.licenseNumber,
+        certificates: next.certificates,
+      }).catch((error) =>
+        console.error(`No se pudo enviar el aviso de certificación: ${error.message}`)
+      );
+    }
+
+    return detail;
   }
 
   // El tripulante queda «sin certificado»: sin licencia, certificados, copia ni historial.

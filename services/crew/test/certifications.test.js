@@ -314,3 +314,64 @@ test('si Admin no responde, la lista sale sin nombres', async (t) => {
   assert.equal(items.length, 3);
   assert.ok(items.every((item) => item.name === null));
 });
+
+// ------------------------------------- aviso al tripulante (Notification)
+
+function setupWithNotifications({ notifyError } = {}) {
+  const calls = [];
+  const certificationRepository = fakeRepository();
+  const manage = createManageCertifications({
+    certificationRepository,
+    findUsersByIds: async (ids) => USERS.filter((user) => ids.includes(user.id)),
+    notifyCertification: async (payload) => {
+      calls.push(payload);
+      if (notifyError) throw notifyError;
+    },
+  });
+  return { calls, manage };
+}
+
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test('registrar avisa al tripulante con quién lo registró', async () => {
+  const { calls, manage } = setupWithNotifications();
+
+  await manage.saveCertification(ADMIN, PILOT_ID, { license_number: '2775981', certificates: ['ATP', 'IR'], verified: false });
+  await flush();
+
+  assert.deepEqual(calls, [
+    { crewUserId: PILOT_ID, event: 'registered', actorName: 'Asley Torres', licenseNumber: '2775981', certificates: ['ATP', 'IR'] },
+  ]);
+});
+
+test('pasar a verificado avisa «verified»; editar sin verificar o ya verificado no avisa', async () => {
+  const { calls, manage } = setupWithNotifications();
+  const input = { license_number: '4818266', certificates: ['CDP'], verified: false };
+
+  await manage.saveCertification(ADMIN, PURSER_ID, input);
+  await manage.saveCertification(ADMIN, PURSER_ID, { ...input, certificates: ['CDP', 'LID'] });
+  await manage.saveCertification(ADMIN, PURSER_ID, { ...input, verified: true });
+  await manage.saveCertification(ADMIN, PURSER_ID, { ...input, verified: true, certificates: ['CDP', 'ADU'] });
+  await flush();
+
+  assert.deepEqual(calls.map((call) => call.event), ['registered', 'verified']);
+});
+
+test('registrar ya verificado avisa una sola vez, como registrado', async () => {
+  const { calls, manage } = setupWithNotifications();
+
+  await manage.saveCertification(ADMIN, PILOT_ID, { license_number: '2775981', certificates: ['ATP'], verified: true });
+  await flush();
+
+  assert.deepEqual(calls.map((call) => call.event), ['registered']);
+});
+
+test('si Notification falla, la certificación queda guardada igual', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const { manage } = setupWithNotifications({ notifyError: new Error('Notification caído') });
+
+  const detail = await manage.saveCertification(ADMIN, PILOT_ID, { license_number: '2775981', certificates: ['ATP'], verified: true });
+  await flush();
+
+  assert.equal(detail.status, 'verified');
+});

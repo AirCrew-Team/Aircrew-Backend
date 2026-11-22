@@ -3,45 +3,152 @@ info:
   title: AirCrew - Notification
   version: 1.0.0
   description: |
-    Alertas en tiempo real para supervisores con **Socket.IO**.
+    Notificaciones en tiempo real con **SSE** (Server-Sent Events) y la campana del usuario.
 
-    **Conexión (frontend):**
+    **Conexión (frontend), con la cookie de sesión:**
     ```js
-    import { io } from 'socket.io-client';
-    const socket = io('http://localhost:3000', {
-      path: '/api/notification/socket.io',
-      auth: { token: '<JWT de supervisor o super_admin>' },
-    });
-    socket.on('absence:reported', (alert) => console.log(alert.message));
-    socket.on('absence:covered', (alert) => console.log(alert.message));
-    socket.on('connect_error', (error) => console.log(error.message));
+    const stream = new EventSource('/api/notification/stream', { withCredentials: true });
+    stream.addEventListener('certification:registered', (e) => console.log(JSON.parse(e.data).message));
+    stream.addEventListener('auth:expired', () => stream.close());
     ```
-    Cualquier usuario con sesión puede conectarse:
-    - **Supervisores y super_admin** reciben las alertas operativas.
-    - **Cada usuario** recibe además los avisos dirigidos a él (por ejemplo, un tripulante
-      recibe `assignment:replacement` cuando lo eligen como reemplazo).
+    El navegador reconecta solo si se cae la conexión (`retry: 5000`). Cada 25 s llega un
+    comentario `: ping` para mantenerla viva.
 
-    Con un token inválido o vencido, `connect_error` trae el motivo. Antes de que venza el token,
-    el servidor emite `auth:expired` y desconecta.
+    **Quién recibe qué:**
+    - **supervisor:** las alertas operativas (`absence:*`).
+    - **crew:** solo los avisos dirigidos a él (`assignment:replacement`, `certification:*`).
+    - **super_admin:** ninguna.
 
-    **Eventos que emite el servidor:**
+    Todos los avisos se guardan también en la campana (`/notifications`), así se ven aunque la
+    persona no estuviera conectada. Las alertas del supervisor se guardan una vez para el rol y
+    cada supervisor marca como leídas las suyas.
+
+    **Eventos que emite el servidor** (en `data`, un JSON con `type` y `message`):
     - `connected`: confirmación al conectarse.
     - `absence:reported`: un tripulante reportó una ausencia.
     - `absence:suggestions_ready`: terminó la búsqueda de candidatos (`{ absence_id, candidate_count, source }`).
     - `absence:covered`: el reemplazo confirmó con «Enterado».
     - `absence:deadline_missed`: el reemplazo no confirmó a tiempo (`{ absence_id, candidate_name, next_candidate_name }`).
-    - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ assignment_id, flight_number, deadline_at }`).
-    - `auth:expired`: el token venció; volver a iniciar sesión.
+    - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ id, assignment_id, flight_number, deadline_at }`).
+    - `certification:registered` (solo al tripulante): el super_admin le registró la certificación (`{ id, license_number, certificates }`).
+    - `certification:verified` (solo al tripulante): su certificación quedó verificada (`{ id, license_number, certificates }`).
+    - `auth:expired`: el token está por vencer; el servidor cierra la conexión. Volver a iniciar sesión.
 
-    Los endpoints de abajo los llaman otros servicios para disparar las alertas.
+    En los avisos guardados, `id` es el de la notificación (sirve para marcarla como leída).
+
+    Los endpoints de **Eventos** los llaman otros servicios para disparar los avisos.
 servers:
   - url: http://localhost:3004
 tags:
   - name: Salud
+  - name: Tiempo real
+  - name: Campana
+    description: Historial de avisos de la persona con sesión.
   - name: Eventos
     description: Los llaman Crew y Recommendation, no el frontend.
 
 paths:
+  /stream:
+    get:
+      tags: [Tiempo real]
+      summary: Abrir la conexión SSE (cualquier usuario con sesión)
+      description: |
+        Desde el frontend: `/api/notification/stream`. La sesión sale de la cookie `aircrew_token`
+        o del header `Authorization: Bearer`. La conexión queda abierta; el gateway no la corta.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Flujo de eventos abierto
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                retry: 5000
+
+                event: connected
+                data: {"message":"Conectado a las notificaciones de AirCrew."}
+
+                event: certification:verified
+                data: {"type":"certification:verified","message":"Tu certificado 2775981 fue verificado.","id":"…","sent_at":"…"}
+        '401':
+          description: Sin sesión o token inválido (`code` = `auth_required`), o vencido (`token_expired`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorWithCode' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /notifications:
+    get:
+      tags: [Campana]
+      summary: Mis avisos y los de mi rol, del más nuevo al más viejo
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Avisos y cantidad sin leer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  unread_count: { type: integer, example: 2 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Campana]
+      summary: Marcar uno de mis avisos como leído
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Aviso marcado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404':
+          description: No existe o no es de esta persona
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorWithCode' }
+
+  /notifications/read-all:
+    post:
+      tags: [Campana]
+      summary: Marcar todos mis avisos como leídos
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cantidad de avisos marcados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: integer, example: 2 }
+        '401': { $ref: '#/components/responses/Error' }
+
   /health:
     get:
       tags: [Salud]
@@ -86,16 +193,73 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
 
+  /events/assignment-replacement:
+    post:
+      tags: [Eventos]
+      summary: Avisar al tripulante que lo asignaron como reemplazo (supervisor, super_admin o servicio)
+      description: Lo llama Recommendation al confirmar un reemplazo. Se guarda en el historial del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, flight_number]
+              properties:
+                crew_user_id: { type: string, format: uuid }
+                assignment_id: { type: string, format: uuid }
+                flight_number: { type: string, example: AC201 }
+                deadline_at: { type: string, format: date-time }
+      responses:
+        '202': { $ref: '#/components/responses/Notified' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /events/certification:
+    post:
+      tags: [Eventos]
+      summary: Avisar al tripulante que le registraron o verificaron la certificación (solo servicio)
+      description: |
+        Lo llama Crew con token de servicio cuando el super_admin guarda la certificación:
+        `registered` la primera vez y `verified` cuando pasa a verificada. Se guarda en el historial del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, event]
+              properties:
+                crew_user_id: { type: string, format: uuid }
+                event: { type: string, enum: [registered, verified] }
+                actor_name: { type: string, example: Asley Torres, description: 'Quién la registró. Por defecto, «Un administrador».' }
+                license_number: { type: string, example: '2775981' }
+                certificates: { type: array, items: { type: string }, example: [ATP] }
+      responses:
+        '202': { $ref: '#/components/responses/Notified' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: aircrew_token
 
   responses:
     Published:
-      description: Alerta enviada a los supervisores conectados
+      description: Alerta guardada para los supervisores y enviada a los que están conectados
       content:
         application/json:
           schema:
@@ -104,6 +268,18 @@ components:
               type: { type: string, example: 'absence:reported' }
               message: { type: string, example: EMP-004 no podrá volar AC201 (incapacidad). }
               delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron. }
+              saved: { type: boolean, description: Quedó en la campana de los supervisores. false si no se pudo guardar; igual se envía en vivo. }
+    Notified:
+      description: Aviso guardado en el historial del tripulante y enviado a sus conexiones abiertas
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              type: { type: string, example: 'certification:registered' }
+              message: { type: string, example: Asley Torres te registró un certificado. }
+              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas). }
+              saved: { type: boolean, description: false si no se pudo guardar; igual se envía en vivo. }
     Error:
       description: Datos inválidos, falta autenticación o el rol no tiene permiso
       content:
@@ -114,6 +290,21 @@ components:
               error: { type: string }
 
   schemas:
+    ErrorWithCode:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, example: 'certification:verified' }
+        message: { type: string, example: Tu certificado 2775981 fue verificado. }
+        data: { type: object, description: Los demás datos del aviso (por ejemplo license_number). }
+        read: { type: boolean }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
     AbsenceEvent:
       type: object
       required: [absence]

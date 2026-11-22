@@ -2,7 +2,7 @@ const { recommendationServiceUrl } = require('../../../config/env');
 const { serviceAuthorization } = require('./serviceToken');
 
 // Le pide a Recommendation que busque reemplazos para una ausencia. No se
-// espera la respuesta: la IA corre en segundo plano y avisa por socket cuando
+// espera la respuesta: la IA corre en segundo plano y avisa por SSE cuando
 // termina. Si falla, la ausencia queda en la cola y el supervisor puede pedir
 // otra ronda con /regenerate.
 async function requestSuggestions(absenceId) {

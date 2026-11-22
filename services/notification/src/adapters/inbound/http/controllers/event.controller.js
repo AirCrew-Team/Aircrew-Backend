@@ -1,15 +1,15 @@
 function createEventController({ publishAbsenceReported, publishAbsenceCovered }) {
-  function absenceReported(req, res, next) {
+  async function absenceReported(req, res, next) {
     try {
-      return res.status(202).json(publishAbsenceReported(req.body));
+      return res.status(202).json(await publishAbsenceReported(req.body));
     } catch (error) {
       return next(error);
     }
   }
 
-  function absenceCovered(req, res, next) {
+  async function absenceCovered(req, res, next) {
     try {
-      return res.status(202).json(publishAbsenceCovered(req.body));
+      return res.status(202).json(await publishAbsenceCovered(req.body));
     } catch (error) {
       return next(error);
     }

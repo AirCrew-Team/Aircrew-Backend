@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 // Pantalla Usuarios del super_admin: todo entra por Admin. Admin crea la cuenta
 // de cualquier rol y, si es tripulante, le pide a Crew su perfil.
 
+// Antes de cargar src: config/env fija JWT_SECRET con el primer require (en CI
+// no hay .env).
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-de-prueba';
+
 const { createUser: buildUser } = require('../src/domain/entities/user');
 const { createCreateUser } = require('../src/application/use-cases/createUser');
 const createManageUsers = require('../src/application/use-cases/manageUsers');
@@ -514,7 +518,6 @@ test('si Crew no responde, la ficha sale sin el perfil', async (t) => {
 test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y estados', async (t) => {
   const { once } = require('node:events');
   const jwt = require('jsonwebtoken');
-  process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-de-prueba';
   const app = require('../src/app');
   const tokenFor = (role) =>
     jwt.sign({ role }, process.env.JWT_SECRET, { subject: ADMIN_ID, issuer: 'aircrew-admin', expiresIn: '1h' });

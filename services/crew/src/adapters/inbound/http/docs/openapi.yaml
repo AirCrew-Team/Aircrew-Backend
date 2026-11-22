@@ -1180,6 +1180,43 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /internal/users/{userId}:
+    delete:
+      tags: [Interno]
+      summary: Borrar todo lo de una cuenta eliminada (solo Admin)
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`). En una transacción:
+        las ausencias de otros en las que esperaba dar «Enterado» como reemplazo vuelven a la cola
+        (`reopened_absences`, con un evento en su línea de tiempo); se borran sus ausencias (con sus
+        hijas, comprobantes y eventos), su certificación (con archivo e historial) y su perfil.
+        Repetirlo no falla: devuelve 0. El gateway responde 404 a `/api/crew/internal/*`.
+      security:
+        - adminServiceKey: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Datos borrados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile: { type: integer, description: 1 si tenía perfil. }
+                  certifications: { type: integer }
+                  absences: { type: integer, description: Ausencias borradas, contando las hijas. }
+                  reopened_absences: { type: integer }
+        '400':
+          description: Id inválido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta x-service-key o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
 components:
   securitySchemes:
     bearerAuth:

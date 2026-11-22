@@ -759,6 +759,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /internal/users/{userId}/assignments:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: liberar las asignaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`). Borra todas las
+        asignaciones de la persona, en una transacción. En los vuelos que aún no salen (ni cancelados
+        ni terminados), un puesto que ocupaba queda vacante, se devuelve en `vacated_flights` y la
+        tripulación del vuelo deja de estar confirmada para que el supervisor pueda cubrirlo. Si era un
+        reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado (`restored`), como cuando
+        vence el plazo. Repetirlo no falla: devuelve 0. El gateway responde 404 a `/api/flights/internal/*`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Asignaciones liberadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Asignaciones borradas (futuras y pasadas). }
+                  restored: { type: integer, description: Puestos devueltos a quien había reemplazado. }
+                  vacated_flights:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        flight_id: { type: string, format: uuid }
+                        flight_number: { type: string, example: DL1102 }
+                        origin: { type: string, example: JFK }
+                        destination: { type: string, example: LAX }
+                        departure_at: { type: string, format: date-time }
+                        slot_id: { type: string, nullable: true, example: fa-1 }
+                        role: { type: string, example: flight_attendant }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
   securitySchemes:
     bearerAuth:

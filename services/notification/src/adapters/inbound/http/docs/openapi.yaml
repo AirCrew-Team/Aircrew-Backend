@@ -15,7 +15,7 @@ info:
     comentario `: ping` para mantenerla viva.
 
     **Quién recibe qué:**
-    - **supervisor:** las alertas operativas (`absence:*`).
+    - **supervisor:** las alertas operativas (`absence:*` y `flight:slot_vacated`).
     - **crew:** solo los avisos dirigidos a él (`assignment:replacement`, `certification:*`).
     - **super_admin:** ninguna: `/stream` y la campana le responden `403`.
 
@@ -38,6 +38,7 @@ info:
     - `absence:suggestions_ready`: terminó la búsqueda de candidatos (`{ absence_id, candidate_count, source }`).
     - `absence:covered`: el reemplazo confirmó con «Enterado».
     - `absence:deadline_missed`: el reemplazo no confirmó a tiempo (`{ absence_id, candidate_name, next_candidate_name }`).
+    - `flight:slot_vacated`: se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante (`{ id, flight_id, flight_number, origin, destination, departure_at, slot_id, role }`).
     - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ id, assignment_id, flight_number, deadline_at }`).
     - `certification:registered` (solo al tripulante): el super_admin le registró la certificación (`{ id, license_number, certificates }`).
     - `certification:verified` (solo al tripulante): su certificación quedó verificada (`{ id, license_number, certificates }`).
@@ -258,6 +259,64 @@ paths:
                 certificates: { type: array, items: { type: string }, example: [ATP] }
       responses:
         '202': { $ref: '#/components/responses/Notified' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /internal/alerts/slot-vacated:
+    post:
+      tags: [Interno]
+      summary: 'Interno: alerta «puesto vacante» a los supervisores (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar a un tripulante, una vez por cada vuelo futuro donde su puesto quedó
+        vacante. Se guarda para el rol supervisor y sale en vivo por `GET /stream` con el evento
+        `flight:slot_vacated`, por ejemplo «Puesto vacante en DL1102 (JFK → LAX): se eliminó la cuenta del
+        tripulante.». No tiene preferencia en Configuración: siempre se envía. El gateway responde 404 a
+        `/api/notification/internal/*`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_id, flight_number]
+              properties:
+                flight_id: { type: string, format: uuid }
+                flight_number: { type: string, example: DL1102 }
+                origin: { type: string, example: JFK }
+                destination: { type: string, example: LAX }
+                departure_at: { type: string, format: date-time }
+                slot_id: { type: string, example: fa-1 }
+                role: { type: string, example: flight_attendant }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /internal/users/{userId}/notifications:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: borrar las notificaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta. Borra sus avisos personales (con sus lecturas) y sus
+        lecturas de las alertas del rol; las alertas del rol se quedan. Repetirlo no falla: devuelve 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Notificaciones borradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Avisos personales borrados. }
+                  reads_deleted: { type: integer, description: Lecturas de alertas del rol borradas. }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }

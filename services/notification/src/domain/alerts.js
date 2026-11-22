@@ -11,6 +11,8 @@ const ALERT_EVENTS = {
   assignmentReplacement: 'assignment:replacement',
   certificationRegistered: 'certification:registered',
   certificationVerified: 'certification:verified',
+  // Para los supervisores: se eliminó la cuenta de un tripulante con vuelos futuros.
+  slotVacated: 'flight:slot_vacated',
 };
 
 // Las alertas operativas son solo de los supervisores. El super_admin no recibe
@@ -244,7 +246,42 @@ function createCertificationAlert(input) {
   };
 }
 
+// Alerta para supervisores: se eliminó la cuenta de un tripulante y su puesto en
+// un vuelo que aún no sale quedó vacante (lo cubren desde Programación).
+function createSlotVacatedAlert(input) {
+  const {
+    flight_id: flightId,
+    flight_number: flightNumber,
+    origin,
+    destination,
+    departure_at: departureAt,
+    slot_id: slotId,
+    role,
+  } = input || {};
+
+  if (typeof flightId !== 'string' || !uuidPattern.test(flightId) || !isNonEmptyString(flightNumber)) {
+    throw new DomainError('Se requieren flight_id y flight_number.');
+  }
+
+  const route =
+    isNonEmptyString(origin) && isNonEmptyString(destination) ? ` (${origin} → ${destination})` : '';
+
+  return {
+    type: ALERT_EVENTS.slotVacated,
+    message: `Puesto vacante en ${flightNumber}${route}: se eliminó la cuenta del tripulante.`,
+    flight_id: flightId,
+    flight_number: flightNumber,
+    origin: origin || null,
+    destination: destination || null,
+    departure_at: departureAt || null,
+    slot_id: slotId || null,
+    role: role || null,
+    sent_at: new Date().toISOString(),
+  };
+}
+
 module.exports = {
+  createSlotVacatedAlert,
   ALERT_EVENTS,
   SUPERVISOR_AUDIENCE,
   createDeadlineMissedAlert,

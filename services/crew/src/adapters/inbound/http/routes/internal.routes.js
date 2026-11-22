@@ -26,4 +26,9 @@ router.get('/:userId', respond(200, (req) => profiles.getProfile(req.params.user
 router.patch('/:userId', respond(200, (req) => profiles.updateProfile(req.params.userId, req.body)));
 router.delete('/:userId', respond(204, (req) => profiles.deleteProfile(req.params.userId)));
 
-module.exports = router;
+// /internal/users: Admin eliminó la cuenta y se borra todo lo del tripulante.
+const usersRouter = express.Router();
+usersRouter.use(verifyAdminServiceKey);
+usersRouter.delete('/:userId', respond(200, (req) => profiles.eraseUser(req.params.userId)));
+
+module.exports = { crewMembersRouter: router, usersRouter };

@@ -595,7 +595,66 @@ async function deletePhoto(userId) {
   return rowCount > 0;
 }
 
+// super_admin activos sin contar esta cuenta: no se elimina al último.
+async function countActiveSuperAdminsExcept(id) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count
+     FROM public.users
+     WHERE role = 'super_admin' AND is_active AND id <> $1`,
+    [id]
+  );
+
+  return rows[0].count;
+}
+
+// Eliminar la cuenta de forma definitiva (después de borrar sus datos en los demás
+// servicios). Su foto y sus eventos de contraseña se van con ella (ON DELETE CASCADE);
+// sus fallos de login, por su correo. Con la fila se van los enlaces de invitación y
+// de recuperación. El bloqueo evita que dos super_admin se eliminen el uno al otro a
+// la vez y quede ninguno. Devuelve 'deleted', 'not_found' o 'last_super_admin'.
+async function deleteUser(id) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [73184220]);
+
+    const { rows: found } = await client.query(
+      `SELECT role,
+              (SELECT count(*)::int FROM public.users
+               WHERE role = 'super_admin' AND is_active AND id <> $1) AS others
+       FROM public.users
+       WHERE id = $1
+       FOR UPDATE`,
+      [id]
+    );
+
+    if (!found[0] || (found[0].role === 'super_admin' && found[0].others === 0)) {
+      await client.query('ROLLBACK');
+      return found[0] ? 'last_super_admin' : 'not_found';
+    }
+
+    const { rows: deleted } = await client.query(
+      `DELETE FROM public.users
+       WHERE id = $1
+       RETURNING email`,
+      [id]
+    );
+    await client.query('DELETE FROM public.login_failures WHERE email = $1', [deleted[0].email]);
+    await client.query('COMMIT');
+
+    return 'deleted';
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  countActiveSuperAdminsExcept,
+  deleteUser,
   findUserDetailById,
   findProfileById,
   updateProfile,

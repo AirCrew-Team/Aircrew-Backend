@@ -140,10 +140,16 @@ Todas las altas entran por Admin: tripulante, supervisor o super_admin. El super
 - `PATCH /users/:id` también recibe `phone`, para cualquier rol. En un tripulante, `employee_code`, `position`, `base` y `status` van a su perfil de Crew. Crew se actualiza primero; si después falla Admin, Crew vuelve a como estaba.
 - `POST /users/:id/resend-invitation` (solo super_admin) reenvía el correo de activación de una cuenta pendiente: genera un enlace nuevo y el anterior deja de servir. Una cuenta ya activa responde `409`.
 - Si se corrige el `email` de una cuenta pendiente con `PATCH /users/:id`, la invitación se reenvía sola al correo nuevo y el enlace del correo anterior deja de servir.
-- `DELETE /users/:id` desactiva la cuenta y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- `DELETE /users/:id` **desactiva** la cuenta (reversible, conserva todo) y, si es tripulante, también su perfil en Crew, así que recommendation deja de proponerlo.
+- `DELETE /users/:id/permanent` (solo super_admin) **elimina** la cuenta de forma definitiva, esté activa, inactiva o con la invitación pendiente. Responde `{ id, vacated_flights }`.
+  - Orden: flights libera sus asignaciones (en los vuelos que aún no salen el puesto queda vacante y la tripulación deja de estar confirmada; si era un reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado); notification avisa a los supervisores con `flight:slot_vacated` por cada puesto vacante y borra sus avisos; recommendation borra las sugerencias que lo nombran; crew borra perfil, certificación y ausencias (las de otros que esperaban su «Enterado» vuelven a la cola); y admin borra la cuenta, su foto, sus eventos de contraseña y sus fallos de login. El correo queda libre y los enlaces de invitación y de recuperación dan su error normal de enlace inválido.
+  - `404` si no existe. `409` con `code: cannot_delete_self` («No puedes eliminar tu propia cuenta.») o `code: last_super_admin` («No se puede eliminar al último super_admin.»).
+  - Si un servicio no responde: `502` con `code: user_delete_incomplete`, la cuenta sigue existiendo y el fallo queda en el log de admin. Lo ya borrado no se deshace y un reintento termina el borrado. Si el fallo fue después de liberar los vuelos, el reintento ya no los ve (`vacated_flights` vacío) y no repite las alertas; si las alertas no salieron, los vuelos quedan en el log.
+  - Se conservan los registros de otras personas que lo nombran como aprobador (`approved_by`, `approved_by_name`, `crew_confirmed_by`). Una sesión abierta del eliminado deja de valer en el gateway en 30 s como mucho (`401 session_revoked`).
+  - Admin llama a las rutas internas `/internal/users/...` de flights, notification y recommendation con un token de servicio de 1 minuto firmado con `JWT_SECRET` (rol `service`), y a `/internal/users/:id` de crew con `x-service-key`. Las encuentra en `FLIGHTS_SERVICE_URL`, `NOTIFICATION_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `CREW_SERVICE_URL`.
 - Crew ya no tiene `POST /crew-members`. Admin usa las rutas internas `/internal/crew-members` de Crew con el header `x-service-key`, y `ADMIN_SERVICE_KEY` debe ser igual en `services/admin/.env` y `services/crew/.env`. Admin las encuentra en `CREW_SERVICE_URL` (por defecto `http://localhost:3002`).
 - Requiere la columna `base` de `crew_members` y la secuencia `crew_employee_code_seq` de `database/crew_db.sql`, que se puede volver a ejecutar sobre una base existente.
-- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`.
+- Tests: `npm test -w @vuelos/admin` y `npm test -w @vuelos/crew`. Eliminar usuarios: `deleteUser.test.js` (admin), `eraseUser.test.js` (crew y notification), `releaseCrewUser.test.js` (flights) y `eraseUserSuggestions.test.js` (recommendation).
 
 ### Invitación por correo
 
@@ -274,7 +280,7 @@ Las notificaciones llegan en vivo por **SSE** (Server-Sent Events), no por Socke
 
 - `GET /api/notification/stream` abre la conexión con la cookie de sesión: `new EventSource('/api/notification/stream', { withCredentials: true })`. Responde `401` sin sesión o con el token vencido, y `403` con un token de servicio. El gateway no le pone límite de tiempo.
 - Quién recibe qué:
-  - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered` y `absence:deadline_missed`;
+  - **supervisor:** `absence:reported`, `absence:suggestions_ready`, `absence:covered`, `absence:deadline_missed` y `flight:slot_vacated` (se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante; no tiene preferencia, siempre se envía);
   - **crew** (solo los suyos): `assignment:replacement`, `certification:registered` y `certification:verified`;
   - **super_admin:** ninguna. `/stream` y `/notifications/*` le responden `403`.
 - Además llegan `connected` al conectarse y `auth:expired` antes de que venza la sesión; después el servidor cierra la conexión. Cada 25 s se envía un comentario para mantenerla viva.
@@ -347,10 +353,10 @@ Además:
   - `JWT_ISSUER`: **no la definas.** flights, recommendation y notification esperan por defecto `aircrew-admin`, el emisor que fija admin; con otro valor rechazarían todos los tokens.
   - Base de datos: `DB_HOST=${{Postgres.PGHOST}}`, `DB_PORT=${{Postgres.PGPORT}}`, `DB_USER=${{Postgres.PGUSER}}`, `DB_PASSWORD=${{Postgres.PGPASSWORD}}` y `DB_NAME`: `admin_db`, `crew_db`, `flights_db`, `recommendation_db` o `notification_db`, según el servicio.
   - `PGDATABASE=${{Postgres.PGDATABASE}}`: la base de mantenimiento del pre-deploy, desde la que se crean las bases que falten.
-- **admin y crew:** `CREW_SERVICE_KEY` y `ADMIN_SERVICE_KEY`, cada una con **el mismo valor** en los dos. Son claves distintas: con `CREW_SERVICE_KEY` crew le pide a admin los nombres de los usuarios, y con `ADMIN_SERVICE_KEY` admin crea, edita y desactiva los perfiles de tripulante en crew.
+- **admin y crew:** `CREW_SERVICE_KEY` y `ADMIN_SERVICE_KEY`, cada una con **el mismo valor** en los dos. Son claves distintas: con `CREW_SERVICE_KEY` crew le pide a admin los nombres de los usuarios, y con `ADMIN_SERVICE_KEY` admin crea, edita, desactiva y elimina los perfiles de tripulante en crew.
 - **URL internas:** `http://${{<servicio>.RAILWAY_PRIVATE_DOMAIN}}:<puerto>`. Sin ellas, cada servicio busca a los demás en `localhost` y esas llamadas fallan.
   - gateway: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
-  - admin: `CREW_SERVICE_URL`;
+  - admin: `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL` (estas tres, para eliminar usuarios);
   - crew: `ADMIN_SERVICE_URL`, `FLIGHTS_SERVICE_URL`, `RECOMMENDATION_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;
   - flights: `CREW_SERVICE_URL`;
   - recommendation: `ADMIN_SERVICE_URL`, `CREW_SERVICE_URL`, `FLIGHTS_SERVICE_URL` y `NOTIFICATION_SERVICE_URL`;

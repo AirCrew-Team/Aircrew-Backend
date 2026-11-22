@@ -443,6 +443,31 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /internal/users/{userId}/suggestions:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: borrar las sugerencias que nombran a una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`): borra las filas de
+        `replacement_suggestions` con ese `crew_user_id`. Repetirlo no falla: devuelve 0. El gateway
+        responde 404 a `/api/recommendation/internal/*`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Sugerencias borradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:

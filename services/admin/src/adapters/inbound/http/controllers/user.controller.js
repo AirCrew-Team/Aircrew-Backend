@@ -19,6 +19,16 @@ function createResendInvitationController(resendInvitation) {
   };
 }
 
+function createDeleteUserController(deleteUser) {
+  return async function remove(req, res, next) {
+    try {
+      return res.status(200).json(await deleteUser(req.user, req.params.id));
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 function createCreateUserController(createUser) {
   return async function create(req, res, next) {
     try {
@@ -104,4 +114,5 @@ module.exports = {
   createCreateUserController,
   createManageUsersController,
   createProfileController,
+  createDeleteUserController,
 };

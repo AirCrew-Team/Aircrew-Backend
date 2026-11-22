@@ -10,6 +10,10 @@ module.exports = {
   // Admin la usa para crear, editar y desactivar perfiles de tripulante en Crew.
   adminServiceKey: process.env.ADMIN_SERVICE_KEY,
   crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
+  // Al eliminar una cuenta, Admin llama a sus rutas internas con token de servicio.
+  flightsServiceUrl: process.env.FLIGHTS_SERVICE_URL || 'http://localhost:3001',
+  recommendationServiceUrl: process.env.RECOMMENDATION_SERVICE_URL || 'http://localhost:3003',
+  notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
   resendApiKey: process.env.RESEND_API_KEY,
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   crewActivationUrl: process.env.CREW_ACTIVATION_URL,

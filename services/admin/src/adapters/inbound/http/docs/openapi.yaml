@@ -797,7 +797,7 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
     delete:
       tags: [Usuarios]
-      summary: Desactivar un usuario (solo super_admin)
+      summary: Desactivar un usuario (solo super_admin; para borrarlo, DELETE /users/{id}/permanent)
       description: |
         No borra el registro (ausencias y asignaciones guardan su id): lo deja con
         `is_active=false` y ya no puede iniciar sesión. Si es tripulante, su perfil en Crew
@@ -832,6 +832,71 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /users/{id}/permanent:
+    delete:
+      tags: [Usuarios]
+      summary: Eliminar un usuario definitivamente (solo super_admin)
+      description: |
+        Borra la cuenta y todo lo suyo, para cualquier rol y estado (activa, inactiva o con la
+        invitación pendiente). El correo queda libre y los enlaces de invitación y de recuperación
+        dejan de servir. `DELETE /users/{id}` sigue siendo «Desactivar».
+
+        Orden (cada paso es un borrado que se puede repetir):
+        1. flights: borra sus asignaciones. En los vuelos que aún no salen (ni cancelados ni
+           terminados), su puesto queda vacante y la tripulación deja de estar confirmada. Si era un
+           reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado y Crew devuelve esa
+           ausencia a la cola.
+        2. notification: una alerta `flight:slot_vacated` a los supervisores por cada puesto vacante
+           y después se borran sus avisos y sus lecturas.
+        3. recommendation: las sugerencias de la IA que lo nombran.
+        4. crew: perfil, certificación (con archivo e historial) y ausencias (con sus hijas,
+           comprobantes y eventos).
+        5. admin: la cuenta (con foto y eventos de contraseña) y sus fallos de login.
+
+        Si un servicio falla, responde 502 y la cuenta sigue existiendo: lo ya borrado no se deshace
+        y un reintento termina el borrado. En el reintento, `vacated_flights` sale vacío (Flights ya
+        liberó los puestos). Se conservan los registros de otras personas que lo nombran como
+        aprobador (`approved_by`, `approved_by_name`, `crew_confirmed_by`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Usuario eliminado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  vacated_flights:
+                    type: array
+                    description: Vuelos futuros donde su puesto quedó vacante en este intento.
+                    items: { $ref: '#/components/schemas/VacatedFlight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Usuario no encontrado («Usuario no encontrado.»)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            `code: cannot_delete_self` («No puedes eliminar tu propia cuenta.») o
+            `code: last_super_admin` («No se puede eliminar al último super_admin.»). No se borra nada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodedError' }
+        '502':
+          description: |
+            `code: user_delete_incomplete`. Un servicio no respondió; la cuenta sigue existiendo y se
+            puede reintentar. Por ejemplo: «No se pudo eliminar el usuario: el servicio de
+            recomendaciones no respondió. La cuenta sigue existiendo; vuelve a intentarlo.»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodedError' }
 
   /users/{id}/resend-invitation:
     post:
@@ -1062,6 +1127,21 @@ components:
       type: object
       properties:
         error: { type: string }
+    CodedError:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+    VacatedFlight:
+      type: object
+      properties:
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
+        destination: { type: string, example: LAX }
+        departure_at: { type: string, format: date-time }
+        slot_id: { type: string, nullable: true, example: fa-1 }
+        role: { type: string, example: flight_attendant }
     UserSummary:
       type: object
       properties:

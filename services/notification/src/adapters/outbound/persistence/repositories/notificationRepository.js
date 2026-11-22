@@ -92,4 +92,33 @@ async function markAllRead(viewer) {
   return rowCount;
 }
 
-module.exports = { insertNotification, findVisible, countUnread, markRead, markAllRead };
+// Admin eliminó la cuenta: fuera sus avisos personales (con sus lecturas, por la
+// llave foránea) y sus lecturas de las alertas del rol. Las alertas del rol se quedan:
+// son de todos los supervisores. Devuelve cuántos de cada uno.
+async function deleteForUser(userId) {
+  const { rows } = await pool.query(
+    `WITH reads AS (
+       DELETE FROM public.notification_reads
+       WHERE user_id = $1
+       RETURNING 1
+     ), own AS (
+       DELETE FROM public.notifications
+       WHERE user_id = $1
+       RETURNING 1
+     )
+     SELECT (SELECT count(*) FROM own)::int AS notifications,
+            (SELECT count(*) FROM reads)::int AS reads`,
+    [userId]
+  );
+
+  return { deleted: rows[0].notifications, reads_deleted: rows[0].reads };
+}
+
+module.exports = {
+  insertNotification,
+  findVisible,
+  countUnread,
+  markRead,
+  markAllRead,
+  deleteForUser,
+};

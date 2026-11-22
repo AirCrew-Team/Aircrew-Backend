@@ -49,6 +49,15 @@ function createManageCrewProfiles(crewRepository) {
     }
   }
 
+  // Admin eliminó la cuenta: borra todo lo del tripulante. Repetirlo no falla.
+  function eraseUser(userId) {
+    if (!isValidCrewUserId(userId)) {
+      throw new DomainError('Se requiere un id de usuario válido.');
+    }
+
+    return crewRepository.eraseCrewUser(userId);
+  }
+
   function listProfiles() {
     return crewRepository.findCrewMembers();
   }
@@ -65,7 +74,7 @@ function createManageCrewProfiles(crewRepository) {
     return profile;
   }
 
-  return { createProfile, updateProfile, deleteProfile, listProfiles, getProfile };
+  return { createProfile, updateProfile, deleteProfile, eraseUser, listProfiles, getProfile };
 }
 
 module.exports = createManageCrewProfiles;

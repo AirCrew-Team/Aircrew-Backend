@@ -355,7 +355,93 @@ async function deleteSlotAssignment(flightId, slotId) {
   return rows[0] || null;
 }
 
+// Admin eliminó la cuenta del tripulante: se borran todas sus asignaciones, en una
+// transacción. En los vuelos que aún no salen (ni cancelados ni terminados):
+// - un puesto que ocupaba queda vacante y se devuelve, y si la tripulación estaba
+//   confirmada deja de estarlo, para que el supervisor pueda cubrirlo;
+// - si era un reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado,
+//   como cuando vence el plazo (Crew devuelve esa ausencia a la cola).
+// Repetirlo no falla: devuelve 0.
+async function releaseCrewUser(crewUserId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const { rows: deleted } = await client.query(
+      `DELETE FROM public.flight_assignments a
+       USING public.flights f
+       WHERE f.id = a.flight_id AND a.crew_user_id = $1
+       RETURNING a.flight_id, a.slot_id, a.role, a.status, a.is_replacement, a.acknowledged_at,
+                 f.flight_number, f.origin, f.destination, f.departure_at,
+                 (f.departure_at > now() AND f.status NOT IN ('cancelled', 'completed')) AS upcoming`,
+      [crewUserId]
+    );
+
+    const vacated = [];
+    let restored = 0;
+
+    for (const item of deleted) {
+      if (!item.upcoming || item.status !== 'assigned') continue;
+
+      if (item.is_replacement && !item.acknowledged_at) {
+        const { rows } = await client.query(
+          `UPDATE public.flight_assignments SET status = 'assigned'
+           WHERE id = (
+             SELECT id FROM public.flight_assignments
+             WHERE flight_id = $1 AND status = 'replaced'
+               AND (slot_id IS NOT DISTINCT FROM $2) AND role = $3
+             ORDER BY created_at DESC
+             LIMIT 1
+           )
+           RETURNING id`,
+          [item.flight_id, item.slot_id, item.role]
+        );
+        if (rows[0]) {
+          restored += 1;
+          continue;
+        }
+      }
+
+      vacated.push(item);
+    }
+
+    if (vacated.length > 0) {
+      await client.query(
+        // crew_confirmed_by se conserva: es quién la había confirmado (la spec no lo borra).
+        `UPDATE public.flights SET crew_confirmed_at = NULL, updated_at = now()
+         WHERE id = ANY($1::uuid[]) AND crew_confirmed_at IS NOT NULL`,
+        [vacated.map((item) => item.flight_id)]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    return {
+      deleted: deleted.length,
+      restored,
+      vacated_flights: vacated
+        .sort((a, b) => new Date(a.departure_at) - new Date(b.departure_at))
+        .map((item) => ({
+          flight_id: item.flight_id,
+          flight_number: item.flight_number,
+          origin: item.origin,
+          destination: item.destination,
+          departure_at: item.departure_at,
+          slot_id: item.slot_id,
+          role: item.role,
+        })),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  releaseCrewUser,
   findActiveByFlight,
   insertSlotAssignment,
   deleteSlotAssignment,

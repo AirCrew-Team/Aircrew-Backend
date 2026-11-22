@@ -44,6 +44,12 @@ const BLOCKED = [
   ['GET', '/api/crew/internal/crew-members'],
   ['DELETE', '/api/crew/internal/crew-members/abc'],
   ['GET', '/api/admin/internal/sessions'],
+  // Eliminar usuarios (EU-10): las rutas internas nuevas de cada servicio.
+  ['DELETE', '/api/flights/internal/users/abc/assignments'],
+  ['POST', '/api/notification/internal/alerts/slot-vacated'],
+  ['DELETE', '/api/notification/internal/users/abc/notifications'],
+  ['DELETE', '/api/recommendation/internal/users/abc/suggestions'],
+  ['DELETE', '/api/crew/internal/users/abc'],
   ['GET', '/api/admin/users/lookup?ids=1'],
   ['POST', '/api/notification/events/absence-reported'],
   ['GET', '/api/admin/docs'],
@@ -70,6 +76,8 @@ const ALLOWED = [
   ['GET', '/api/crew/crew-members/me'],
   ['GET', '/api/notification/notifications'],
   ['GET', '/api/flights/aircraft'],
+  // La ruta pública de eliminar usuarios (EU-10) sí llega a admin.
+  ['DELETE', '/api/admin/users/abc/permanent'],
   // Nombres que solo se parecen a las rutas bloqueadas.
   ['GET', '/api/admin/users/lookups-report'],
   ['GET', '/api/crew/internals'],

@@ -8,8 +8,14 @@ const { createCreateUser } = require('../../../../application/use-cases/createUs
 const createManageUsers = require('../../../../application/use-cases/manageUsers');
 const createResendInvitation = require('../../../../application/use-cases/resendInvitation');
 const createManageProfile = require('../../../../application/use-cases/manageProfile');
+const createDeleteUser = require('../../../../application/use-cases/deleteUser');
 const { emailClient } = require('../../../outbound/clients/emailClient');
 const crewClient = require('../../../outbound/clients/crewClient');
+const {
+  flightsClient,
+  notificationClient,
+  recommendationClient,
+} = require('../../../outbound/clients/internalClients');
 
 const {
   verifyJwt,
@@ -23,6 +29,7 @@ const {
   createResendInvitationController,
   createManageUsersController,
   createProfileController,
+  createDeleteUserController,
 } = require('../controllers/user.controller');
 
 const router = express.Router();
@@ -44,6 +51,15 @@ const manageUsers = createManageUsersController(
   createManageUsers(userRepository, { crewClient, resendInvitation })
 );
 const superAdmin = allowRoles('super_admin');
+const deleteUserController = createDeleteUserController(
+  createDeleteUser({
+    userRepository,
+    crewClient,
+    flightsClient,
+    notificationClient,
+    recommendationClient,
+  })
+);
 const profile = createProfileController(createManageProfile(userRepository));
 // La foto viaja en base64 dentro del JSON. El body se lee después de comprobar
 // la sesión (app.js no lo lee en esta ruta).
@@ -62,7 +78,10 @@ router.get('/stats', verifyJwt, superAdmin, manageUsers.stats);
 router.get('/:id', verifyJwt, getByIdController);
 router.post('/', verifyJwt, superAdmin, createUserController);
 router.patch('/:id', verifyJwt, superAdmin, manageUsers.update);
+// Desactivar: reversible, conserva todo.
 router.delete('/:id', verifyJwt, superAdmin, manageUsers.deactivate);
+// Eliminar: definitivo, borra la cuenta y todo lo suyo en cada servicio.
+router.delete('/:id/permanent', verifyJwt, superAdmin, deleteUserController);
 // Cuenta pendiente cuyo correo no llegó o venció: enlace nuevo y otro correo.
 router.post('/:id/resend-invitation', verifyJwt, superAdmin, resendInvitationController);
 router.post('/lookup', verifyCrewServiceKey, manageUsers.lookup);

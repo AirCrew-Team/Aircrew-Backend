@@ -147,10 +147,65 @@ async function deleteCrewMemberWithoutHistory(userId) {
   return (await findCrewMemberByUserId(userId)) ? 'has_history' : 'not_found';
 }
 
+// Admin eliminó la cuenta del tripulante: se borra todo lo suyo en una transacción.
+// - Las ausencias de otros en las que esperaba dar «Enterado» como reemplazo vuelven
+//   a la cola, como cuando vence el plazo (Flights ya devolvió el puesto).
+// - Sus ausencias: con ellas se van sus hijas, comprobantes y eventos (ON DELETE CASCADE).
+// - Su certificación (con archivo e historial) y su perfil.
+// Repetirlo no falla: devuelve 0 en todo.
+async function eraseCrewUser(userId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const reopened = await client.query(
+      `WITH reopened AS (
+         UPDATE public.absences
+         SET status = 'reported', replacement_user_id = NULL, approved_by = NULL,
+             approved_at = NULL, deadline_at = NULL, replacement_option = NULL
+         WHERE replacement_user_id = $1 AND status = 'pending_ack' AND crew_user_id <> $1
+         RETURNING id
+       )
+       INSERT INTO public.absence_events (absence_id, type, text)
+       SELECT id, 'candidate_missed', 'Se eliminó la cuenta del reemplazo: la solicitud vuelve a la cola'
+       FROM reopened`,
+      [userId]
+    );
+    const absences = await client.query(
+      'DELETE FROM public.absences WHERE crew_user_id = $1',
+      [userId]
+    );
+    const certifications = await client.query(
+      'DELETE FROM public.crew_certifications WHERE crew_user_id = $1',
+      [userId]
+    );
+    const profile = await client.query(
+      'DELETE FROM public.crew_members WHERE user_id = $1',
+      [userId]
+    );
+
+    await client.query('COMMIT');
+
+    return {
+      profile: profile.rowCount,
+      certifications: certifications.rowCount,
+      absences: absences.rowCount,
+      reopened_absences: reopened.rowCount,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createCrewMember,
   findCrewMembers,
   findCrewMemberByUserId,
   updateCrewMember,
+  eraseCrewUser,
   deleteCrewMemberWithoutHistory,
 };

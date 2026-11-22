@@ -59,8 +59,17 @@ Cada servicio tiene su propia base en PostgreSQL. Crea las bases y ejecuta el sc
 | `admin_db` | `database/admin_db.sql` |
 | `crew_db` | `database/crew_db.sql` |
 | `flights_db` | `database/flights_db.sql` |
+| `recommendation_db` | `database/recommendation_db.sql` |
 
-Los scripts se pueden ejecutar varias veces sin error. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+
+### Datos de demo
+
+```bash
+npm run seed:demo
+```
+
+Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 21 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
 
 ## Documentación de la API (Swagger)
 
@@ -109,7 +118,7 @@ ACTIVATION_TOKEN_EXPIRES_MINUTES=1440
 EMAIL_PROVIDER=smtp
 ```
 
-`CREW_ACTIVATION_URL` es la pantalla del frontend que activa la cuenta: el correo le agrega `?token=...`. Esa pantalla envía `POST /auth/activate` con `token` y una contraseña de 12 a 72 bytes. El token vence según la configuración y solo sirve una vez.
+`CREW_ACTIVATION_URL` es la pantalla del frontend que activa la cuenta: el correo le agrega `?token=...`. Esa pantalla envía `POST /auth/activate` con `token` y una contraseña de 8 a 72 bytes. El token vence según la configuración y solo sirve una vez.
 
 `POST /auth/activate/check` recibe `{ token }` y solo consulta: responde 200 si el enlace sirve y 400 si no es válido, venció o la cuenta ya está activa. No gasta el token. El frontend lo usa al abrir el enlace.
 
@@ -143,7 +152,7 @@ PASSWORD_RESET_URL=http://localhost:5173/restablecer-contrasena
 
 - `POST /auth/forgot-password` recibe `{ email }` y responde siempre el mismo mensaje, exista o no la cuenta. Si es una cuenta activa, envía en segundo plano un enlace `PASSWORD_RESET_URL?token=...` que vence a los 10 minutos y sirve una sola vez. Pedir otro enlace anula el anterior. Las cuentas pendientes de activación o desactivadas no lo reciben.
 - `POST /auth/reset-password/check` recibe `{ token }` y solo consulta: responde 200 si el enlace sirve, 400 si no es válido o venció y 429 si se alcanzó el límite de cambios. No gasta el token. El frontend lo usa al abrir el enlace.
-- `POST /auth/reset-password` recibe `{ token, password }` (12 a 72 bytes) y cambia la contraseña. No inicia sesión.
+- `POST /auth/reset-password` recibe `{ token, password }` (8 a 72 bytes) y cambia la contraseña. No inicia sesión.
 - Límites por cuenta en las últimas 24 horas: 3 cambios de contraseña, 2 minutos entre solicitudes y 5 solicitudes. Al superarlos responde 429 con un mensaje para la persona. Son reglas del producto, fijas en el código.
 - Si falta `PASSWORD_RESET_URL` o la configuración del correo, responde 503 antes de buscar la cuenta. Si el envío falla, la respuesta no cambia y el error queda en el log.
 - Requiere las columnas `password_reset_*` y la tabla `password_reset_events` de `database/admin_db.sql`, que se puede volver a ejecutar sobre una base existente.
@@ -160,7 +169,7 @@ Rutas de la pantalla Configuración. Todas piden sesión, sirven a cualquier rol
   - Los datos laborales no se cambian aquí: los asigna un super_admin.
 - `GET /catalogs/us-cities` (con sesión, cualquier rol) devuelve unas 150 ciudades de EE. UU. ordenadas, con el formato «Ciudad, ST» e incluidas las de los hubs de Delta. El catálogo vive en `src/domain/usCities.js` y es la única fuente: el frontend no tiene su copia.
 - `POST /auth/change-password` recibe `{ current_password, new_password }` y responde `{ password_changed_at }` con una cookie de sesión `aircrew_token` nueva (ver «Sesión con cookie»): las demás sesiones se cierran y esta sigue abierta. El token nuevo lleva el rol guardado en la cuenta y un `iat` del segundo del cambio o posterior, aunque el reloj del servicio vaya por detrás del de PostgreSQL. El body no incluye el token.
-  - La nueva tiene de 12 a 72 bytes y es distinta de la actual. Si la actual no es correcta responde `400` («La contraseña actual no es correcta.»), que se comprueba antes que el límite.
+  - La nueva tiene de 8 a 72 bytes y es distinta de la actual. Si la actual no es correcta responde `400` («La contraseña actual no es correcta.»), que se comprueba antes que el límite.
   - Comparte el límite de la recuperación: con 3 cambios en 24 horas responde `429`, y tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día. La comprobación y el cambio van en una transacción con la cuenta bloqueada.
 - `PUT /users/me/photo` recibe `{ mime_type, data_base64 }` y responde `{ photo_updated_at }`. Admite PNG, JPEG o WEBP de hasta 2 MB ya decodificada, en base64 sin el prefijo `data:`, y los primeros bytes deben coincidir con el tipo. Esta ruta acepta un body JSON de hasta 3 MB y lo lee después de comprobar la sesión. Las demás rutas de admin siguen con 100 kB.
 - `GET /users/me/photo` devuelve el binario con su `Content-Type`, `X-Content-Type-Options: nosniff` y `Cache-Control: private, no-cache`, o `404` si no hay foto. `DELETE /users/me/photo` la borra y responde `204`, haya o no foto.

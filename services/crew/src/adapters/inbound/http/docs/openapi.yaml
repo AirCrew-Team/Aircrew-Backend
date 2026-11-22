@@ -10,6 +10,9 @@ tags:
   - name: Salud
   - name: Tripulantes
   - name: Ausencias
+  - name: Turno
+  - name: Interno
+    description: Endpoints para otros servicios (token de servicio), no para el frontend.
 
 paths:
   /health:
@@ -87,7 +90,18 @@ paths:
       tags: [Ausencias]
       summary: Reportar una ausencia (crew)
       description: |
-        El tripulante reporta que no podrá trabajar entre dos fechas.
+        Dos formas:
+
+        **Por vuelo** (`flight_id`, `reason`, `notes`): no podrá cumplir ese vuelo. El vuelo debe ser suyo
+        y no haber salido (404 `flight_not_assigned`, 409 `flight_departed`, 409 `duplicate_absence`).
+        Es una solicitud de reemplazo: queda con `suggestions_state: searching` y Recommendation busca
+        candidatos con Claude en segundo plano.
+
+        **Por fechas** (`start_date`, `end_date`, `reason`, `notes`, `attachment`): no podrá trabajar esos días.
+        Por cada vuelo suyo que salga en esas fechas (hora de Colombia) y no haya salido, se crea además
+        una ausencia por vuelo con `parent_absence_id` = esta, y cada una es una solicitud de reemplazo.
+        La respuesta las trae en `replacement_requests`. Si Flights no responde, la ausencia se guarda
+        igual, sin solicitudes.
         - `start_date` puede ser como mucho de ayer (margen por la zona horaria) y `end_date` es igual o posterior, con 30 días como máximo entre ambas.
         - El comprobante es obligatorio si el motivo es `illness`. Va en base64: PDF, PNG o JPG de hasta 10 MB ya decodificado, y sus primeros bytes deben coincidir con `mime_type`.
         - La ausencia y el comprobante se guardan en una sola transacción. Esta ruta acepta un body JSON de hasta 15 MB; las demás, 100 kB.
@@ -100,8 +114,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [start_date, end_date, reason]
+              required: [reason]
+              description: Envía flight_id (por vuelo) o start_date y end_date (por fechas).
               properties:
+                flight_id: { type: string, format: uuid, description: Solo para la ausencia por vuelo. }
                 start_date: { type: string, format: date, example: '2026-11-20' }
                 end_date: { type: string, format: date, example: '2026-11-22' }
                 reason: { $ref: '#/components/schemas/AbsenceReason' }
@@ -151,7 +167,10 @@ paths:
       summary: Listar ausencias (supervisor o super_admin)
       description: |
         Las más recientes primero, con el código y cargo del tripulante.
-        Con `?status=reported` se obtiene la cola de ausencias que todavía necesitan reemplazo.
+        **Cola de reemplazos:** `?status=reported&kind=flight` (solo ausencias por vuelo, por salida más próxima).
+        `kind=dates` lista las ausencias por fechas (con su comprobante). Sin `kind`, todas.
+        Cada ausencia trae además gate, origin_name, destination_name y aircraft_family del vuelo
+        (en null si el servicio de vuelos no responde).
       security:
         - bearerAuth: []
       parameters:
@@ -159,6 +178,10 @@ paths:
           in: query
           required: false
           schema: { $ref: '#/components/schemas/AbsenceStatus' }
+        - name: kind
+          in: query
+          required: false
+          schema: { type: string, enum: [flight, dates] }
       responses:
         '200':
           description: Ausencias
@@ -166,7 +189,15 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/AbsenceWithCrewMember' }
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/AbsenceWithCrewMember'
+                    - type: object
+                      properties:
+                        gate: { type: string, nullable: true, example: A12 }
+                        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+                        destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
+                        aircraft_family: { type: string, nullable: true, example: A320 }
         '400':
           description: status inválido
           content:
@@ -182,6 +213,171 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/tracking:
+    get:
+      tags: [Ausencias]
+      summary: Seguimiento del turno (supervisor o super_admin)
+      description: |
+        Ausencias de los vuelos que salen en un día (hora de Colombia), con su línea de tiempo.
+        Orden: por aprobar (sin candidatos primero, luego por salida más próxima, al final las que
+        la IA sigue buscando), esperando confirmación (por plazo), cubiertas (más reciente primero).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          schema: { type: string, example: '2026-11-19' }
+      responses:
+        '200':
+          description: Ausencias del día
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TrackingItem' }
+        '400':
+          description: Fecha inválida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/stats:
+    get:
+      tags: [Ausencias]
+      summary: Indicadores de ausencias (supervisor o super_admin)
+      description: La tasa de resolución es el porcentaje de ausencias cubiertas en los últimos 30 días.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reported: { type: integer, description: Por aprobar. }
+                  pending_ack: { type: integer, description: Esperando «Enterado». }
+                  covered_today: { type: integer }
+                  resolution_rate: { type: number, nullable: true, example: 85.7 }
+
+  /absences/{id}/approve:
+    patch:
+      tags: [Ausencias]
+      summary: Aprobar un reemplazo (lo usa Recommendation al confirmar)
+      description: La ausencia pasa de reported a pending_ack (esperando «Enterado»).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replacement_user_id, deadline_at]
+              properties:
+                replacement_user_id: { type: string, format: uuid }
+                deadline_at: { type: string, format: date-time }
+                option: { type: integer, description: Lugar del candidato en la lista. }
+      responses:
+        '200':
+          description: Ausencia esperando confirmación
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Absence' }
+        '400':
+          description: Datos inválidos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Ausencia no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La ausencia ya no está esperando reemplazo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /absences/{id}/missed:
+    patch:
+      tags: [Interno]
+      summary: El reemplazo dejó vencer el plazo (token de servicio)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: La ausencia vuelve a reported
+
+  /absences/acknowledged:
+    post:
+      tags: [Interno]
+      summary: El reemplazo dio «Enterado» (token de servicio, lo llama Flights)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_id, replacement_user_id]
+              properties:
+                flight_id: { type: string, format: uuid }
+                replacement_user_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Ausencia cubierta
+
+  /absences/expired:
+    get:
+      tags: [Interno]
+      summary: Ausencias con el plazo de «Enterado» vencido (token de servicio)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ausencias vencidas
+
+  /absences/{id}/suggestions:
+    patch:
+      tags: [Interno]
+      summary: Resultado de la búsqueda de candidatos (token de servicio, lo llama Recommendation)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string, enum: [searching, ready, none, error] }
+                candidate_count: { type: integer }
+      responses:
+        '200':
+          description: Estado actualizado
 
   /absences/{id}:
     get:
@@ -312,6 +508,104 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /shifts/current:
+    get:
+      tags: [Turno]
+      summary: Turno actual (banner del inicio del supervisor)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Sin base, todas.
+          schema: { type: string, example: BOG }
+      responses:
+        '200':
+          description: Turno
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora de Colombia: 06–14, 14–22, 22–06' }
+                  base: { type: string, nullable: true }
+                  flights_today: { type: integer }
+                  standby_total: { type: integer, description: De guardia. }
+                  standby_ready: { type: integer, description: De guardia y sin impedimento para reemplazar. }
+                  staffing_delays: { type: integer }
+
+  /shift-crew:
+    get:
+      tags: [Turno]
+      summary: Tripulación del turno (supervisor o super_admin)
+      description: |
+        Ya ordenada: guardia (por minutos a rampa), en vuelo (por llegada), programados (por
+        presentación), descanso (por fin), ausentes y libres. La ubicación y los minutos a rampa
+        son los declarados al iniciar la guardia.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          schema: { type: string, example: BOG }
+      responses:
+        '200':
+          description: Tripulantes del turno
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base: { type: string, nullable: true }
+                  shift: { type: string }
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      description: |
+                        Campos comunes más, según status:
+                        standby (location, minutes_to_ramp, guard_until, replacement_blocker),
+                        in_flight (flight, arrival_at), scheduled (flight, report_at),
+                        rest (rest_until), absent (flight, reason), available.
+                      properties:
+                        id: { type: string, format: uuid }
+                        employee_code: { type: string }
+                        full_name: { type: string }
+                        position: { type: string }
+                        rank: { type: string }
+                        phone: { type: string, nullable: true }
+                        radio_channel: { type: string, nullable: true }
+                        status: { type: string, enum: [standby, in_flight, scheduled, rest, absent, available] }
+                        expiring_certification:
+                          type: object
+                          nullable: true
+                          properties:
+                            name: { type: string, example: Certificado médico }
+                            days_left: { type: integer }
+
+  /crew-members/me/metrics:
+    get:
+      tags: [Tripulantes]
+      summary: Métricas de Mis Vuelos (crew)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: month
+          in: query
+          description: AAAA-MM. Por defecto, el mes actual.
+          schema: { type: string, example: '2026-11' }
+      responses:
+        '200':
+          description: Horas del mes (FDP), descanso y sectores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  month: { type: string }
+                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
+                  rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
+                  sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
   /internal/crew-members:
     get:
       tags: [Interno]
@@ -497,6 +791,9 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
+        kind: { type: string, enum: [flight, dates], description: Por vuelo (solicitud de reemplazo) o por fechas. }
+        parent_absence_id: { type: string, format: uuid, nullable: true, description: Ausencia por fechas de la que salió. }
         crew_user_id: { type: string, format: uuid }
         flight_id: { type: string, format: uuid, nullable: true, description: Solo en las ausencias antiguas por vuelo. }
         flight_number: { type: string, nullable: true, example: AC201 }
@@ -511,6 +808,14 @@ components:
         reason: { $ref: '#/components/schemas/AbsenceReason' }
         notes: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/AbsenceStatus' }
+        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
+        slot_role: { type: string, nullable: true, example: first_officer }
+        flight_origin: { type: string, nullable: true, example: BOG }
+        flight_destination: { type: string, nullable: true, example: MIA }
+        deadline_at: { type: string, format: date-time, nullable: true, description: Plazo para el «Enterado». }
+        approved_at: { type: string, format: date-time, nullable: true }
+        candidate_count: { type: integer, nullable: true }
+        replacement_option: { type: integer, nullable: true }
         replacement_user_id: { type: string, format: uuid, nullable: true, description: Quién cubrió la ausencia. }
         covered_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
@@ -522,8 +827,8 @@ components:
         size_bytes: { type: integer, example: 48213 }
     AbsenceStatus:
       type: string
-      enum: [reported, covered]
-      description: reported (falta reemplazo), covered (ya tiene reemplazo)
+      enum: [reported, pending_ack, covered, cancelled]
+      description: reported (falta reemplazo), pending_ack (esperando «Enterado» del reemplazo), covered (cubierta), cancelled
     AbsenceWithCrewMember:
       allOf:
         - $ref: '#/components/schemas/Absence'
@@ -533,9 +838,52 @@ components:
             position: { type: string, nullable: true, example: pilot }
             crew_name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). }
             replacement_name: { type: string, nullable: true, description: Nombre del reemplazo. }
+    TrackingItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: AV-9344 }
+        origin: { type: string, example: BOG }
+        destination: { type: string, example: MIA }
+        departure_at: { type: string, format: date-time }
+        slot_role: { type: string, example: first_officer }
+        reason: { $ref: '#/components/schemas/AbsenceReason' }
+        reported_by: { type: string, nullable: true, example: Valentina Ríos }
+        employee_code: { type: string, nullable: true }
+        reported_at: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+        suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
+        candidate_count: { type: integer }
+        replacement:
+          type: object
+          nullable: true
+          properties:
+            user_id: { type: string, format: uuid }
+            full_name: { type: string, example: Sebastián Pardo }
+            option: { type: integer, nullable: true, example: 2 }
+        approval:
+          type: object
+          nullable: true
+          properties:
+            by: { type: string, example: Camila Restrepo }
+            at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time, nullable: true }
+        confirmed_at: { type: string, format: date-time, nullable: true }
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              at: { type: string, format: date-time }
+              type: { type: string, enum: [reported, ai_ready, ai_none, ai_error, approved, candidate_missed, acknowledged, covered, cancelled] }
+              text: { type: string, example: Andrés Gómez dejó vencer su plazo }
+              missed: { type: boolean }
     CrewStatus:
       type: string
-      enum: [available, on_duty, in_flight, medical_leave]
+      enum: [available, on_duty, in_flight, medical_leave, vacation]
+      description: on_duty = de guardia en el aeropuerto
       default: available
     CrewProfile:
       type: object
@@ -558,6 +906,17 @@ components:
       properties:
         id: { type: string }
         user_id: { type: string, format: uuid }
+        rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
+        base_code: { type: string, nullable: true, example: BOG }
+        ratings: { type: array, items: { type: string }, example: [A320, '787'] }
+        english_level: { type: integer, nullable: true, minimum: 1, maximum: 6 }
+        medical_expires_on: { type: string, nullable: true, example: '2027-05-18' }
+        hire_date: { type: string, nullable: true, example: '2021-02-12' }
+        phone: { type: string, nullable: true }
+        radio_channel: { type: string, nullable: true }
+        standby_location: { type: string, nullable: true, example: Sala de tripulaciones T1 }
+        minutes_to_ramp: { type: integer, nullable: true, example: 12 }
+        standby_until: { type: string, format: date-time, nullable: true }
         name: { type: string, nullable: true, description: Nombre desde Admin (null si Admin no responde). Solo en las consultas GET. }
         employee_code: { type: string }
         position: { type: string }

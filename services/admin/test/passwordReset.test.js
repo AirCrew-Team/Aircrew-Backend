@@ -23,7 +23,7 @@ const WAIT_MESSAGE =
 const REQUESTS_MESSAGE =
   'Alcanzaste el límite de 5 solicitudes en 24 horas. Intenta de nuevo más tarde.';
 const MISSING_DATA_MESSAGE =
-  'Se requieren el token y una contraseña de 12 a 72 bytes.';
+  'Se requieren el token y una contraseña de 8 a 72 bytes.';
 const INVALID_LINK_MESSAGE =
   'El enlace para restablecer la contraseña no es válido o ya venció.';
 const EMAIL_UNAVAILABLE_MESSAGE =
@@ -685,7 +685,7 @@ test('D4-B3: tras restablecer la contraseña, un token emitido antes recibe 401 
 });
 
 for (const [label, input] of [
-  ['con una contraseña de menos de 12 caracteres', { token: 'token-de-prueba', password: 'a'.repeat(11) }],
+  ['con una contraseña de menos de 8 caracteres', { token: 'token-de-prueba', password: 'a'.repeat(7) }],
   // 37 caracteres, pero 74 bytes: cuenta bytes, no caracteres.
   ['con una contraseña de más de 72 bytes', { token: 'token-de-prueba', password: 'ñ'.repeat(37) }],
   ['con una contraseña que no es texto', { token: 'token-de-prueba', password: 123456789012 }],

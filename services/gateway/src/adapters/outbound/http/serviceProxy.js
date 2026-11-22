@@ -2,12 +2,13 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // Reenvía la petición tal cual (método, headers, body y token) al servicio.
 // Express quita el prefijo montado: /api/flights/aircraft llega como /aircraft.
-function createServiceProxy(name, target) {
+// timeoutMs: cuánto esperar la respuesta del servicio (por defecto 15 s).
+function createServiceProxy(name, target, timeoutMs = 15000) {
   return createProxyMiddleware({
     target,
     changeOrigin: true,
-    proxyTimeout: 15000,
-    timeout: 15000,
+    proxyTimeout: timeoutMs,
+    timeout: timeoutMs,
     on: {
       error(error, req, res) {
         console.error(`Gateway -> ${name}: ${error.message}`);

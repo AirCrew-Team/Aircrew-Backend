@@ -16,6 +16,8 @@ module.exports = {
     process.env.ADMIN_SERVICE_URL || 'http://localhost:3005',
   flightsServiceUrl:
     process.env.FLIGHTS_SERVICE_URL || 'http://localhost:3001',
+  recommendationServiceUrl:
+    process.env.RECOMMENDATION_SERVICE_URL || 'http://localhost:3003',
   notificationServiceUrl:
     process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3004',
   DataBase: {

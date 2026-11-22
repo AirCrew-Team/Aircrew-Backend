@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
 const { jwtSecret, jwtIssuer } = require('../../../../config/env');
 
-const allowedRoles = new Set(['crew', 'supervisor', 'super_admin']);
+// service: token de 1 minuto que firma otro servicio para llamadas internas
+// sin usuario (por ejemplo, la IA que corre en segundo plano).
+const allowedRoles = new Set(['crew', 'supervisor', 'super_admin', 'service']);
 
 function verifyJwt(req, res, next) {
   if (!jwtSecret) {
@@ -13,7 +15,7 @@ function verifyJwt(req, res, next) {
   const authorization = req.headers.authorization;
 
   if (!authorization || !authorization.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Se requiere autenticación.' });
+    return res.status(401).json({ error: 'Se requiere autenticación.', code: 'auth_required' });
   }
 
   try {
@@ -32,7 +34,7 @@ function verifyJwt(req, res, next) {
       typeof payload.role !== 'string' ||
       !allowedRoles.has(payload.role)
     ) {
-      return res.status(401).json({ error: 'El token de autenticación no es válido.' });
+      return res.status(401).json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
     }
 
     req.user = {
@@ -42,12 +44,16 @@ function verifyJwt(req, res, next) {
 
     return next();
   } catch (error) {
-    if (
-      error.name === 'JsonWebTokenError' ||
-      error.name === 'TokenExpiredError' ||
-      error.name === 'NotBeforeError'
-    ) {
-      return res.status(401).json({ error: 'El token no es válido o ya venció.' });
+    if (error.name === 'TokenExpiredError') {
+      return res
+        .status(401)
+        .json({ error: 'Tu sesión venció. Inicia sesión de nuevo.', code: 'token_expired' });
+    }
+
+    if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
+      return res
+        .status(401)
+        .json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
     }
 
     return next(error);

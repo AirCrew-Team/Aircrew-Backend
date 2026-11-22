@@ -12,6 +12,10 @@ const USER_BASES = Object.freeze([
   { code: 'LGA', label: 'Base LGA / Nueva York LaGuardia' },
   { code: 'SLC', label: 'Base SLC / Salt Lake City' },
   { code: 'SEA', label: 'Base SEA / Seattle' },
+  // Bases de los datos de demo (database/seed-demo.js).
+  { code: 'BOG', label: 'Base BOG / Bogotá' },
+  { code: 'MDE', label: 'Base MDE / Rionegro' },
+  { code: 'CLO', label: 'Base CLO / Cali' },
 ]);
 
 // Cargos de un tripulante. Se guardan tal cual en su perfil de Crew (position).

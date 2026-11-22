@@ -23,7 +23,9 @@
     "dev:notification": "npm run -w @vuelos/notification dev",
     "dev:all": "concurrently -k -n admin,crew,flights,recom,notif,gateway -c blue,green,yellow,magenta,cyan,white \"npm:dev:admin\" \"npm:dev:crew\" \"npm:dev:flights\" \"npm:dev:recommendation\" \"npm:dev:notification\" \"npm:dev:gateway\"",
     "start:all": "concurrently -k -n admin,crew,flights,recom,notif,gateway -c blue,green,yellow,magenta,cyan,white \"npm:start:admin\" \"npm:start:crew\" \"npm:start:flights\" \"npm:start:recommendation\" \"npm:start:notification\" \"npm:start:gateway\"",
-    "dev:admin": "npm run -w @vuelos/admin dev"
+    "dev:admin": "npm run -w @vuelos/admin dev",
+    "seed:demo": "node database/seed-demo.js",
+    "test": "node --test \"services/*/test/*.test.js\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

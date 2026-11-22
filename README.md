@@ -74,15 +74,19 @@ Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircr
 
 ## Documentación de la API (Swagger)
 
-Admin, Crew y Flights publican su contrato OpenAPI con Swagger UI:
+Cada servicio publica su contrato OpenAPI con Swagger UI:
 
 | Servicio | Swagger UI | Contrato JSON |
 | --- | --- | --- |
 | admin | http://localhost:3005/docs | http://localhost:3005/docs/openapi.json |
 | crew | http://localhost:3002/docs | http://localhost:3002/docs/openapi.json |
 | flights | http://localhost:3001/docs | http://localhost:3001/docs/openapi.json |
+| recommendation | http://localhost:3003/docs | http://localhost:3003/docs/openapi.json |
+| notification | http://localhost:3004/docs | http://localhost:3004/docs/openapi.json |
 
 Cada contrato está en `services/<servicio>/src/adapters/inbound/http/docs/openapi.yaml`. Si cambias un endpoint, actualiza también ese archivo. Para probar rutas protegidas, inicia sesión en Admin (`POST /auth/login`), copia el `token` y pégalo en el botón **Authorize**.
+
+A través del gateway (`/api/<servicio>/docs`), el Swagger está **cerrado** y responde 404, salvo con `DOCS_PUBLIC=true` en el gateway. El gateway también responde 404, siempre, a las rutas que solo usan los servicios entre sí: `/api/<servicio>/internal/*`, `/api/admin/users/lookup` y `/api/notification/events/*`. Los servicios se las piden unos a otros por su URL directa (en Railway, la red privada).
 
 ## Usuarios (pantalla del super_admin)
 

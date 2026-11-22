@@ -1,5 +1,5 @@
 const express = require('express');
-const { services } = require('../../../config/env');
+const { services, docsPublic } = require('../../../config/env');
 const { createServiceProxy } = require('../../outbound/http/serviceProxy');
 const { cookieToAuthorization } = require('./cookieAuth');
 
@@ -14,6 +14,37 @@ router.get('/health', (req, res) => {
 // Recommendation espera a la IA (Claude puede tardar hasta un minuto en
 // sugerir una tripulación completa): se le da más tiempo que al resto.
 const TIMEOUTS = { recommendation: 120000 };
+
+// Rutas que solo usan los servicios entre sí (por la red privada) o que no deben
+// verse desde Internet. Se comparan sin mayúsculas, decodificadas y sin barras
+// repetidas, porque Express las enrutaría igual al servicio. Una ruta con
+// segmentos «.» o «..» (que ningún cliente legítimo envía) se rechaza entera.
+const PRIVATE_ROUTES = [
+  /^\/api\/[^/]+\/internal(\/|$)/,
+  /^\/api\/admin\/users\/lookup(\/|$)/,
+  /^\/api\/notification\/events(\/|$)/,
+];
+const DOCS_ROUTE = /^\/api\/[^/]+\/docs(\/|$)/;
+const DOT_SEGMENT = /(^|\/)\.{1,2}(\/|$)/;
+
+function normalizedPath(url) {
+  try {
+    const path = decodeURIComponent(url.split('?')[0]).replace(/\/{2,}/g, '/').toLowerCase();
+    return DOT_SEGMENT.test(path) ? null : path;
+  } catch {
+    return null;
+  }
+}
+
+router.use((req, res, next) => {
+  const path = normalizedPath(req.url);
+  const blocked =
+    path === null ||
+    PRIVATE_ROUTES.some((route) => route.test(path)) ||
+    (!docsPublic && DOCS_ROUTE.test(path));
+  if (blocked) return res.status(404).json({ error: 'Ruta no encontrada.' });
+  return next();
+});
 
 router.use(cookieToAuthorization);
 

@@ -78,7 +78,8 @@ paths:
       description: |
         Vuelve a aplicar las reglas y la IA con datos frescos y devuelve los candidatos nuevos
         (mismo formato que GET /candidates). Quien ya dejó vencer su plazo no se vuelve a proponer.
-        Responde 503 con code ai_unavailable si la IA no responde.
+        Responde 503 con code ai_unavailable si la IA no responde o no está configurada
+        (p. ej. «La IA no está configurada: falta CLAUDE_CODE_OAUTH_TOKEN.»).
         Con Claude Code puede tardar entre 10 y 40 segundos.
 
         **reason** (opcional, máx. 300 caracteres): preferencia del supervisor, por ejemplo
@@ -381,7 +382,8 @@ paths:
       description: |
         Para cada puesto vacío: las 8 reglas filtran a los elegibles y Claude elige al mejor
         para cada puesto (sin repetir personas), buscando repartir la carga, cuidar el descanso
-        y equilibrar la experiencia. Si Claude no responde: 503 ai_unavailable. Cada asignación queda con
+        y equilibrar la experiencia. Si Claude no responde o la IA no está configurada: 503 ai_unavailable
+        (el mensaje dice qué falta). Cada asignación queda con
         `source` (ai o rule) y `rationale`. El vuelo **nunca se confirma solo**.
         Con Claude Code tarda entre 20 y 40 segundos.
       security:

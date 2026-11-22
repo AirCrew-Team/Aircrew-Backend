@@ -9,6 +9,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.330",
     "@anthropic-ai/sdk": "^1.10.0",
     "@vuelos/shared": "*",
     "dotenv": "^16.4.5",

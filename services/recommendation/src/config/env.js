@@ -1,7 +1,6 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
-
-const aiProvider = process.env.AI_PROVIDER === 'claude_code' ? 'claude_code' : 'api';
+const { aiConfig } = require('./aiConfig');
 
 module.exports = {
   nameService: 'recommendation',
@@ -23,21 +22,6 @@ module.exports = {
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD,
   },
-  // IA (Claude). Dos proveedores, con el mismo contrato:
-  // - claude_code: ejecuta Claude Code (`claude -p`) con la suscripción de quien
-  //   corre el backend (token de `claude setup-token` en CLAUDE_CODE_OAUTH_TOKEN).
-  // - api: usa la API de Anthropic con ANTHROPIC_API_KEY (saldo de la API).
-  // Si la IA está apagada (AI_ENABLED=false) o falla, las recomendaciones y
-  // sugerencias responden error (no hay orden de respaldo).
-  ai: {
-    provider: aiProvider,
-    enabled:
-      process.env.AI_ENABLED !== 'false' &&
-      (aiProvider === 'claude_code' || Boolean(process.env.ANTHROPIC_API_KEY)),
-    model: process.env.CLAUDE_MODEL || (aiProvider === 'api' ? 'claude-opus-5-5' : null),
-    // Claude Code tarda más: arranca un proceso nuevo en cada llamada.
-    timeoutMs:
-      Number(process.env.AI_TIMEOUT_MS) || (aiProvider === 'claude_code' ? 90000 : 20000),
-    claudeCodePath: process.env.CLAUDE_CODE_PATH || 'claude',
-  },
+  // IA (Claude): proveedor, si está activa y por qué no (ver aiConfig.js).
+  ai: aiConfig(process.env),
 };

@@ -39,6 +39,11 @@ ALTER TABLE public.aircraft ADD COLUMN IF NOT EXISTS maintenance_note TEXT;
 ALTER TABLE public.aircraft DROP COLUMN IF EXISTS initial_destination;
 ALTER TABLE public.aircraft DROP COLUMN IF EXISTS final_destination;
 
+-- La base de una aeronave es un hub de Delta (AIRCRAFT_BASES). Las de los datos
+-- de demo antiguos (Colombia) quedan sin base: la columna admite NULL y el
+-- formulario pide elegir un hub al editarla.
+UPDATE public.aircraft SET base = NULL WHERE base IN ('BOG', 'MDE', 'CLO');
+
 -- Motivo del mantenimiento: uno del catálogo y solo en mantenimiento. NOT VALID:
 -- no revisa filas antiguas, solo las que se guarden desde ahora.
 DO $$
@@ -133,6 +138,7 @@ CREATE INDEX IF NOT EXISTS flight_assignments_crew_user_id_idx
 -- ===== Programación y reemplazos =====
 
 -- Catálogo de aeropuertos: ciudad, nombre y zona horaria para el frontend.
+-- country decide si un vuelo es internacional (fuera de US).
 CREATE TABLE IF NOT EXISTS public.airports (
   code     TEXT PRIMARY KEY,
   icao     TEXT NOT NULL,
@@ -141,6 +147,31 @@ CREATE TABLE IF NOT EXISTS public.airports (
   country  TEXT NOT NULL,
   timezone TEXT NOT NULL
 );
+
+-- Fuera los aeropuertos colombianos de los datos de demo antiguos, salvo los que
+-- algún vuelo todavía usa: sin su fila, ese vuelo pasaría a contar como nacional.
+-- Los demás destinos (los del seed o los que se agreguen a mano) no se tocan.
+DELETE FROM public.airports a
+WHERE a.code IN ('BOG', 'MDE', 'CLO', 'CTG')
+  AND NOT EXISTS (
+    SELECT 1 FROM public.flights f
+    WHERE f.origin = a.code OR f.destination = a.code
+  );
+
+-- Los 9 hubs de Delta, con los mismos datos que shared/domain/hubs.js (un test lo
+-- comprueba). Repetible. Los destinos internacionales se agregan aparte.
+INSERT INTO public.airports (code, icao, city, name, country, timezone) VALUES
+  ('ATL', 'KATL', 'Atlanta', 'Hartsfield-Jackson Atlanta International', 'US', 'America/New_York'),
+  ('BOS', 'KBOS', 'Boston', 'Boston Logan International', 'US', 'America/New_York'),
+  ('DTW', 'KDTW', 'Detroit', 'Detroit Metropolitan Wayne County', 'US', 'America/Detroit'),
+  ('LAX', 'KLAX', 'Los Ángeles', 'Los Angeles International', 'US', 'America/Los_Angeles'),
+  ('MSP', 'KMSP', 'Minneapolis-St. Paul', 'Minneapolis-Saint Paul International', 'US', 'America/Chicago'),
+  ('JFK', 'KJFK', 'Nueva York', 'John F. Kennedy International', 'US', 'America/New_York'),
+  ('LGA', 'KLGA', 'Nueva York', 'LaGuardia', 'US', 'America/New_York'),
+  ('SLC', 'KSLC', 'Salt Lake City', 'Salt Lake City International', 'US', 'America/Denver'),
+  ('SEA', 'KSEA', 'Seattle', 'Seattle-Tacoma International', 'US', 'America/Los_Angeles')
+ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, city = EXCLUDED.city, name = EXCLUDED.name,
+  country = EXCLUDED.country, timezone = EXCLUDED.timezone;
 
 -- family: familia del avión (A320, 787...). La usa la regla de habilitación.
 ALTER TABLE public.aircraft ADD COLUMN IF NOT EXISTS family TEXT;

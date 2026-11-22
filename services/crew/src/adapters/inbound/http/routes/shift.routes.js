@@ -3,13 +3,17 @@ const { verifyJwt } = require('../middlewares/auth.middleware');
 const { allowRoles } = require('../middlewares/roles.middleware');
 const flightsClient = require('../../../outbound/clients/flightsClient');
 const { findUsersByIds } = require('../../../outbound/clients/adminClient');
-const { findCrewMembers } = require('../../../outbound/persistence/repositories/crewRepository');
+const {
+  findCrewMembers,
+  findCrewMemberByUserId,
+} = require('../../../outbound/persistence/repositories/crewRepository');
 const absenceRepository = require('../../../outbound/persistence/repositories/absenceRepository');
 const createAttachUserNames = require('../../../../application/use-cases/attachUserNames');
 const createShiftOverview = require('../../../../application/use-cases/shiftOverview');
 
 const shiftOverview = createShiftOverview({
   findCrewMembers,
+  findCrewMemberByUserId,
   absenceRepository,
   attachUserNames: createAttachUserNames(findUsersByIds),
   flightsClient,
@@ -25,7 +29,8 @@ const respond = (run) => async (req, res, next) => {
 
 const supervisors = [verifyJwt, allowRoles('supervisor', 'super_admin')];
 
-// ?base=BOG filtra por base (la del supervisor sale de GET /api/admin/bases/me).
+// ?base=ATL filtra por base y fija la zona horaria del turno (la del supervisor
+// sale de GET /api/admin/bases/me).
 const shiftsRouter = express.Router();
 shiftsRouter.get('/current', ...supervisors, respond((req) =>
   shiftOverview.getCurrentShift({ base: req.query.base }, req.headers.authorization)));

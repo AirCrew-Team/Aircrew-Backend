@@ -1,3 +1,4 @@
+const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
 const { firstFailure, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
 const { monthHours, restHoursBefore, durationHours } = require('./flightTime');
 
@@ -8,24 +9,13 @@ const STATUS_BY_CREW = {
   confirmed: 'confirmed',
 };
 
-// Fecha (AAAA-MM-DD) de un instante en hora de Colombia.
-function bogotaDate(value) {
-  return new Date(new Date(value).getTime() - 5 * 3600000).toISOString().slice(0, 10);
-}
-
-// Rango UTC [from, to) de un día de Colombia.
-function bogotaDayRange(date) {
-  const from = new Date(`${date}T05:00:00.000Z`);
-  return { from: from.toISOString(), to: new Date(from.getTime() + 24 * 3600000).toISOString() };
-}
-
-// Asignaciones a pedir para evaluar un día: su mes completo (regla de 90 h)
-// más un día a cada lado (descanso).
-function monthWindowForDay(date) {
+// Asignaciones a pedir para evaluar un día local de la zona timeZone: su mes
+// completo (regla de 90 h, en UTC) más un día a cada lado (descanso).
+function monthWindowForDay(date, timeZone) {
   const day = new Date(`${date}T12:00:00.000Z`);
   const monthStart = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 1);
   const monthEnd = Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 1);
-  const { from, to } = bogotaDayRange(date);
+  const { from, to } = localDayRange(date, timeZone);
   return {
     from: new Date(Math.min(monthStart, new Date(from).getTime() - 24 * 3600000)).toISOString(),
     to: new Date(Math.max(monthEnd, new Date(to).getTime() + 24 * 3600000)).toISOString(),
@@ -103,8 +93,10 @@ function ruleRationale(candidate, flight) {
   }.`;
 }
 
-// Arma el vuelo programado que muestra la pantalla de Programación.
-function buildPlannedFlight(plan, members, assignments) {
+// Arma el vuelo programado que muestra la pantalla de Programación. date es el
+// día local en timeZone: la de la base de la lista o, para un vuelo suelto, la
+// de su aeropuerto de salida (Nueva York si no es un hub).
+function buildPlannedFlight(plan, members, assignments, timeZone = hubTimezone(plan.origin)) {
   const byUser = new Map(members.map((member) => [member.user_id, member]));
   const slots = plan.required_slots.map((slot) => {
     const taken = plan.assignments.find((item) => item.slot_id === slot.id);
@@ -139,7 +131,7 @@ function buildPlannedFlight(plan, members, assignments) {
   return {
     id: plan.id,
     flight_number: plan.flight_number,
-    date: bogotaDate(plan.departure_at),
+    date: localDate(plan.departure_at, timeZone),
     origin: { code: plan.origin, city: plan.origin_city || null },
     destination: { code: plan.destination, city: plan.destination_city || null },
     departure_at: plan.departure_at,
@@ -160,8 +152,6 @@ function buildPlannedFlight(plan, members, assignments) {
 }
 
 module.exports = {
-  bogotaDate,
-  bogotaDayRange,
   monthWindowForDay,
   evaluateForSlot,
   ruleRationale,

@@ -7,6 +7,7 @@ const recommendationClient = require('../../../outbound/clients/recommendationCl
 const { findUsersByIds } = require('../../../outbound/clients/adminClient');
 const createAttachUserNames = require('../../../../application/use-cases/attachUserNames');
 const absenceRepository = require('../../../outbound/persistence/repositories/absenceRepository');
+const { findCrewMemberByUserId } = require('../../../outbound/persistence/repositories/crewRepository');
 const createReportAbsence = require('../../../../application/use-cases/reportAbsence');
 const createGetAbsences = require('../../../../application/use-cases/getAbsences');
 const createGetAbsenceById = require('../../../../application/use-cases/getAbsenceById');
@@ -24,6 +25,7 @@ const controller = createAbsenceController({
     notificationClient,
     flightsClient,
     recommendationClient,
+    findCrewMemberByUserId,
   }),
   getAbsences: createGetAbsences(absenceRepository, attachUserNames, flightsClient),
   getAbsenceById: createGetAbsenceById(absenceRepository, attachUserNames),

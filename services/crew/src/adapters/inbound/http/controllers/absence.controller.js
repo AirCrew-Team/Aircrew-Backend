@@ -98,8 +98,8 @@ function createAbsenceController({
     acknowledged: respond(200, (req) => workflow.acknowledgeAbsence(req.body)),
     missed: respond(200, (req) => workflow.markMissed(req.params.id)),
     expired: respond(200, () => workflow.getExpired()),
-    tracking: respond(200, (req) => workflow.getTracking({ date: req.query.date })),
-    stats: respond(200, () => workflow.getStats()),
+    tracking: respond(200, (req) => workflow.getTracking({ date: req.query.date, base: req.query.base })),
+    stats: respond(200, (req) => workflow.getStats({ base: req.query.base })),
   };
 }
 

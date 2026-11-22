@@ -1,4 +1,6 @@
+const { hubTimezone, localDate } = require('@vuelos/shared');
 const { isValidAbsenceId } = require('../../domain/entities/absence');
+const { parseBase } = require('../../domain/value-objects/baseCode');
 const { DomainError } = require('../../domain/errors');
 
 const uuidPattern =
@@ -10,11 +12,6 @@ const NAME_FIELDS = {
   replacement_user_id: 'replacement_name',
   approved_by: 'approved_by_name',
 };
-
-// Fecha de hoy en Colombia (AAAA-MM-DD).
-function todayInBogota(now = new Date()) {
-  return new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
 
 // Orden del seguimiento del turno:
 // 1. Por aprobar: primero las que no tienen candidatos, luego por salida más
@@ -35,8 +32,14 @@ function trackingOrder(a, b) {
 }
 
 // Flujo de una ausencia después de reportada: aprobación del reemplazo,
-// «Enterado», plazo vencido, seguimiento e indicadores.
-function createAbsenceWorkflow({ absenceRepository, attachUserNames, notificationClient }) {
+// «Enterado», plazo vencido, seguimiento e indicadores. El seguimiento y los
+// indicadores cuentan los días en la zona de ?base= (sin base, Nueva York).
+function createAbsenceWorkflow({
+  absenceRepository,
+  attachUserNames,
+  notificationClient,
+  now = () => new Date(),
+}) {
   async function nameOf(userId) {
     if (!userId) return null;
     const [named] = await attachUserNames([{ id: userId }], { id: 'name' });
@@ -138,12 +141,13 @@ function createAbsenceWorkflow({ absenceRepository, attachUserNames, notificatio
   }
 
   // Seguimiento del turno: ausencias de los vuelos de un día, con su línea de tiempo.
-  async function getTracking({ date } = {}) {
+  async function getTracking({ date, base } = {}) {
     if (date !== undefined && !datePattern.test(date)) {
       throw new DomainError('date debe tener el formato AAAA-MM-DD.', 400, { field: 'date' });
     }
+    const zone = hubTimezone(parseBase(base));
 
-    const absences = await absenceRepository.findAbsencesByDepartureDay(date || todayInBogota());
+    const absences = await absenceRepository.findAbsencesByDepartureDay(date || localDate(now(), zone), zone);
     const named = await attachUserNames(absences, NAME_FIELDS);
     const events = await absenceRepository.findEventsByAbsences(named.map((a) => a.id));
 
@@ -178,8 +182,9 @@ function createAbsenceWorkflow({ absenceRepository, attachUserNames, notificatio
     }));
   }
 
-  async function getStats() {
-    const row = await absenceRepository.getAbsenceStats(new Date().toISOString());
+  async function getStats({ base } = {}) {
+    const zone = hubTimezone(parseBase(base));
+    const row = await absenceRepository.getAbsenceStats(now().toISOString(), zone);
     return {
       reported: row.reported,
       pending_ack: row.pending_ack,

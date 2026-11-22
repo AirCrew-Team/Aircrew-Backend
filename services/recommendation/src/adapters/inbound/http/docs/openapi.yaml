@@ -82,7 +82,7 @@ paths:
         Con Claude Code puede tardar entre 10 y 40 segundos.
 
         **reason** (opcional, máx. 300 caracteres): preferencia del supervisor, por ejemplo
-        «Preferir a alguien con experiencia en la ruta BOG-MIA». Se le pasa a Claude como dato,
+        «Preferir a alguien con experiencia en la ruta JFK-LAX». Se le pasa a Claude como dato,
         solo para ordenar y explicar: las 8 reglas se aplican antes y no se las puede saltar.
         El rationale de cada candidato dice cómo se tuvo en cuenta. Queda guardado con la ronda
         y se devuelve en `reason`. Vacío o ausente: busca igual que siempre.
@@ -97,7 +97,7 @@ paths:
             schema:
               type: object
               properties:
-                reason: { type: string, maxLength: 300, example: Preferir a alguien con experiencia en la ruta BOG-MIA }
+                reason: { type: string, maxLength: 300, example: Preferir a alguien con experiencia en la ruta JFK-LAX }
       responses:
         '200':
           description: Candidatos de la nueva ronda
@@ -191,7 +191,7 @@ paths:
       parameters:
         - name: from
           in: query
-          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          description: AAAA-MM-DD. Por defecto, hoy en la zona de la base (sin base, Nueva York).
           schema: { type: string, example: '2026-11-19' }
         - name: days
           in: query
@@ -199,8 +199,8 @@ paths:
           schema: { type: integer, example: 7 }
         - name: base
           in: query
-          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
-          schema: { type: string, example: BOG }
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí, por días de su zona horaria. Sin base, todos y los días de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Un elemento por día
@@ -225,12 +225,12 @@ paths:
       parameters:
         - name: date
           in: query
-          description: AAAA-MM-DD (hora de Colombia). Por defecto, hoy.
+          description: AAAA-MM-DD, día local de la base (sin base, Nueva York). Por defecto, hoy.
           schema: { type: string, example: '2026-11-20' }
         - name: base
           in: query
-          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí. Sin base, todos.
-          schema: { type: string, example: BOG }
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Solo vuelos que salen de ahí, por días de su zona horaria. Sin base, todos y los días de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Vuelos programados
@@ -474,8 +474,8 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-9344 }
-        origin: { type: string, example: BOG }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
         destination: { type: string, example: MIA }
         departure_at: { type: string, format: date-time }
         arrival_at: { type: string, format: date-time }
@@ -489,7 +489,7 @@ components:
         full_name: { type: string, nullable: true, example: Andrés Gómez }
         employee_code: { type: string, example: EMP-021 }
         rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        base: { type: string, example: BOG }
+        base: { type: string, example: JFK }
         rank_position: { type: integer, example: 1, description: Lugar en la lista (1 = primera opción). }
         affinity: { type: integer, minimum: 0, maximum: 100, example: 96 }
         affinity_label: { type: string, enum: [optimal, high, acceptable], description: 'optimal ≥ 90, high 75–89, acceptable < 75' }
@@ -531,9 +531,9 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-4021 }
+        flight_number: { type: string, example: DL0044 }
         date: { type: string, example: '2026-11-20' }
-        origin: { type: object, properties: { code: { type: string, example: BOG }, city: { type: string, example: Bogotá } } }
+        origin: { type: object, properties: { code: { type: string, example: JFK }, city: { type: string, example: Nueva York } } }
         destination: { type: object, properties: { code: { type: string, example: MAD }, city: { type: string, example: Madrid } } }
         departure_at: { type: string, format: date-time }
         arrival_at: { type: string, format: date-time }

@@ -1,14 +1,17 @@
 // Estado de cada tripulante en el turno y del turno mismo. Funciones puras:
 // reciben los datos y la hora actual, y no consultan nada.
+const { DEFAULT_TIMEZONE, localHour } = require('@vuelos/shared');
+
 const HOUR = 3600000;
 const MIN_REST_HOURS = 10;
 const SCHEDULED_WINDOW_HOURS = 12;
 const REPORT_BEFORE_MINUTES = 90;
 const MEDICAL_WARNING_DAYS = 30;
 
-// Turno según la hora de Colombia: mañana 06–14, tarde 14–22, noche 22–06.
-function currentShift(now = Date.now()) {
-  const hour = new Date(now - 5 * HOUR).getUTCHours();
+// Turno según la hora local de la base (zona IANA; sin base, Nueva York):
+// mañana 06–14, tarde 14–22, noche 22–06.
+function currentShift(now = Date.now(), timeZone = DEFAULT_TIMEZONE) {
+  const hour = localHour(now, timeZone);
   if (hour >= 6 && hour < 14) return 'morning';
   if (hour >= 14 && hour < 22) return 'afternoon';
   return 'night';

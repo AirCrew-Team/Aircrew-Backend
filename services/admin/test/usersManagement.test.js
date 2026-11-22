@@ -538,7 +538,7 @@ test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y 
 
   const { status, body } = await get('super_admin');
   assert.equal(status, 200);
-  assert.equal(body.bases.length, 12); // 9 hubs de Delta + BOG, MDE y CLO (datos de demo)
+  assert.equal(body.bases.length, 9); // los 9 hubs de Delta (BE-4: fuera BOG, MDE y CLO)
   assert.deepEqual(body.bases[0], { code: 'ATL', label: 'Base ATL / Atlanta' });
   assert.deepEqual(body.crew_positions, ['Comandante', 'Copiloto', 'Auxiliar de Vuelo', 'Sobrecargo Principal', 'Sobrecargo']);
   assert.deepEqual(body.shifts.map((shift) => shift.code), ['morning', 'afternoon', 'night']);

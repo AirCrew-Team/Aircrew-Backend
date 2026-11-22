@@ -599,7 +599,7 @@ paths:
               type: object
               minProperties: 1
               properties:
-                phone: { type: string, nullable: true, example: '+57 300 123 4567' }
+                phone: { type: string, nullable: true, example: '+1 212 555 0123' }
                 residence: { type: string, nullable: true, example: 'Atlanta, GA' }
                 notifications: { $ref: '#/components/schemas/Notifications' }
       responses:
@@ -987,12 +987,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  unit: { type: string, example: Jefatura de Operaciones de Vuelo }
-                  hq_code: { type: string, example: BOG-HQ }
-                  base_name: { type: string, example: Base Eldorado }
-                  city: { type: string, example: Bogotá }
-                  iata: { type: string, example: BOG }
-                  icao: { type: string, example: SKBO }
+                  unit: { type: string, example: Operaciones de Vuelo Nueva York JFK }
+                  hq_code: { type: string, example: JFK-HQ }
+                  base_name: { type: string, example: John F. Kennedy International }
+                  city: { type: string, example: Nueva York }
+                  iata: { type: string, example: JFK }
+                  icao: { type: string, example: KJFK }
                   operational_condition: { type: string, enum: [normal, degraded, critical] }
         '404':
           description: 'El usuario no tiene base (code: no_base)'
@@ -1162,7 +1162,7 @@ components:
           properties:
             is_active: { type: boolean }
             created_at: { type: string, format: date-time }
-            phone: { type: string, nullable: true, example: '+573001234567' }
+            phone: { type: string, nullable: true, example: '+12125550123' }
             residence: { type: string, nullable: true }
             password_changed_at: { type: string, format: date-time, nullable: true }
             photo_updated_at: { type: string, format: date-time, nullable: true }

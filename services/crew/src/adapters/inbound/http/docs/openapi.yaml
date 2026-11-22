@@ -98,7 +98,7 @@ paths:
         candidatos con Claude en segundo plano.
 
         **Por fechas** (`start_date`, `end_date`, `reason`, `notes`, `attachment`): no podrá trabajar esos días.
-        Por cada vuelo suyo que salga en esas fechas (hora de Colombia) y no haya salido, se crea además
+        Por cada vuelo suyo que salga en esas fechas (días de la zona horaria de su base; sin base, Nueva York) y no haya salido, se crea además
         una ausencia por vuelo con `parent_absence_id` = esta, y cada una es una solicitud de reemplazo.
         La respuesta las trae en `replacement_requests`. Si Flights no responde, la ausencia se guarda
         igual, sin solicitudes.
@@ -198,7 +198,7 @@ paths:
                     - type: object
                       properties:
                         gate: { type: string, nullable: true, example: A12 }
-                        origin_name: { type: string, nullable: true, example: Aeropuerto Internacional El Dorado }
+                        origin_name: { type: string, nullable: true, example: John F. Kennedy International }
                         destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
                         aircraft_family: { type: string, nullable: true, example: A320 }
         '400':
@@ -222,7 +222,7 @@ paths:
       tags: [Ausencias]
       summary: Seguimiento del turno (supervisor o super_admin)
       description: |
-        Ausencias de los vuelos que salen en un día (hora de Colombia), con su línea de tiempo.
+        Ausencias de los vuelos que salen en un día (día local de la base de ?base=; sin base, Nueva York), con su línea de tiempo.
         Orden: por aprobar (sin candidatos primero, luego por salida más próxima, al final las que
         la IA sigue buscando), esperando confirmación (por plazo), cubiertas (más reciente primero).
       security:
@@ -231,8 +231,13 @@ paths:
         - name: date
           in: query
           required: false
-          description: AAAA-MM-DD. Por defecto, hoy en Colombia.
+          description: AAAA-MM-DD. Por defecto, hoy en la zona de la base.
           schema: { type: string, example: '2026-11-19' }
+        - name: base
+          in: query
+          required: false
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Fija la zona horaria del día; sin base, Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Ausencias del día
@@ -251,9 +256,15 @@ paths:
     get:
       tags: [Ausencias]
       summary: Indicadores de ausencias (supervisor o super_admin)
-      description: La tasa de resolución es el porcentaje de ausencias cubiertas en los últimos 30 días.
+      description: La tasa de resolución es el porcentaje de ausencias cubiertas en los últimos 30 días. «Cubiertas hoy» cuenta el día local de la base.
       security:
         - bearerAuth: []
+      parameters:
+        - name: base
+          in: query
+          required: false
+          description: IATA de la base del supervisor (iata de GET /api/admin/bases/me). Fija la zona horaria del día; sin base, Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Indicadores
@@ -524,8 +535,8 @@ paths:
       parameters:
         - name: base
           in: query
-          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Sin base, todas.
-          schema: { type: string, example: BOG }
+          description: IATA de la base (la del supervisor sale de GET /api/admin/bases/me). Fija la zona horaria del turno y de «hoy». Sin base, todas y la hora de Nueva York.
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Turno
@@ -534,7 +545,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora de Colombia: 06–14, 14–22, 22–06' }
+                  shift: { type: string, enum: [morning, afternoon, night], description: 'Hora local de la base (sin base, Nueva York): 06–14, 14–22, 22–06' }
                   base: { type: string, nullable: true }
                   flights_today: { type: integer }
                   standby_total: { type: integer, description: De guardia. }
@@ -554,7 +565,7 @@ paths:
       parameters:
         - name: base
           in: query
-          schema: { type: string, example: BOG }
+          schema: { type: string, example: JFK }
       responses:
         '200':
           description: Tripulantes del turno
@@ -610,7 +621,7 @@ paths:
                 type: object
                 properties:
                   month: { type: string }
-                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 90 }, regulation: { type: string, example: RAC 3 }, cycle_closes_on: { type: string } } }
+                  fdp: { type: object, properties: { used_hours: { type: number }, max_hours: { type: integer, example: 100 }, regulation: { type: string, example: FAA 14 CFR Part 117 }, cycle_closes_on: { type: string } } }
                   rest: { type: object, properties: { last_duty_end_at: { type: string, format: date-time, nullable: true }, rest_ends_at: { type: string, format: date-time, nullable: true }, guaranteed_minutes: { type: integer, example: 600 } } }
                   sectors: { type: object, properties: { completed: { type: integer }, scheduled: { type: integer }, domestic: { type: integer }, international: { type: integer }, crew_delays: { type: integer } } }
   /certifications:
@@ -1115,7 +1126,7 @@ components:
         status: { $ref: '#/components/schemas/AbsenceStatus' }
         suggestions_state: { type: string, nullable: true, enum: [searching, ready, none, error] }
         slot_role: { type: string, nullable: true, example: first_officer }
-        flight_origin: { type: string, nullable: true, example: BOG }
+        flight_origin: { type: string, nullable: true, example: JFK }
         flight_destination: { type: string, nullable: true, example: MIA }
         deadline_at: { type: string, format: date-time, nullable: true, description: Plazo para el «Enterado». }
         approved_at: { type: string, format: date-time, nullable: true }
@@ -1149,8 +1160,8 @@ components:
         id: { type: string, format: uuid }
         code: { type: string, example: SOL-00042, description: Número de solicitud legible. }
         flight_id: { type: string, format: uuid }
-        flight_number: { type: string, example: AV-9344 }
-        origin: { type: string, example: BOG }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: JFK }
         destination: { type: string, example: MIA }
         departure_at: { type: string, format: date-time }
         slot_role: { type: string, example: first_officer }
@@ -1254,7 +1265,7 @@ components:
         id: { type: string }
         user_id: { type: string, format: uuid }
         rank: { type: string, enum: [captain, first_officer, purser, flight_attendant] }
-        base_code: { type: string, nullable: true, example: BOG }
+        base_code: { type: string, nullable: true, example: JFK }
         ratings: { type: array, items: { type: string }, example: [A320, '787'] }
         english_level: { type: integer, nullable: true, minimum: 1, maximum: 6 }
         medical_expires_on: { type: string, nullable: true, example: '2027-05-18' }

@@ -1,22 +1,16 @@
 // Catálogos del formulario de la pantalla Usuarios (super_admin). Son la única
 // fuente: el frontend los pide con GET /catalogs/user-options.
 
-// Hubs de Delta: base de supervisores y tripulantes.
-const USER_BASES = Object.freeze([
-  { code: 'ATL', label: 'Base ATL / Atlanta' },
-  { code: 'BOS', label: 'Base BOS / Boston' },
-  { code: 'DTW', label: 'Base DTW / Detroit' },
-  { code: 'LAX', label: 'Base LAX / Los Ángeles' },
-  { code: 'MSP', label: 'Base MSP / Minneapolis–St. Paul' },
-  { code: 'JFK', label: 'Base JFK / Nueva York' },
-  { code: 'LGA', label: 'Base LGA / Nueva York LaGuardia' },
-  { code: 'SLC', label: 'Base SLC / Salt Lake City' },
-  { code: 'SEA', label: 'Base SEA / Seattle' },
-  // Bases de los datos de demo (database/seed-demo.js).
-  { code: 'BOG', label: 'Base BOG / Bogotá' },
-  { code: 'MDE', label: 'Base MDE / Rionegro' },
-  { code: 'CLO', label: 'Base CLO / Cali' },
-]);
+const { HUBS } = require('@vuelos/shared');
+
+// Hubs de Delta (@vuelos/shared): base de supervisores y tripulantes. La etiqueta
+// es «Base <código> / <ciudad>», salvo donde la ciudad sola no basta.
+const BASE_PLACE = { MSP: 'Minneapolis–St. Paul', LGA: 'Nueva York LaGuardia' };
+const USER_BASES = Object.freeze(
+  HUBS.map((hub) =>
+    Object.freeze({ code: hub.code, label: `Base ${hub.code} / ${BASE_PLACE[hub.code] || hub.city}` })
+  )
+);
 
 // Cargos de un tripulante. Se guardan tal cual en su perfil de Crew (position).
 const CREW_POSITIONS = Object.freeze([

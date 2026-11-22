@@ -1,3 +1,4 @@
+const { DEFAULT_TIMEZONE, localDate } = require('@vuelos/shared');
 const { DomainError } = require('../errors');
 const { normalizeFileName } = require('../value-objects/fileName');
 
@@ -282,16 +283,12 @@ function canReportAbsenceFor(flight, now = new Date()) {
   );
 }
 
-// Día de salida en hora de Colombia (AAAA-MM-DD).
-function bogotaDay(value) {
-  return new Date(new Date(value).getTime() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-// Vuelos asignados que salen entre startDate y endDate (días de Colombia, incluidos)
-// y todavía admiten reemplazo: cada uno será una solicitud de reemplazo.
-function flightsWithinDates(assignments, startDate, endDate, now = new Date()) {
+// Vuelos asignados que salen entre startDate y endDate (días locales de la zona
+// del tripulante, la de su base; incluidos) y todavía admiten reemplazo: cada uno
+// será una solicitud de reemplazo.
+function flightsWithinDates(assignments, startDate, endDate, now = new Date(), timeZone = DEFAULT_TIMEZONE) {
   return assignments.filter(({ flight }) => {
-    const day = bogotaDay(flight.departure_at);
+    const day = localDate(flight.departure_at, timeZone);
     return day >= startDate && day <= endDate && canReportAbsenceFor(flight, now);
   });
 }

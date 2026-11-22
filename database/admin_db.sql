@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   employee_code             VARCHAR(30),
   base                      VARCHAR(3)
     CONSTRAINT users_base_check
-    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO')),
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA')),
   shift                     TEXT
     CONSTRAINT users_shift_check
     CHECK (shift IN ('morning', 'afternoon', 'night')),
@@ -53,15 +53,21 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS base VARCHAR(3);
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS shift TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS operational_status TEXT;
 
+-- Las bases son los 9 hubs de Delta (shared/domain/hubs.js). BOG, MDE y CLO eran
+-- de los datos de demo antiguos: los supervisores que las tenían quedan sin base
+-- (un super_admin les asigna un hub). Va antes del CHECK, que ya no las admite.
+UPDATE public.users
+SET base = NULL
+WHERE base IN ('BOG', 'MDE', 'CLO');
+
 -- Los ALTER de restricciones van en DO para poder ejecutar el script varias veces.
 DO $$
 BEGIN
-  -- Se vuelve a crear siempre para que una base nueva en la lista llegue a las bases ya creadas.
-  -- BOG, MDE y CLO: bases de los datos de demo (database/seed-demo.js).
+  -- Se vuelve a crear siempre para que un cambio en la lista llegue a las bases ya creadas.
   ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_base_check;
   ALTER TABLE public.users
     ADD CONSTRAINT users_base_check
-    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO'));
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'));
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -168,3 +174,22 @@ CREATE TABLE IF NOT EXISTS public.bases (
   operational_condition TEXT NOT NULL DEFAULT 'normal'
     CHECK (operational_condition IN ('normal', 'degraded', 'critical'))
 );
+
+-- Fuera las bases de los datos de demo antiguos (Colombia): ningún usuario puede
+-- tenerlas (CHECK de users.base) y ninguna llave foránea apunta a esta tabla.
+DELETE FROM public.bases WHERE code IN ('BOG', 'MDE', 'CLO');
+
+-- Los 9 hubs de Delta, con los mismos datos que shared/domain/hubs.js (un test lo
+-- comprueba). Repetible: actualiza los datos fijos y no toca operational_condition.
+INSERT INTO public.bases (code, icao, name, city, unit, hq_code) VALUES
+  ('ATL', 'KATL', 'Hartsfield-Jackson Atlanta International', 'Atlanta', 'Operaciones de Vuelo Atlanta', 'ATL-HQ'),
+  ('BOS', 'KBOS', 'Boston Logan International', 'Boston', 'Operaciones de Vuelo Boston', 'BOS-HQ'),
+  ('DTW', 'KDTW', 'Detroit Metropolitan Wayne County', 'Detroit', 'Operaciones de Vuelo Detroit', 'DTW-HQ'),
+  ('LAX', 'KLAX', 'Los Angeles International', 'Los Ángeles', 'Operaciones de Vuelo Los Ángeles', 'LAX-HQ'),
+  ('MSP', 'KMSP', 'Minneapolis-Saint Paul International', 'Minneapolis-St. Paul', 'Operaciones de Vuelo Minneapolis', 'MSP-HQ'),
+  ('JFK', 'KJFK', 'John F. Kennedy International', 'Nueva York', 'Operaciones de Vuelo Nueva York JFK', 'JFK-HQ'),
+  ('LGA', 'KLGA', 'LaGuardia', 'Nueva York', 'Operaciones de Vuelo Nueva York LaGuardia', 'LGA-HQ'),
+  ('SLC', 'KSLC', 'Salt Lake City International', 'Salt Lake City', 'Operaciones de Vuelo Salt Lake City', 'SLC-HQ'),
+  ('SEA', 'KSEA', 'Seattle-Tacoma International', 'Seattle', 'Operaciones de Vuelo Seattle', 'SEA-HQ')
+ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, name = EXCLUDED.name, city = EXCLUDED.city,
+  unit = EXCLUDED.unit, hq_code = EXCLUDED.hq_code;

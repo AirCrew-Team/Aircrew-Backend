@@ -64,15 +64,26 @@ Cada servicio tiene su propia base en PostgreSQL. Crea las bases y ejecuta el sc
 | `recommendation_db` | `database/recommendation_db.sql` |
 | `notification_db` | `database/notification_db.sql` |
 
-Los scripts se pueden ejecutar varias veces sin error y no borran datos: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+Los scripts se pueden ejecutar varias veces sin error: **vuelve a ejecutarlos cada vez que bajes cambios**, porque agregan columnas nuevas. Configura `DB_NAME` en el `.env` de cada servicio con el nombre de su base.
+
+### Hubs de Delta y zona horaria
+
+- **Catálogo:** las bases son los 9 hubs de Delta (ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC y SEA), definidos una sola vez en `shared/domain/hubs.js`. De ahí salen las bases del formulario de Usuarios y de Aeronaves. `admin_db.sql` siembra `public.bases` y `flights_db.sql` siembra `public.airports` con los mismos datos.
+- **Datos de la demo antigua (Colombia):** al ejecutar los scripts, los usuarios, tripulantes y aeronaves con base BOG, MDE o CLO quedan sin base (`NULL`), y un super_admin les asigna un hub. También se borran esas bases y los aeropuertos colombianos que ningún vuelo usa.
+- **Vuelo nacional:** es nacional si sus dos aeropuertos son de EE. UU. (`country = 'US'`). Un aeropuerto que no está en `public.airports` cuenta como de EE. UU., así que los destinos internacionales deben agregarse a esa tabla.
+- **Zona horaria:** «hoy», el turno, el mes de Mis Vuelos y los días de una ausencia se calculan en la zona del hub: la `base` pedida (`?base=` en turno, programación, `/absences/tracking` y `/absences/stats`) o la base del tripulante. Sin base, Nueva York.
 
 ### Datos de demo
+
+**Nunca en producción:** el script se niega a correr con `NODE_ENV=production`, porque borra y vuelve a crear datos. Úsalo solo con una base local o de pruebas.
 
 ```bash
 npm run seed:demo
 ```
 
-Carga 3 bases, 8 aeropuertos, 5 aeronaves, un supervisor (`camila.restrepo@aircrew.demo`), 21 tripulantes (`nombre.apellido@aircrew.demo`) y 12 vuelos en los próximos 7 días. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`. Se puede ejecutar cuando quieras: borra solo los datos de demo y los vuelve a crear con fechas desde ese momento.
+- **Qué carga:** datos de Delta con los 9 hubs, 3 destinos internacionales (CDG, LHR y CUN), 6 aeronaves `N…` y un supervisor de JFK (`karen.walsh@aircrew.demo`). También carga 21 tripulantes de JFK, ATL y LAX (`nombre.apellido@aircrew.demo`) y 14 vuelos `DL`: 12 en los próximos 7 días y 2 ya realizados. Todos los usuarios de demo tienen la contraseña `AirCrewDemo2026`, y los teléfonos son de ficción (`+1 212 555 01xx`).
+- **Conexión:** usa `DATABASE_URL` si existe; el script cambia el nombre de la base por cada una de las cuatro. Si no, usa `PGHOST`, `PGPORT`, `PGUSER` y `PGPASSWORD` y, como último recurso, `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD` de `services/admin/.env`. Antes de escribir, muestra el servidor de destino. Las bases `admin_db`, `crew_db`, `flights_db` y `recommendation_db` deben existir con sus scripts ejecutados.
+- **Se puede repetir:** borra solo sus datos de demo y los vuelve a crear con fechas desde ese momento. Sus datos de demo son los correos `@aircrew.demo` y los números `DL` de su lista. De la demo antigua de Colombia, borra también los vuelos `AV-*`, sus aeronaves y sus aeropuertos.
 
 ## Documentación de la API (Swagger)
 

@@ -1,5 +1,6 @@
 // Catálogos de la flota: modelos, bases y motivos de mantenimiento con sus tareas.
 // Son la única fuente: el frontend los pide con GET /aircraft/options.
+const { HUBS } = require('@vuelos/shared');
 
 // narrow_body: un pasillo · wide_body: dos pasillos · regional: menos de 100 asientos.
 const AIRCRAFT_MODELS = Object.freeze([
@@ -61,17 +62,14 @@ const AIRCRAFT_MODELS = Object.freeze([
   },
 ]);
 
-// Bases de Delta en EE. UU.
-const AIRCRAFT_BASES = Object.freeze([
-  { code: 'ATL', name: 'Atlanta (ATL)' },
-  { code: 'BOS', name: 'Boston (BOS)' },
-  { code: 'DTW', name: 'Detroit (DTW)' },
-  { code: 'LAX', name: 'Los Ángeles (LAX)' },
-  { code: 'MSP', name: 'Minneapolis (MSP)' },
-  { code: 'JFK', name: 'Nueva York (JFK)' },
-  { code: 'SLC', name: 'Salt Lake City (SLC)' },
-  { code: 'SEA', name: 'Seattle (SEA)' },
-]);
+// Bases de Delta en EE. UU.: los hubs de @vuelos/shared. El nombre es
+// «<ciudad> (<código>)», salvo donde la ciudad sola no basta.
+const BASE_PLACE = { MSP: 'Minneapolis', LGA: 'Nueva York LaGuardia' };
+const AIRCRAFT_BASES = Object.freeze(
+  HUBS.map((hub) =>
+    Object.freeze({ code: hub.code, name: `${BASE_PLACE[hub.code] || hub.city} (${hub.code})` })
+  )
+);
 
 // Motivos de mantenimiento y sus tareas, en el orden en que se hacen.
 const MAINTENANCE_TYPES = Object.freeze([

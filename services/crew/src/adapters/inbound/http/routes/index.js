@@ -16,7 +16,7 @@ router.use('/crew-members', crewMembersRoutes);
 router.use('/absences', absenceRoutes);
 router.use('/shifts', shiftsRouter);
 router.use('/shift-crew', shiftCrewRouter);
-// Pantalla Certificaciones: solo super_admin.
+// Pantalla Certificaciones: super_admin; GET /certifications/me, el tripulante.
 router.use('/certifications', certificationRoutes);
 // Solo para Admin (x-service-key).
 router.use('/internal/crew-members', internalRoutes);

@@ -34,6 +34,7 @@ const CREW_STATUS_OPTIONS = Object.freeze([
   { code: 'on_duty', label: 'En guardia' },
   { code: 'in_flight', label: 'En vuelo' },
   { code: 'medical_leave', label: 'Permiso médico' },
+  { code: 'vacation', label: 'Vacaciones' },
 ]);
 
 // Estado operativo del supervisor (datos laborales de Admin).

@@ -42,6 +42,7 @@ function createCertificationController(manageCertifications) {
       })
     ),
     getById: respond(200, (req) => manageCertifications.getCertification(req.params.userId)),
+    mine: respond(200, (req) => manageCertifications.getMyCertification(req.user)),
     save: respond(200, (req) =>
       manageCertifications.saveCertification(req.user, req.params.userId, req.body)
     ),

@@ -293,6 +293,24 @@ function flightsWithinDates(assignments, startDate, endDate, now = new Date(), t
   });
 }
 
+// ?from=&to= de GET /absences/me: días AAAA-MM-DD opcionales, con from <= to.
+function parseDayRange({ from, to } = {}) {
+  const read = (value, field) => {
+    if (value === undefined || value === '') return null;
+    if (parseDay(value) === null) {
+      throw new DomainError(`${field} debe ser una fecha válida con el formato AAAA-MM-DD.`, 400, { field });
+    }
+    return value;
+  };
+  const range = { from: read(from, 'from'), to: read(to, 'to') };
+
+  if (range.from && range.to && range.to < range.from) {
+    throw new DomainError('to no puede ser anterior a from.', 400, { field: 'to' });
+  }
+
+  return range;
+}
+
 const ABSENCE_KINDS = ['flight', 'dates'];
 
 // ?kind=flight (cola de reemplazos) o ?kind=dates. Vacío: todas.
@@ -315,6 +333,7 @@ module.exports = {
   canReportAbsenceFor,
   flightsWithinDates,
   parseKindFilter,
+  parseDayRange,
   isValidAbsenceId,
   parseStatusFilter,
   validateCoverage,

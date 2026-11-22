@@ -3,6 +3,7 @@ const { attachmentDisposition } = require('./contentDisposition');
 function createAbsenceController({
   reportAbsence,
   getAbsences,
+  getMyAbsences,
   getAbsenceById,
   getAbsenceAttachment,
   coverAbsence,
@@ -94,6 +95,7 @@ function createAbsenceController({
     downloadAttachment,
     cover,
     updateSuggestions,
+    mine: respond(200, (req) => getMyAbsences(req.user, { from: req.query.from, to: req.query.to })),
     approve: respond(200, (req) => workflow.approveReplacement(req.user, req.params.id, req.body)),
     acknowledged: respond(200, (req) => workflow.acknowledgeAbsence(req.body)),
     missed: respond(200, (req) => workflow.markMissed(req.params.id)),

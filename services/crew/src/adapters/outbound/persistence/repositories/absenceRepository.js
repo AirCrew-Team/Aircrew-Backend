@@ -208,6 +208,18 @@ async function findAbsenceById(id) {
   return rows[0] || null;
 }
 
+// Todas las ausencias de un tripulante (GET /absences/me), las más recientes primero.
+async function findCrewAbsences(crewUserId) {
+  const { rows } = await pool.query(
+    `${absenceWithCrewMember}
+     WHERE a.crew_user_id = $1
+     ORDER BY a.created_at DESC`,
+    [crewUserId]
+  );
+
+  return rows;
+}
+
 // Ausencias por vuelo que salieron de una ausencia por fechas.
 async function findChildAbsences(parentAbsenceId) {
   const { rows } = await pool.query(
@@ -392,6 +404,7 @@ module.exports = {
   createAbsence,
   findAbsences,
   findAbsenceById,
+  findCrewAbsences,
   findChildAbsences,
   findAttachment,
   markAbsenceCovered,

@@ -543,7 +543,8 @@ test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y 
   assert.deepEqual(body.crew_positions, ['Comandante', 'Copiloto', 'Auxiliar de Vuelo', 'Sobrecargo Principal', 'Sobrecargo']);
   assert.deepEqual(body.shifts.map((shift) => shift.code), ['morning', 'afternoon', 'night']);
   assert.equal(body.shifts[0].label, 'Turno 1 (mañana)');
-  assert.deepEqual(body.crew_statuses.map((item) => item.code), ['available', 'on_duty', 'in_flight', 'medical_leave']);
+  assert.deepEqual(body.crew_statuses.map((item) => item.code), ['available', 'on_duty', 'in_flight', 'medical_leave', 'vacation']);
+  assert.deepEqual(body.crew_statuses.at(-1), { code: 'vacation', label: 'Vacaciones' });
   assert.deepEqual(body.supervisor_statuses.map((item) => item.code), ['available', 'on_duty', 'off_duty', 'leave']);
 });
 

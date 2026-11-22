@@ -4,6 +4,8 @@ const pool = require('../pool');
 // Nunca trae los bytes del archivo.
 const crewWithCertification = `
   SELECT cm.user_id, cm.employee_code, cm.position, cm.base, cm.is_active,
+         to_char(cm.medical_expires_on, 'YYYY-MM-DD') AS medical_expires_on,
+         cm.ratings, cm.english_level,
          c.license_number, c.certificates, c.status,
          c.created_at AS certified_at, c.updated_at,
          CASE WHEN f.crew_user_id IS NULL THEN NULL
@@ -26,6 +28,9 @@ function toRecord(row) {
       position: row.position,
       base: row.base,
       is_active: row.is_active,
+      medical_expires_on: row.medical_expires_on,
+      ratings: row.ratings,
+      english_level: row.english_level,
     },
     certification: row.license_number
       ? {

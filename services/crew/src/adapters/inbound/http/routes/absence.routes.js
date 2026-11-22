@@ -10,6 +10,7 @@ const absenceRepository = require('../../../outbound/persistence/repositories/ab
 const { findCrewMemberByUserId } = require('../../../outbound/persistence/repositories/crewRepository');
 const createReportAbsence = require('../../../../application/use-cases/reportAbsence');
 const createGetAbsences = require('../../../../application/use-cases/getAbsences');
+const createGetMyAbsences = require('../../../../application/use-cases/getMyAbsences');
 const createGetAbsenceById = require('../../../../application/use-cases/getAbsenceById');
 const createGetAbsenceAttachment = require('../../../../application/use-cases/getAbsenceAttachment');
 const createCoverAbsence = require('../../../../application/use-cases/coverAbsence');
@@ -28,6 +29,7 @@ const controller = createAbsenceController({
     findCrewMemberByUserId,
   }),
   getAbsences: createGetAbsences(absenceRepository, attachUserNames, flightsClient),
+  getMyAbsences: createGetMyAbsences({ absenceRepository, findCrewMemberByUserId }),
   getAbsenceById: createGetAbsenceById(absenceRepository, attachUserNames),
   getAbsenceAttachment: createGetAbsenceAttachment(absenceRepository),
   coverAbsence: createCoverAbsence(absenceRepository),
@@ -43,6 +45,7 @@ const absenceBody = express.json({ limit: '15mb' });
 router.post('/', verifyJwt, allowRoles('crew'), absenceBody, controller.create);
 router.get('/', verifyJwt, supervisors, controller.list);
 // Rutas fijas antes de /:id para que Express no las tome como un id.
+router.get('/me', verifyJwt, allowRoles('crew'), controller.mine);
 router.get('/tracking', verifyJwt, supervisors, controller.tracking);
 router.get('/stats', verifyJwt, supervisors, controller.stats);
 // Internas (token de servicio).

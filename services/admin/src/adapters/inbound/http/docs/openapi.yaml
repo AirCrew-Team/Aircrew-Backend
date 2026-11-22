@@ -1084,8 +1084,8 @@ components:
         label: { type: string }
     CrewStatus:
       type: string
-      description: available (Disponible), on_duty (De guardia), in_flight (En vuelo) o medical_leave (Permiso médico).
-      enum: [available, on_duty, in_flight, medical_leave]
+      description: available (Disponible), on_duty (De guardia), in_flight (En vuelo), medical_leave (Permiso médico) o vacation (Vacaciones).
+      enum: [available, on_duty, in_flight, medical_leave, vacation]
     CrewProfileInput:
       type: object
       description: |

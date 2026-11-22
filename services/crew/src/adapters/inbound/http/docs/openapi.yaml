@@ -217,6 +217,51 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /absences/me:
+    get:
+      tags: [Ausencias]
+      summary: Mis ausencias (crew)
+      description: |
+        Las ausencias del tripulante que inició sesión, la más reciente primero (por created_at).
+        Cada ausencia por fechas trae en `flights` las ausencias de sus vuelos (`parent_absence_id`),
+        ordenadas por salida. Una ausencia reportada directamente sobre un vuelo sale sola, con sus
+        datos de vuelo y `flights` vacío. El frontend las cruza con `GET /api/flights/assignments/me`
+        por `flight_id`. No incluye datos del reemplazo, de quién aprobó ni plazos.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Día AAAA-MM-DD. Por fechas, las que terminan ese día o después; por vuelo, las que salen ese día o después (día local de la base del tripulante; sin base, Nueva York). Las de los vuelos de una ausencia por fechas siempre salen con ella.
+          schema: { type: string, format: date, example: '2026-11-01' }
+        - name: to
+          in: query
+          description: Día AAAA-MM-DD, no anterior a from. Por fechas, las que empiezan ese día o antes; por vuelo, las que salen ese día o antes.
+          schema: { type: string, format: date, example: '2026-11-30' }
+      responses:
+        '200':
+          description: Mis ausencias
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MyAbsence' }
+        '400':
+          description: from o to no son fechas válidas, o to es anterior a from (field from o to)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /absences/tracking:
     get:
       tags: [Ausencias]
@@ -529,7 +574,8 @@ paths:
   /shifts/current:
     get:
       tags: [Turno]
-      summary: Turno actual (banner del inicio del supervisor)
+      summary: Turno actual (banner del inicio del supervisor y guardia del inicio del super_admin)
+      description: Supervisor o super_admin. Sin base, el resumen junta todas las bases (base null) con el día y el turno de Nueva York, para cualquiera de los dos roles.
       security:
         - bearerAuth: []
       parameters:
@@ -551,6 +597,21 @@ paths:
                   standby_total: { type: integer, description: De guardia. }
                   standby_ready: { type: integer, description: De guardia y sin impedimento para reemplazar. }
                   staffing_delays: { type: integer }
+        '400':
+          description: base no es un código IATA de 3 letras
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo supervisor o super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /shift-crew:
     get:
@@ -762,6 +823,39 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
           description: Solo el super_admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /certifications/me:
+    get:
+      tags: [Certificaciones]
+      summary: Mi certificación (crew)
+      description: |
+        La certificación del tripulante que inició sesión, con el nombre de cada certificado (no puede
+        pedir `/certifications/options`). Sin nombre ni correo (salen de la sesión) y sin historial.
+        El único vencimiento con fecha es el del certificado médico (`medical_expires_on`, del perfil);
+        no se guarda fecha de vencimiento para las licencias ni los certificados.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Mi certificación (status uncertified si todavía no tiene)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyCertification' }
+        '401':
+          description: Falta autenticación o no es válida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Solo para tripulantes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: El usuario no tiene perfil de tripulante
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1255,6 +1349,77 @@ components:
                   by: { type: string, nullable: true, description: Nombre del super_admin. }
                   note: { type: string, nullable: true }
                   created_at: { type: string, format: date-time }
+    MyCertification:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        employee_code: { type: string, example: AC-1108 }
+        position: { type: string, example: Comandante }
+        area: { type: string, nullable: true, enum: [flight_deck, cabin] }
+        base: { type: string, nullable: true, example: ATL }
+        status: { $ref: '#/components/schemas/CertificationStatus' }
+        license_number: { type: string, nullable: true, example: '2775981' }
+        certificates: { type: array, items: { type: string }, example: [ATP, IR] }
+        certificate_details:
+          type: array
+          description: Los certificados de certificates, en el mismo orden.
+          items:
+            type: object
+            properties:
+              code: { type: string, example: ATP }
+              name: { type: string, example: Airline Transport Pilot (ATP) }
+              short: { type: string, example: ATP }
+              is_license: { type: boolean, description: 'Licencia (ATP, CPL, PPL o CDP); el resto son habilitaciones (IR, ME) o cursos.' }
+        file:
+          type: object
+          nullable: true
+          description: Metadatos de la copia (la descarga es solo del super_admin).
+          properties:
+            file_name: { type: string }
+            mime_type: { type: string }
+            size_bytes: { type: integer }
+        updated_at: { type: string, format: date-time, nullable: true }
+        medical_expires_on: { type: string, format: date, nullable: true, example: '2027-05-18', description: Vencimiento del certificado médico. }
+        ratings: { type: array, items: { type: string }, example: [A320, '787'], description: Familias de avión habilitadas. }
+        english_level: { type: integer, nullable: true, minimum: 1, maximum: 6, description: Nivel OACI de inglés. }
+    MyAbsenceFlight:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00043 }
+        flight_id: { type: string, format: uuid }
+        flight_number: { type: string, example: DL1102 }
+        origin: { type: string, example: ATL }
+        destination: { type: string, example: JFK }
+        departure_at: { type: string, format: date-time }
+        slot_role: { type: string, nullable: true, example: captain }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+    MyAbsence:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, example: SOL-00042 }
+        kind: { type: string, enum: [flight, dates] }
+        reason: { $ref: '#/components/schemas/AbsenceReason' }
+        notes: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/AbsenceStatus' }
+        start_date: { type: string, format: date, nullable: true, description: Solo en las de fechas. }
+        end_date: { type: string, format: date, nullable: true }
+        flight_id: { type: string, format: uuid, nullable: true, description: Solo en las de un vuelo reportado directamente. }
+        flight_number: { type: string, nullable: true }
+        origin: { type: string, nullable: true }
+        destination: { type: string, nullable: true }
+        departure_at: { type: string, format: date-time, nullable: true }
+        slot_role: { type: string, nullable: true }
+        attachment:
+          allOf:
+            - $ref: '#/components/schemas/AbsenceAttachment'
+          nullable: true
+        created_at: { type: string, format: date-time }
+        flights:
+          type: array
+          description: Ausencias de los vuelos de una ausencia por fechas, por salida. Vacío en las de un vuelo.
+          items: { $ref: '#/components/schemas/MyAbsenceFlight' }
     Error:
       type: object
       properties:

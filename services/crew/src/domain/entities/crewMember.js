@@ -51,7 +51,8 @@ function parseStatus(value) {
 }
 
 // Perfil de un tripulante nuevo. Lo pide Admin después de crear la cuenta;
-// el nombre y el correo son de la cuenta y se quedan en Admin.
+// el nombre y el correo son de la cuenta y se quedan en Admin. Sin employee_code,
+// el repositorio le asigna el siguiente (AC-0001, AC-0002…).
 function createCrewProfile({
   user_id: userId,
   employee_code: employeeCode,
@@ -67,7 +68,10 @@ function createCrewProfile({
 
   return {
     userId,
-    employeeCode: parseEmployeeCode(employeeCode),
+    employeeCode:
+      employeeCode === undefined || employeeCode === null || employeeCode === ''
+        ? null
+        : parseEmployeeCode(employeeCode),
     position: parsePosition(position),
     base: profileBase,
     // Recién creado, el tripulante está en su base.

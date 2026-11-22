@@ -4,13 +4,13 @@ const {
   jwtSecret,
   jwtExpiresIn,
   jwtIssuer,
-  activationTokenExpiresMinutes,
 } = require('../../config/env');
 const {
   createUser: buildUser,
   createSuperAdmin,
 } = require('../../domain/entities/user');
 const { toUserItem } = require('./manageUsers');
+const { newActivationLink } = require('./activationLink');
 
 // Alta de cualquier usuario por un super_admin. La cuenta nace pendiente: la
 // persona recibe un correo y crea su contraseña al activarla.
@@ -37,20 +37,7 @@ function createCreateUser({ userRepository, passwordHasher, emailClient, crewCli
   return async function createUser(input) {
     const newUser = buildUser(input || {});
 
-    if (
-      !Number.isInteger(activationTokenExpiresMinutes) ||
-      activationTokenExpiresMinutes < 1
-    ) {
-      const error = new Error(
-        'ACTIVATION_TOKEN_EXPIRES_MINUTES debe ser un entero positivo.'
-      );
-      error.status = 503;
-      throw error;
-    }
-
-    const token = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = new Date(Date.now() + activationTokenExpiresMinutes * 60 * 1000);
+    const { token, tokenHash, expiresAt } = newActivationLink();
     // Nadie conoce esta contraseña: la reemplaza la que la persona crea al activar.
     const temporaryPassword = crypto.randomBytes(32).toString('hex');
 

@@ -336,8 +336,9 @@ paths:
       tags: [Interno]
       summary: Crear el perfil de un tripulante (solo Admin)
       description: |
-        Admin lo llama en POST /users después de crear la cuenta pendiente. `employee_code` se guarda en
-        mayúsculas; `base` es un código IATA de 3 letras y también queda como `current_location`
+        Admin lo llama en POST /users después de crear la cuenta pendiente. `employee_code` es opcional:
+        sin él se asigna el siguiente de la secuencia (AC-0001, AC-0002…), saltando los que ya existan. Se
+        guarda en mayúsculas. `base` es un código IATA de 3 letras y también queda como `current_location`
         inicial. `status` vale `available` si no se envía.
       security:
         - adminServiceKey: []
@@ -347,7 +348,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [user_id, employee_code, position]
+              required: [user_id, position]
               properties:
                 user_id: { type: string, format: uuid }
                 employee_code: { type: string, example: AC-1108 }

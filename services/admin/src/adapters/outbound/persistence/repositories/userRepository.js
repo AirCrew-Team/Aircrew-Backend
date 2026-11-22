@@ -141,6 +141,23 @@ async function deletePendingUser(id) {
   return rowCount > 0;
 }
 
+// Reenvío de la invitación: enlace nuevo que anula el anterior. Solo cuentas
+// pendientes de activación; devuelve null si la cuenta ya está activa o no existe.
+async function renewActivation(id, { activationTokenHash, activationExpiresAt }) {
+  const { rows } = await pool.query(
+    `UPDATE public.users
+     SET activation_token_hash = $2,
+         activation_expires_at = $3
+     WHERE id = $1
+       AND is_active = false
+       AND activation_token_hash IS NOT NULL
+     RETURNING id, name, email`,
+    [id, activationTokenHash, activationExpiresAt]
+  );
+
+  return rows[0] || null;
+}
+
 async function activateUser({ activationTokenHash, passwordHash }) {
   const { rows } = await pool.query(
     `UPDATE public.users
@@ -556,6 +573,7 @@ module.exports = {
   findById,
   create,
   createPendingUser,
+  renewActivation,
   deletePendingUser,
   activateUser,
   findPendingActivationByToken,

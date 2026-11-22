@@ -18,27 +18,50 @@ function toDuplicateError(cause) {
   return cause;
 }
 
+// Siguiente código libre de la secuencia: AC-0001, AC-0002…
+const NEXT_EMPLOYEE_CODE = `'AC-' || lpad(nextval('public.crew_employee_code_seq')::text, 4, '0')`;
+// Si el código generado ya lo tenía alguien (asignado a mano), se prueba el siguiente.
+const MAX_GENERATED_CODE_ATTEMPTS = 20;
+
+function isDuplicateEmployeeCode(cause) {
+  return (
+    cause.code === '23505' &&
+    Boolean(cause.constraint) &&
+    cause.constraint.includes('employee_code')
+  );
+}
+
+// employeeCode null: el código lo asigna la base con la secuencia.
 async function createCrewMember({
   userId,
-  employeeCode,
+  employeeCode = null,
   position,
   base = null,
   currentLocation = null,
   status = 'available',
   isActive = true,
 }) {
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO public.crew_members
-         (user_id, employee_code, position, base, current_location, status, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING ${crewColumns}`,
-      [userId, employeeCode, position, base, currentLocation, status, isActive]
-    );
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO public.crew_members
+           (user_id, employee_code, position, base, current_location, status, is_active)
+         VALUES ($1, COALESCE($2, ${NEXT_EMPLOYEE_CODE}), $3, $4, $5, $6, $7)
+         RETURNING ${crewColumns}`,
+        [userId, employeeCode, position, base, currentLocation, status, isActive]
+      );
 
-    return rows[0];
-  } catch (cause) {
-    throw toDuplicateError(cause);
+      return rows[0];
+    } catch (cause) {
+      const retry =
+        employeeCode === null &&
+        isDuplicateEmployeeCode(cause) &&
+        attempt < MAX_GENERATED_CODE_ATTEMPTS;
+
+      if (!retry) {
+        throw toDuplicateError(cause);
+      }
+    }
   }
 }
 

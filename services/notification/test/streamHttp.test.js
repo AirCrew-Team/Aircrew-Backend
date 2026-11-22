@@ -154,10 +154,10 @@ test('el aviso de certificación solo lo puede enviar un servicio', async (t) =>
 test('antes de que venza la sesión llega «auth:expired» y se cierra la conexión', async (t) => {
   await withServer(t, async (base) => {
     const response = await fetch(`${base}/stream`, {
-      headers: { Authorization: `Bearer ${tokenFor('crew', { expiresIn: '1s' })}` },
+      headers: { Authorization: `Bearer ${tokenFor('crew', { expiresIn: '3s' })}` },
     });
     const sse = sseReader(response);
-    const received = await sse.until('auth:expired', 4000);
+    const received = await sse.until('auth:expired', 6000);
     assert.match(received, /event: auth:expired/);
     // Y el servidor cierra la conexión.
     await sse.until('__nunca__', 1000);

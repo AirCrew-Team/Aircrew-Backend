@@ -142,11 +142,11 @@ for (const authorization of ['Basic abc', 'Bearer abc', 'Bearer a.b', 'Bearer a.
 test('Revisión: con un Authorization sin forma de JWT se valida la cookie aircrew_token', async (t) => {
   const { get } = await startApp(t);
 
-  const res = await get('Basic abc', 'otra=1; aircrew_token=anulado-9.e30.firma');
+  const res = await get('Basic abc', 'otra=1; aircrew_token=anulado.a.a');
 
   assert.equal(res.status, 401);
   assert.deepEqual(res.body, REVOKED_BODY);
-  assert.equal(callsOf('Bearer anulado-9.e30.firma'), 1);
+  assert.equal(callsOf('Bearer anulado.a.a'), 1);
   assert.equal(callsOf('Basic abc'), 0);
 });
 
@@ -343,19 +343,19 @@ test('Revisión: si la consulta compartida falla, todas responden 503 y no queda
 test('Revisión: «Bearer» con espacios de más se valida con el token recortado', async (t) => {
   const { get } = await startApp(t);
 
-  const res = await get('Bearer   anulado-10.e30.firma');
+  const res = await get('Bearer   anulado.b.b');
 
   assert.equal(res.status, 401);
   assert.deepEqual(res.body, REVOKED_BODY);
-  assert.equal(callsOf('Bearer anulado-10.e30.firma'), 1);
+  assert.equal(callsOf('Bearer anulado.b.b'), 1);
 });
 
 test('Revisión: una cookie con espacios codificados se valida recortada', async (t) => {
   const { get } = await startApp(t);
 
-  const res = await get(undefined, 'aircrew_token=%20%20anulado-11.e30.firma%20');
+  const res = await get(undefined, 'aircrew_token=%20%20anulado.c.c%20');
 
   assert.equal(res.status, 401);
   assert.deepEqual(res.body, REVOKED_BODY);
-  assert.equal(callsOf('Bearer anulado-11.e30.firma'), 1);
+  assert.equal(callsOf('Bearer anulado.c.c'), 1);
 });

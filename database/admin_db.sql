@@ -117,16 +117,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_employee_code_unique
   ON public.users (employee_code)
   WHERE employee_code IS NOT NULL;
 
--- Solicitudes de enlace y cambios de contraseña: sirven para los límites por cuenta.
+-- Solicitudes de enlace, cambios de contraseña y contraseñas actuales incorrectas
+-- en el cambio con sesión (change_failed): sirven para los límites por cuenta.
 CREATE TABLE IF NOT EXISTS public.password_reset_events (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    UUID        NOT NULL REFERENCES public.users (id) ON DELETE CASCADE,
-  event      VARCHAR(20) NOT NULL CHECK (event IN ('requested', 'changed')),
+  event      VARCHAR(20) NOT NULL
+    CONSTRAINT password_reset_events_event_check
+    CHECK (event IN ('requested', 'changed', 'change_failed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Bases creadas antes de change_failed: se vuelve a crear el CHECK (repetible).
+ALTER TABLE public.password_reset_events DROP CONSTRAINT IF EXISTS password_reset_events_event_check;
+ALTER TABLE public.password_reset_events
+  ADD CONSTRAINT password_reset_events_event_check
+  CHECK (event IN ('requested', 'changed', 'change_failed'));
+
 CREATE INDEX IF NOT EXISTS password_reset_events_user_event_created_idx
   ON public.password_reset_events (user_id, event, created_at);
+
+-- Fallos de login por correo normalizado (exista o no la cuenta): 5 en 15 min dan 429.
+-- TEXT: el correo que se escribe en el login no tiene un largo máximo.
+CREATE TABLE IF NOT EXISTS public.login_failures (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email      TEXT        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS login_failures_email_created_idx
+  ON public.login_failures (email, created_at);
 
 -- Foto de perfil: una por cuenta, PNG, JPEG o WEBP de hasta 2 MB.
 CREATE TABLE IF NOT EXISTS public.user_photos (

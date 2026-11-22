@@ -145,7 +145,13 @@ for (const path of ['/auth/me', '/users/me']) {
     const res = await request(path, { token: tokenAt(T) });
 
     assert.equal(res.status, 401);
-    assert.deepEqual(res.body, { error: SESSION_MESSAGE });
+    // BE-2: /auth/me (el que consulta el gateway) añade code: 'session_revoked'.
+    assert.deepEqual(
+      res.body,
+      path === '/auth/me'
+        ? { error: SESSION_MESSAGE, code: 'session_revoked' }
+        : { error: SESSION_MESSAGE }
+    );
   });
 
   test(`D4-B1 (HTTP): GET ${path} con un token del mismo segundo que el cambio responde 200`, async (t) => {
@@ -326,7 +332,7 @@ test('D4-B2 (HTTP): con el token de la cookie nueva /auth/me responde 200 y con 
   assert.equal((await request('/auth/me', { token: newToken })).status, 200);
   const stale = await request('/auth/me', { token: oldToken });
   assert.equal(stale.status, 401);
-  assert.deepEqual(stale.body, { error: SESSION_MESSAGE });
+  assert.deepEqual(stale.body, { error: SESSION_MESSAGE, code: 'session_revoked' });
 });
 
 // --- Caso de uso changePassword ---
@@ -351,6 +357,8 @@ function createChangeRepository({ row, savedAt }) {
   return {
     calls,
     findPasswordHash: locked.findPasswordHash,
+    // BE-2: antes de comparar se cuentan los fallos (change_failed) con el pool.
+    countPasswordResetEvents: locked.countPasswordResetEvents,
     async withPasswordResetLock(userId, fn) {
       calls.push('withPasswordResetLock');
       return fn(locked);
@@ -453,6 +461,10 @@ test('D4: el login sigue firmando el token con sub, role, iss y la duración con
   const createLogin = require('../src/application/use-cases/login');
   const login = createLogin({
     userRepository: {
+      // BE-2: el login cuenta antes los fallos del correo (aquí ninguno).
+      async countLoginFailures() {
+        return 0;
+      },
       async findByEmail() {
         return {
           ...USER_ROW,

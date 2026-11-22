@@ -83,14 +83,15 @@ function createManageUsers(userRepository, { crewClient, resendInvitation } = {}
 
   // La cuenta del usuario del token, para restaurar la sesión al recargar.
   // Si ya no existe, está desactivada o el token es anterior al último cambio de
-  // contraseña, la sesión deja de valer (401).
+  // contraseña, la sesión deja de valer (401). El gateway consulta esta ruta antes de
+  // cada petición y reenvía el 401: el code distingue la sesión anulada del token vencido.
   async function getCurrentUser(requester) {
     const user = isValidUserId(requester.id)
       ? await userRepository.findById(requester.id)
       : null;
 
     if (!isCurrentSession(user, requester)) {
-      throw new DomainError('La sesión ya no es válida.', 401);
+      throw new DomainError('La sesión ya no es válida.', 401, { code: 'session_revoked' });
     }
 
     // La fecha solo sirve para la comprobación: la respuesta no cambia.

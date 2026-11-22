@@ -59,7 +59,18 @@ paths:
                 $ref: '#/components/schemas/AuthResult'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401':
-          description: Credenciales inválidas o cuenta sin activar
+          description: |
+            Credenciales inválidas o cuenta sin activar. Cada 401 cuenta como un fallo del correo
+            (normalizado: sin espacios y en minúsculas), exista o no la cuenta.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: |
+            El correo ya tiene 5 fallos en los últimos 15 minutos: no se busca la cuenta ni se compara la
+            contraseña hasta que salgan de la ventana. Responde lo mismo exista o no la cuenta. Un login
+            correcto no borra los fallos anteriores.
+            `error`: «Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -85,6 +96,10 @@ paths:
       description: |
         La cuenta del usuario del token. Sirve para restaurar la sesión al recargar la página.
         Un token emitido antes del último cambio de contraseña (con sesión o por recuperación) ya no vale.
+        El gateway llama a esta ruta antes de pasar cualquier petición con token (salvo `/api/admin/auth/*`)
+        y reenvía su 401 tal cual. Con la sesión anulada (cuenta inexistente o desactivada, o token anterior
+        al último cambio de contraseña) el 401 lleva `code: "session_revoked"`; con el token vencido,
+        `token_expired`; inválido, `invalid_token`; sin token, `auth_required`.
       security:
         - bearerAuth: []
       responses:
@@ -327,7 +342,9 @@ paths:
         `aircrew_token` nueva, igual que el login, con un token del mismo segundo del cambio o posterior.
         Comparte con la recuperación el límite de 3 cambios en 24 horas, así que
         tras 3 cambios aquí tampoco sirve «¿Olvidaste tu contraseña?» ese día.
-        La contraseña actual se comprueba antes que el límite: con las dos condiciones responde 400.
+        La contraseña actual se comprueba antes que ese límite: con las dos condiciones responde 400.
+        Cada contraseña actual incorrecta se registra; con 5 en los últimos 15 minutos responde 429
+        antes de compararla.
       security:
         - bearerAuth: []
       requestBody:
@@ -370,8 +387,11 @@ paths:
         '401': { $ref: '#/components/responses/SessionUnauthorized' }
         '429':
           description: |
-            La cuenta ya cambió la contraseña 3 veces en las últimas 24 horas. La contraseña no cambia.
-            `error`: «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
+            Límite de la cuenta. La contraseña no cambia. `error` es uno de:
+            - 5 contraseñas actuales incorrectas en los últimos 15 minutos (no se compara la enviada):
+              «Demasiados intentos con una contraseña actual incorrecta. Espera unos minutos e intenta de nuevo.»
+            - 3 cambios en las últimas 24 horas:
+              «Ya cambiaste tu contraseña 3 veces en las últimas 24 horas. Podrás cambiarla de nuevo más tarde.»
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

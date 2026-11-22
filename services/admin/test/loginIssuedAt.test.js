@@ -13,6 +13,8 @@ const passwordHasher = { compare: async () => true };
 
 function repoWith(passwordChangedAt) {
   return {
+    // BE-2: el login cuenta antes los fallos del correo (aquí ninguno).
+    countLoginFailures: async () => 0,
     findByEmail: async () => ({
       id: '0b5c1b0e-9f2a-4c1d-8e3f-1a2b3c4d5e6f',
       name: 'Cuenta de Prueba',

@@ -256,6 +256,38 @@ async function countPasswordResetEvents({ userId, event, since }, db = pool) {
   return rows[0].count;
 }
 
+// Contraseña actual incorrecta en el cambio con sesión: un evento 'change_failed'.
+// Con el pool: el fallo no abre una transacción ni bloquea la cuenta.
+async function recordPasswordChangeFailure(userId) {
+  await pool.query(
+    `INSERT INTO public.password_reset_events (user_id, event)
+     VALUES ($1, 'change_failed')`,
+    [userId]
+  );
+}
+
+// Fallos de login de un correo (ya normalizado) posteriores a `since`.
+async function countLoginFailures({ email, since }) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM public.login_failures
+     WHERE email = $1
+       AND created_at > $2`,
+    [email, since]
+  );
+
+  return rows[0].count;
+}
+
+// Un fallo de login por correo, aunque la cuenta no exista.
+async function recordLoginFailure(email) {
+  await pool.query(
+    `INSERT INTO public.login_failures (email)
+     VALUES ($1)`,
+    [email]
+  );
+}
+
 // Ejecuta fn(locked) en una transacción con la fila de la cuenta bloqueada (FOR UPDATE).
 // Otra solicitud de la misma cuenta espera al COMMIT y ya ve el evento guardado.
 // `locked` cuenta y guarda con el cliente de esa transacción.
@@ -584,6 +616,9 @@ module.exports = {
   withPasswordResetLock,
   findPasswordHash,
   countPasswordResetEvents,
+  recordPasswordChangeFailure,
+  countLoginFailures,
+  recordLoginFailure,
   findByPasswordResetToken,
   resetPasswordByToken,
   createFirstSuperAdmin,

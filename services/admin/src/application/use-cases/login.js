@@ -1,8 +1,16 @@
 const { jwtSecret } = require('../../config/env');
 const { canLogIn } = require('../../domain/entities/user');
+const {
+  FAILED_ATTEMPTS_WINDOW_MS,
+  MAX_FAILED_ATTEMPTS,
+  MESSAGES,
+  tooManyAttempts,
+} = require('../../domain/failedAttempts');
 const { signSessionToken } = require('./sessionToken');
 
-function createLogin({ userRepository, passwordHasher }) {
+// Con 5 fallos de un correo en 15 min responde 429 sin buscar la cuenta, con el mismo
+// mensaje exista o no. Un login correcto no borra los fallos anteriores.
+function createLogin({ userRepository, passwordHasher, now = () => new Date() }) {
   return async function login(input) {
     const { email, password } = input || {};
 
@@ -23,12 +31,23 @@ function createLogin({ userRepository, passwordHasher }) {
       throw error;
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
+    const failures = await userRepository.countLoginFailures({
+      email: normalizedEmail,
+      since: new Date(now().getTime() - FAILED_ATTEMPTS_WINDOW_MS),
+    });
+
+    if (failures >= MAX_FAILED_ATTEMPTS) {
+      throw tooManyAttempts(MESSAGES.login);
+    }
+
     const user = await userRepository.findByEmail(email.trim());
 
     if (
       !canLogIn(user) ||
       !(await passwordHasher.compare(password, user.password_hash))
     ) {
+      await userRepository.recordLoginFailure(normalizedEmail);
       const error = new Error('Email o contraseña incorrectos.');
       error.status = 401;
       throw error;

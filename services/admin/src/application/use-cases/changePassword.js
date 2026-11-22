@@ -7,6 +7,12 @@ const {
   MESSAGES,
   limitError,
 } = require('../../domain/passwordReset');
+const {
+  FAILED_ATTEMPTS_WINDOW_MS,
+  MAX_FAILED_ATTEMPTS,
+  MESSAGES: ATTEMPT_MESSAGES,
+  tooManyAttempts,
+} = require('../../domain/failedAttempts');
 const { signSessionToken } = require('./sessionToken');
 
 function invalidSession() {
@@ -19,7 +25,8 @@ function wrongPassword() {
 }
 
 // Cambio de contraseña con sesión. Comparte con la recuperación el límite de
-// 3 cambios en 24 h. Los tokens anteriores al cambio dejan de valer, así que devuelve
+// 3 cambios en 24 h, y con 5 contraseñas actuales incorrectas en 15 min responde 429
+// sin comparar. Los tokens anteriores al cambio dejan de valer, así que devuelve
 // un token nuevo para la cookie de esta sesión.
 function createChangePassword({
   userRepository,
@@ -42,7 +49,18 @@ function createChangePassword({
       throw invalidSession();
     }
 
+    const failures = await userRepository.countPasswordResetEvents({
+      userId: requester.id,
+      event: 'change_failed',
+      since: new Date(now().getTime() - FAILED_ATTEMPTS_WINDOW_MS),
+    });
+
+    if (failures >= MAX_FAILED_ATTEMPTS) {
+      throw tooManyAttempts(ATTEMPT_MESSAGES.changePassword);
+    }
+
     if (!(await passwordHasher.compare(currentPassword, user.password_hash))) {
+      await userRepository.recordPasswordChangeFailure(requester.id);
       throw wrongPassword();
     }
 

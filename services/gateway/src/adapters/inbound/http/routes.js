@@ -2,6 +2,7 @@ const express = require('express');
 const { services, docsPublic } = require('../../../config/env');
 const { createServiceProxy } = require('../../outbound/http/serviceProxy');
 const { cookieToAuthorization } = require('./cookieAuth');
+const { createSessionCheck } = require('./sessionCheck');
 
 const router = express.Router();
 
@@ -10,7 +11,8 @@ router.get('/health', (req, res) => {
 });
 
 // El frontend llama a /api/<servicio>/<ruta>; el gateway no tiene lógica de
-// negocio ni valida el token: cada servicio lo sigue verificando.
+// negocio: cada servicio sigue verificando el token. El gateway solo comprueba
+// con admin que la sesión no se haya anulado (sessionCheck).
 // Recommendation espera a la IA (Claude puede tardar hasta un minuto en
 // sugerir una tripulación completa): se le da más tiempo que al resto.
 const TIMEOUTS = { recommendation: 120000 };
@@ -47,6 +49,14 @@ router.use((req, res, next) => {
 });
 
 router.use(cookieToAuthorization);
+
+// Las rutas /api/admin/auth/* (login, logout, bootstrap, activación, recuperación y
+// el propio /auth/me) gestionan su sesión ellas mismas: no se validan aquí.
+const SESSION_FREE_ROUTE = /^\/api\/admin\/auth(\/|$)/;
+const sessionCheck = createSessionCheck({ adminUrl: services.admin });
+router.use((req, res, next) =>
+  SESSION_FREE_ROUTE.test(normalizedPath(req.url)) ? next() : sessionCheck(req, res, next)
+);
 
 // Notification: GET /stream es una conexión SSE que queda abierta (avisos en vivo),
 // así que va sin límite de tiempo. El resto de sus rutas, con el de siempre.

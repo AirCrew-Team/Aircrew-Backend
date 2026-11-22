@@ -6,6 +6,7 @@ module.exports = {
   port: Number(process.env.PORT) || 3001,
   jwtSecret: process.env.JWT_SECRET,
   jwtIssuer: process.env.JWT_ISSUER || 'aircrew-admin',
+  crewServiceUrl: process.env.CREW_SERVICE_URL || 'http://localhost:3002',
   DataBase: {
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT) || 5432,

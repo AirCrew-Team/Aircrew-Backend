@@ -449,7 +449,7 @@ test('CF-B7: admin_db.sql crea el índice único parcial del código y los CHECK
   ]) {
     assert.ok(sql.includes(`ADD COLUMN IF NOT EXISTS ${column}`), `falta el ALTER de ${column}`);
   }
-  assert.match(sql, /base IN \('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'\)/);
+  assert.match(sql, /base IN \('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO'\)/);
   assert.match(sql, /shift IN \('morning', 'afternoon', 'night'\)/);
   assert.match(sql, /operational_status IN \('available', 'on_duty', 'off_duty', 'leave'\)/);
 });

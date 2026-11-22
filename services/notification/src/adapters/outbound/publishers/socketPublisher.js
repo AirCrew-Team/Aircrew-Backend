@@ -1,4 +1,4 @@
-const { SUPERVISORS_ROOM } = require('../../../domain/alerts');
+const { SUPERVISORS_ROOM, userRoom } = require('../../../domain/alerts');
 
 // Publicador de alertas sobre Socket.IO. El servidor de sockets se conecta
 // al arrancar (attach); antes de eso no hay a quién entregar.
@@ -18,4 +18,16 @@ function publishToSupervisors(alert) {
   return room ? room.size : 0;
 }
 
-module.exports = { attach, publishToSupervisors };
+// Aviso para una sola persona (todas sus conexiones abiertas).
+function publishToUser(userId, alert) {
+  if (!io) {
+    return 0;
+  }
+
+  const room = userRoom(userId);
+  io.to(room).emit(alert.type, alert);
+  const connections = io.sockets.adapter.rooms.get(room);
+  return connections ? connections.size : 0;
+}
+
+module.exports = { attach, publishToSupervisors, publishToUser };

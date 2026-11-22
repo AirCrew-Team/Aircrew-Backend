@@ -12,6 +12,7 @@ tags:
   - name: Salud
   - name: Autenticación
   - name: Usuarios
+  - name: Mi cuenta
   - name: Catálogos
   - name: Interno
     description: Endpoints para otros servicios, no para el frontend.
@@ -111,8 +112,8 @@ paths:
                 password:
                   type: string
                   format: password
-                  minLength: 12
-                  description: Entre 12 y 72 bytes UTF-8.
+                  minLength: 8
+                  description: Mínimo 8 caracteres, máximo 72 bytes UTF-8.
       responses:
         '200':
           description: Cuenta activada
@@ -243,8 +244,8 @@ paths:
                 password:
                   type: string
                   format: password
-                  minLength: 12
-                  description: Entre 12 y 72 bytes UTF-8.
+                  minLength: 8
+                  description: Entre 8 y 72 bytes UTF-8.
       responses:
         '200':
           description: Contraseña actualizada
@@ -257,7 +258,7 @@ paths:
                   user: { $ref: '#/components/schemas/UserSummary' }
         '400':
           description: |
-            «Se requieren el token y una contraseña de 12 a 72 bytes.» si falta el token o la
+            «Se requieren el token y una contraseña de 8 a 72 bytes.» si falta el token o la
             contraseña no es válida; «El enlace para restablecer la contraseña no es válido o ya venció.»
             si el token no existe, venció, ya se usó o la cuenta está desactivada.
           content:
@@ -341,8 +342,8 @@ paths:
                 new_password:
                   type: string
                   format: password
-                  minLength: 12
-                  description: Entre 12 y 72 bytes UTF-8, distinta de la actual.
+                  minLength: 8
+                  description: Entre 8 y 72 bytes UTF-8, distinta de la actual.
       responses:
         '200':
           description: Contraseña actualizada. El body no lleva el token; va en la cookie nueva.
@@ -360,7 +361,7 @@ paths:
                   password_changed_at: { type: string, format: date-time }
         '400':
           description: |
-            «Se requieren la contraseña actual y una nueva de 12 a 72 bytes.»,
+            «Se requieren la contraseña actual y una nueva de 8 a 72 bytes.»,
             «La nueva contraseña debe ser distinta de la actual.» o
             «La contraseña actual no es correcta.»
           content:
@@ -395,8 +396,8 @@ paths:
                 password:
                   type: string
                   format: password
-                  minLength: 12
-                  description: Entre 12 y 72 bytes UTF-8.
+                  minLength: 8
+                  description: Mínimo 8 caracteres, máximo 72 bytes UTF-8.
       responses:
         '201':
           description: Super_admin creado
@@ -993,6 +994,30 @@ paths:
                     items: { $ref: '#/components/schemas/CatalogOption' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bases/me:
+    get:
+      tags: [Mi cuenta]
+      summary: Mi base (encabezado del inicio, cualquier rol)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Base del usuario
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unit: { type: string, example: Jefatura de Operaciones de Vuelo }
+                  hq_code: { type: string, example: BOG-HQ }
+                  base_name: { type: string, example: Base Eldorado }
+                  city: { type: string, example: Bogotá }
+                  iata: { type: string, example: BOG }
+                  icao: { type: string, example: SKBO }
+                  operational_condition: { type: string, enum: [normal, degraded, critical] }
+        '404':
+          description: 'El usuario no tiene base (code: no_base)'
 
 components:
   securitySchemes:

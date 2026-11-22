@@ -200,7 +200,7 @@ test('D4 (HTTP): un token sin iat responde 401 sin consultar la base', async (t)
   const res = await request('/auth/me', { token });
 
   assert.equal(res.status, 401);
-  assert.deepEqual(res.body, { error: 'El token de autenticación no es válido.' });
+  assert.deepEqual(res.body, { error: 'El token de autenticación no es válido.', code: 'invalid_token' });
   assert.deepEqual(calls, []);
 });
 

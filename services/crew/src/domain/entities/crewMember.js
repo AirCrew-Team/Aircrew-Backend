@@ -1,8 +1,14 @@
 const { DomainError } = require('../errors');
 
-// available: libre para asignar · on_duty: de turno en tierra
-// in_flight: volando · medical_leave: incapacidad médica
-const CREW_STATUSES = ['available', 'on_duty', 'in_flight', 'medical_leave'];
+// available: libre para asignar · on_duty: de guardia en el aeropuerto
+// in_flight: volando · medical_leave: incapacidad médica · vacation: vacaciones
+const CREW_STATUSES = ['available', 'on_duty', 'in_flight', 'medical_leave', 'vacation'];
+
+// Cargo a bordo. Los pilotos son captain y first_officer; la cabina, purser
+// (jefe de cabina) y flight_attendant (auxiliar de vuelo).
+const CREW_RANKS = ['captain', 'first_officer', 'purser', 'flight_attendant'];
+
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

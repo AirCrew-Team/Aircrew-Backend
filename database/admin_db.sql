@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   employee_code             VARCHAR(30),
   base                      VARCHAR(3)
     CONSTRAINT users_base_check
-    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA')),
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO')),
   shift                     TEXT
     CONSTRAINT users_shift_check
     CHECK (shift IN ('morning', 'afternoon', 'night')),
@@ -56,15 +56,12 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS operational_status TEXT;
 -- Los ALTER de restricciones van en DO para poder ejecutar el script varias veces.
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.users'::regclass
-      AND conname = 'users_base_check'
-  ) THEN
-    ALTER TABLE public.users
-      ADD CONSTRAINT users_base_check
-      CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA'));
-  END IF;
+  -- Se vuelve a crear siempre para que una base nueva en la lista llegue a las bases ya creadas.
+  -- BOG, MDE y CLO: bases de los datos de demo (database/seed-demo.js).
+  ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_base_check;
+  ALTER TABLE public.users
+    ADD CONSTRAINT users_base_check
+    CHECK (base IN ('ATL', 'BOS', 'DTW', 'LAX', 'MSP', 'JFK', 'LGA', 'SLC', 'SEA', 'BOG', 'MDE', 'CLO'));
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -138,4 +135,16 @@ CREATE TABLE IF NOT EXISTS public.user_photos (
   size_bytes INTEGER     NOT NULL CHECK (size_bytes BETWEEN 1 AND 2097152),
   data       BYTEA       NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bases de operación. code es el IATA del aeropuerto de la base.
+CREATE TABLE IF NOT EXISTS public.bases (
+  code                  TEXT PRIMARY KEY,
+  icao                  TEXT NOT NULL,
+  name                  TEXT NOT NULL,
+  city                  TEXT NOT NULL,
+  unit                  TEXT NOT NULL,
+  hq_code               TEXT NOT NULL,
+  operational_condition TEXT NOT NULL DEFAULT 'normal'
+    CHECK (operational_condition IN ('normal', 'degraded', 'critical'))
 );

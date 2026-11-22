@@ -105,5 +105,5 @@ test('AU-B8 (HTTP): GET /absences/:id/attachment responde 403 a un tripulante', 
   const res = await request(`/absences/${ABSENCE_ID}/attachment`, { role: 'crew' });
 
   assert.equal(res.status, 403);
-  assert.deepEqual(res.body, { error: 'No tienes permisos para esta acción.' });
+  assert.deepEqual(res.body, { error: 'No tienes permisos para esta acción.', code: 'forbidden' });
 });

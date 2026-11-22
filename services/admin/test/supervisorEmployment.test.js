@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const NOT_SUPERVISOR_MESSAGE = 'Los datos laborales solo aplican a supervisores.';
 const EMPLOYEE_CODE_MESSAGE =
   'employee_code debe tener de 3 a 30 caracteres: letras, números o guiones.';
-const BASE_MESSAGE = 'base debe ser uno de: ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC, SEA.';
+const BASE_MESSAGE = 'base debe ser uno de: ATL, BOS, DTW, LAX, MSP, JFK, LGA, SLC, SEA, BOG, MDE, CLO.';
 const SHIFT_MESSAGE = 'shift debe ser uno de: morning, afternoon, night.';
 const STATUS_MESSAGE =
   'operational_status debe ser uno de: available, on_duty, off_duty, leave.';

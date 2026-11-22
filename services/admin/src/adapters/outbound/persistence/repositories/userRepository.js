@@ -43,12 +43,15 @@ const EMPLOYMENT_CHECK = 'users_employment_supervisor_check';
 // 23505: el código de empleado repetido tiene su mensaje; cualquier otro es el email.
 function toDuplicateError(cause) {
   if (cause.code === '23505') {
+    const isEmployeeCode = cause.constraint === EMPLOYEE_CODE_INDEX;
     const error = new Error(
-      cause.constraint === EMPLOYEE_CODE_INDEX
+      isEmployeeCode
         ? 'Ya existe un supervisor con ese código de empleado.'
         : 'Ya existe un usuario con ese email.'
     );
     error.status = 409;
+    error.code = isEmployeeCode ? 'duplicate_employee_code' : 'duplicate_email';
+    error.field = isEmployeeCode ? 'employee_code' : 'email';
     return error;
   }
 

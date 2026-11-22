@@ -202,7 +202,7 @@ function validatePasswordChange(input) {
     !isValidPassword(newPassword)
   ) {
     throw new DomainError(
-      'Se requieren la contraseña actual y una nueva de 12 a 72 bytes.'
+      'Se requieren la contraseña actual y una nueva de 8 a 72 bytes.'
     );
   }
 

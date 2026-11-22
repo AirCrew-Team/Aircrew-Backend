@@ -69,7 +69,7 @@ test('un tripulante necesita un cargo del catálogo, y su base es un hub', () =>
   for (const position of [undefined, ' ', 'Mecánico', 'pilot']) {
     assert.throws(() => buildUser(crewInput({ position })), rejectsWith(400, POSITION_MESSAGE), String(position));
   }
-  assert.throws(() => buildUser(crewInput({ base: 'BOG' })), /base debe ser uno de/);
+  assert.throws(() => buildUser(crewInput({ base: 'MEX' })), /base debe ser uno de/);
   assert.throws(() => buildUser(crewInput({ shift: 'night' })), rejectsWith(400, 'Los datos laborales solo aplican a supervisores.'));
 });
 
@@ -495,7 +495,7 @@ test('GET /catalogs/user-options: solo super_admin, con bases, cargos, turnos y 
 
   const { status, body } = await get('super_admin');
   assert.equal(status, 200);
-  assert.equal(body.bases.length, 9);
+  assert.equal(body.bases.length, 12); // 9 hubs de Delta + BOG, MDE y CLO (datos de demo)
   assert.deepEqual(body.bases[0], { code: 'ATL', label: 'Base ATL / Atlanta' });
   assert.deepEqual(body.crew_positions, ['Comandante', 'Copiloto', 'Auxiliar de Vuelo', 'Sobrecargo Principal', 'Sobrecargo']);
   assert.deepEqual(body.shifts.map((shift) => shift.code), ['morning', 'afternoon', 'night']);

@@ -43,7 +43,7 @@ function setup() {
     },
   };
   const loadReplacementContext = createLoadReplacementContext({ crewClient, flightsClient });
-  return { loadReplacementContext, flightCalls };
+  return { loadReplacementContext, flightCalls, crewClient, flightsClient };
 }
 
 test('AU-B10: con una ausencia sin vuelo responde 409 con el mensaje del contrato y no consulta Flights', async () => {
@@ -59,9 +59,10 @@ test('AU-B10: con una ausencia sin vuelo responde 409 con el mensaje del contrat
 
 test('AU-B10 (HTTP): GET de candidatos responde 409 con { error } para una ausencia sin vuelo', async (t) => {
   t.mock.method(console, 'error', () => {});
-  const { loadReplacementContext } = setup();
+  const { crewClient, flightsClient } = setup();
+  const suggestionRepository = { async findLatestRound() { return []; } };
   const controller = createRecommendationController({
-    getCandidates: createGetCandidates({ loadReplacementContext }),
+    getCandidates: createGetCandidates({ crewClient, flightsClient, suggestionRepository }),
   });
   const res = {
     status(code) {

@@ -110,7 +110,7 @@ test('CF-B1 (HTTP): GET /users/me sin sesión responde 401', async (t) => {
   const res = await request('/users/me');
 
   assert.equal(res.status, 401);
-  assert.deepEqual(res.body, { error: 'Se requiere autenticación.' });
+  assert.deepEqual(res.body, { error: 'Se requiere autenticación.', code: 'auth_required' });
 });
 
 test('CF-B1 (HTTP): GET /users/me de un tripulante responde 200 con el contrato, no el 403 de /users/:id', async (t) => {
@@ -299,7 +299,7 @@ test('CF-B8 (HTTP): GET /catalogs/us-cities sin sesión responde 401', async (t)
   const res = await request('/catalogs/us-cities');
 
   assert.equal(res.status, 401);
-  assert.deepEqual(res.body, { error: 'Se requiere autenticación.' });
+  assert.deepEqual(res.body, { error: 'Se requiere autenticación.', code: 'auth_required' });
 });
 
 for (const role of ['crew', 'supervisor', 'super_admin']) {
@@ -329,19 +329,19 @@ test('CF-B3 (HTTP): POST /auth/change-password sin sesión responde 401', async 
   assert.equal(res.status, 401);
 });
 
-test('CF-B3 (HTTP): una nueva contraseña de menos de 12 caracteres responde 400 sin consultar la base', async (t) => {
+test('CF-B3 (HTTP): una nueva contraseña de menos de 8 caracteres responde 400 sin consultar la base', async (t) => {
   t.mock.method(console, 'error', () => {});
   useDatabase(t);
 
   const res = await request('/auth/change-password', {
     method: 'POST',
     role: 'supervisor',
-    body: JSON.stringify({ current_password: 'a'.repeat(12), new_password: 'b'.repeat(11) }),
+    body: JSON.stringify({ current_password: 'a'.repeat(12), new_password: 'b'.repeat(7) }),
   });
 
   assert.equal(res.status, 400);
   assert.deepEqual(res.body, {
-    error: 'Se requieren la contraseña actual y una nueva de 12 a 72 bytes.',
+    error: 'Se requieren la contraseña actual y una nueva de 8 a 72 bytes.',
   });
   assert.equal(res.headers.get('set-cookie'), null);
 });
@@ -580,7 +580,7 @@ test('CF-B7 (HTTP): POST /users con un código de empleado repetido responde 409
   });
 
   assert.equal(res.status, 409);
-  assert.deepEqual(res.body, { error: DUPLICATE_CODE_MESSAGE });
+  assert.deepEqual(res.body, { error: DUPLICATE_CODE_MESSAGE, code: 'duplicate_employee_code', field: 'employee_code' });
 });
 
 test('CF-B7 (HTTP): PATCH /users/:id guarda los datos laborales de un supervisor', async (t) => {
@@ -639,7 +639,7 @@ test('CF-B7 (HTTP): PATCH /users/:id con un código de empleado repetido respond
   });
 
   assert.equal(res.status, 409);
-  assert.deepEqual(res.body, { error: DUPLICATE_CODE_MESSAGE });
+  assert.deepEqual(res.body, { error: DUPLICATE_CODE_MESSAGE, code: 'duplicate_employee_code', field: 'employee_code' });
 });
 
 test('M4 (HTTP): PATCH /users/:id responde 409 si el usuario cambió de rol antes de guardar sus datos laborales', async (t) => {
@@ -676,5 +676,5 @@ test('M6 (HTTP): un supervisor que edita sus propios datos laborales por PATCH /
   });
 
   assert.equal(res.status, 403);
-  assert.deepEqual(res.body, { error: 'No tienes permisos para esta acción.' });
+  assert.deepEqual(res.body, { error: 'No tienes permisos para esta acción.', code: 'forbidden' });
 });

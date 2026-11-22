@@ -186,7 +186,7 @@ function createSuperAdmin({ name, email, password }) {
     !isValidPassword(password)
   ) {
     throw new DomainError(
-      'Se requieren name, email y una contraseña de 12 a 72 bytes.'
+      'Se requieren name, email y una contraseña de mínimo 8 caracteres (máximo 72 bytes).'
     );
   }
 
@@ -202,7 +202,7 @@ function createSuperAdmin({ name, email, password }) {
 function validateActivation({ token, password }) {
   if (!isNonEmptyString(token) || !isValidPassword(password)) {
     throw new DomainError(
-      'Se requieren el token de activación y una contraseña de 12 a 72 bytes.'
+      'Se requieren el token de activación y una contraseña de mínimo 8 caracteres (máximo 72 bytes).'
     );
   }
 }
@@ -220,7 +220,7 @@ function validatePasswordResetRequest({ email }) {
 function validatePasswordReset({ token, password }) {
   if (!isNonEmptyString(token) || !isValidPassword(password)) {
     throw new DomainError(
-      'Se requieren el token y una contraseña de 12 a 72 bytes.'
+      'Se requieren el token y una contraseña de 8 a 72 bytes.'
     );
   }
 }

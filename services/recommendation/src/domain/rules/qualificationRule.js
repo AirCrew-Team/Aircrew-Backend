@@ -1,29 +1,34 @@
-// Habilitación: el cargo del tripulante debe servir para el rol a bordo.
-// Reemplaza a las certificaciones mientras no existan esos datos.
-const REQUIRED_POSITION = {
-  captain: 'pilot',
-  first_officer: 'pilot',
-  purser: 'cabin_crew',
-  flight_attendant: 'cabin_crew',
+// Rango: el cargo del tripulante debe ser el del puesto. El piloto de relevo
+// (relief) puede ser capitán o primer oficial.
+const ACCEPTED_RANKS = {
+  captain: ['captain'],
+  first_officer: ['first_officer'],
+  relief: ['captain', 'first_officer'],
+  purser: ['purser'],
+  flight_attendant: ['flight_attendant'],
 };
 
+function acceptedRanksFor(role) {
+  return ACCEPTED_RANKS[role] || [];
+}
+
+// Se mantiene para la respuesta de candidatos: el cargo que pide el puesto.
 function requiredPositionFor(role) {
-  return REQUIRED_POSITION[role] || null;
+  return acceptedRanksFor(role).join(' o ') || null;
 }
 
 const qualificationRule = {
   name: 'qualification',
 
   check({ member, role }) {
-    const required = requiredPositionFor(role);
-    const position = String(member.position || '').trim().toLowerCase();
+    const accepted = acceptedRanksFor(role);
 
-    if (position !== required) {
-      return `Su cargo (${member.position}) no sirve para ${role}; se requiere ${required}.`;
+    if (!accepted.includes(member.rank)) {
+      return `Su cargo (${member.rank || 'sin cargo'}) no sirve para ${role}; se requiere ${accepted.join(' o ')}.`;
     }
 
     return null;
   },
 };
 
-module.exports = { qualificationRule, requiredPositionFor };
+module.exports = { qualificationRule, requiredPositionFor, acceptedRanksFor };

@@ -1,7 +1,15 @@
 const pool = require('../pool');
 
-const crewColumns = `id, user_id, employee_code, position, base, current_location,
-       status, is_active, created_at`;
+// base: la asigna Admin y es la única fuente. Sale también como base_code porque
+// así la leen las reglas, el turno y Recommendation.
+// Las fechas sin hora salen como texto AAAA-MM-DD: si se dejan como DATE, el
+// driver las convierte a medianoche local y en Colombia se correrían un día.
+const crewColumns = `id, user_id, employee_code, position, base, base AS base_code,
+       rank, ratings, english_level,
+       to_char(medical_expires_on, 'YYYY-MM-DD') AS medical_expires_on,
+       to_char(hire_date, 'YYYY-MM-DD') AS hire_date,
+       phone, radio_channel, current_location, status, standby_location,
+       minutes_to_ramp, standby_until, is_active, created_at`;
 
 // 23505: el código de empleado o la cuenta ya tienen perfil.
 function toDuplicateError(cause) {

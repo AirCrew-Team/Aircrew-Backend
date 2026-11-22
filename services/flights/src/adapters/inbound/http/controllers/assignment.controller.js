@@ -4,6 +4,8 @@ function createAssignmentController({
   getAssignments,
   getMyAssignments,
   getMyNextAssignment,
+  acknowledgeReplacement,
+  revertReplacement,
 }) {
   async function create(req, res, next) {
     try {
@@ -16,7 +18,7 @@ function createAssignmentController({
 
   async function replace(req, res, next) {
     try {
-      const result = await replaceCrewMember(req.params.id, req.body);
+      const result = await replaceCrewMember(req.params.id, req.body, req.user);
       return res.status(200).json(result);
     } catch (error) {
       return next(error);
@@ -37,7 +39,7 @@ function createAssignmentController({
 
   async function listMine(req, res, next) {
     try {
-      const assignments = await getMyAssignments(req.user);
+      const assignments = await getMyAssignments(req.user, req.query);
       return res.status(200).json(assignments);
     } catch (error) {
       return next(error);
@@ -53,7 +55,25 @@ function createAssignmentController({
     }
   }
 
-  return { create, replace, list, listMine, getMyNext };
+  async function acknowledge(req, res, next) {
+    try {
+      await acknowledgeReplacement(req.user, req.params.id);
+      return res.status(204).end();
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  async function revert(req, res, next) {
+    try {
+      const result = await revertReplacement(req.params.id, req.body);
+      return res.status(200).json(result);
+    } catch (error) {
+      return next(error);
+    }
+  }
+
+  return { create, replace, list, listMine, getMyNext, acknowledge, revert };
 }
 
 module.exports = createAssignmentController;

@@ -29,6 +29,8 @@ async function requestJson(url, { authorization, method = 'GET', body, serviceNa
     const passthrough = PASSTHROUGH_STATUSES.includes(response.status);
     const error = new Error(passthrough && data && data.error ? data.error : unavailable);
     error.status = passthrough ? response.status : 502;
+    if (passthrough && data && data.code) error.code = data.code;
+    if (passthrough && data && data.field) error.field = data.field;
     throw error;
   }
 

@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 process.env.JWT_SECRET = 'prueba'.repeat(4);
 
 const SESSION_MESSAGE = 'La sesión ya no es válida.';
-const DATA_MESSAGE = 'Se requieren la contraseña actual y una nueva de 12 a 72 bytes.';
+const DATA_MESSAGE = 'Se requieren la contraseña actual y una nueva de 8 a 72 bytes.';
 const SAME_MESSAGE = 'La nueva contraseña debe ser distinta de la actual.';
 const WRONG_MESSAGE = 'La contraseña actual no es correcta.';
 const CHANGES_MESSAGE =
@@ -188,7 +188,7 @@ test('CF-B3: con la contraseña actual incorrecta responde 400 y no cambia nada'
 });
 
 for (const [label, input] of [
-  ['con una nueva de 11 caracteres', { current_password: CURRENT, new_password: 'b'.repeat(11) }],
+  ['con una nueva de 7 caracteres', { current_password: CURRENT, new_password: 'b'.repeat(7) }],
   // 37 caracteres, pero 74 bytes: cuenta bytes, no caracteres.
   ['con una nueva de más de 72 bytes', { current_password: CURRENT, new_password: 'ñ'.repeat(37) }],
   ['con una nueva que no es texto', { current_password: CURRENT, new_password: 123456789012 }],

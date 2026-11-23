@@ -102,7 +102,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS aircraft_maintenance_orders_open_unique
 -- Fechas en UTC (TIMESTAMPTZ). La conversión a hora local la hace el frontend.
 CREATE TABLE IF NOT EXISTS public.flights (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  flight_number TEXT        NOT NULL UNIQUE,
+  flight_number TEXT        NOT NULL,
   aircraft_id   UUID        NOT NULL REFERENCES public.aircraft (id),
   origin        TEXT        NOT NULL,
   destination   TEXT        NOT NULL,
@@ -174,8 +174,37 @@ INSERT INTO public.airports (code, icao, city, name, country, timezone) VALUES
 ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, city = EXCLUDED.city, name = EXCLUDED.name,
   country = EXCLUDED.country, timezone = EXCLUDED.timezone;
 
+-- Destinos que no son base (los mismos del seed). Repetible.
+INSERT INTO public.airports (code, icao, city, name, country, timezone) VALUES
+  ('CDG', 'LFPG', 'París', 'Paris-Charles de Gaulle', 'FR', 'Europe/Paris'),
+  ('LHR', 'EGLL', 'Londres', 'London Heathrow', 'GB', 'Europe/London'),
+  ('CUN', 'MMUN', 'Cancún', 'Cancún International', 'MX', 'America/Cancun')
+ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, city = EXCLUDED.city, name = EXCLUDED.name,
+  country = EXCLUDED.country, timezone = EXCLUDED.timezone;
+
+-- Un número de vuelo se repite cada día: es único por (número, día UTC de la salida).
+ALTER TABLE public.flights DROP CONSTRAINT IF EXISTS flights_flight_number_key;
+CREATE UNIQUE INDEX IF NOT EXISTS flights_number_day_unique
+  ON public.flights (flight_number, ((departure_at AT TIME ZONE 'UTC')::date));
+CREATE INDEX IF NOT EXISTS flights_aircraft_departure_idx
+  ON public.flights (aircraft_id, departure_at);
+
 -- family: familia del avión (A320, 787...). La usa la regla de habilitación.
 ALTER TABLE public.aircraft ADD COLUMN IF NOT EXISTS family TEXT;
+
+-- Aeronaves registradas desde la pantalla Aeronaves antes de guardar la familia:
+-- se completa con la del modelo (la misma de domain/aircraftCatalog.js). Repetible.
+UPDATE public.aircraft SET family = CASE model_id
+    WHEN 'a321neo' THEN 'A320'
+    WHEN 'b739' THEN '737'
+    WHEN 'a220' THEN 'A220'
+    WHEN 'a330neo' THEN 'A330'
+    WHEN 'a350' THEN 'A350'
+    WHEN 'b764' THEN '767'
+    WHEN 'e175' THEN 'E175'
+  END
+WHERE family IS NULL
+  AND model_id IN ('a321neo', 'b739', 'a220', 'a330neo', 'a350', 'b764', 'e175');
 
 -- gate: puerta de embarque · crew_confirmed_at: el supervisor confirmó la tripulación.
 ALTER TABLE public.flights ADD COLUMN IF NOT EXISTS gate TEXT;

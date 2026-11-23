@@ -416,8 +416,12 @@ paths:
   /flights:
     post:
       tags: [Vuelos]
-      summary: Crear un vuelo (supervisor o super_admin)
-      description: La aeronave debe existir y estar en estado operating. Las fechas se guardan en UTC.
+      summary: Crear un vuelo (solo super_admin)
+      description: >-
+        La salida debe ser en el futuro (400 con field departure_at).
+        La aeronave debe existir, estar en estado operating y no tener otro vuelo no cancelado que se
+        cruce. Origen y destino deben estar en el catálogo de aeropuertos. El número de vuelo es único
+        por día UTC de la salida y el vuelo dura máximo 20 h. Las fechas se guardan en UTC.
       security:
         - bearerAuth: []
       requestBody:
@@ -428,19 +432,20 @@ paths:
               type: object
               required: [flight_number, aircraft_id, origin, destination, departure_at, arrival_at]
               properties:
-                flight_number: { type: string, example: AC101, description: Se guarda en mayúsculas y debe ser único. }
+                flight_number: { type: string, example: DL1234, description: 'Código de la aerolínea y de 1 a 4 números. Se guarda en mayúsculas; único por día.' }
                 aircraft_id: { type: string, format: uuid }
-                origin: { type: string, example: JFK }
-                destination: { type: string, example: LAX }
-                departure_at: { type: string, format: date-time, example: '2026-11-20T13:00:00Z', description: ISO-8601 con zona horaria (Z o ±hh:mm). }
-                arrival_at: { type: string, format: date-time, example: '2026-11-20T14:05:00Z', description: Debe ser posterior a departure_at. }
+                origin: { type: string, example: JFK, description: Código IATA del catálogo. }
+                destination: { type: string, example: LAX, description: Código IATA del catálogo. }
+                departure_at: { type: string, format: date-time, example: '2026-11-24T13:00:00Z', description: ISO-8601 con zona horaria (Z o ±hh:mm). }
+                arrival_at: { type: string, format: date-time, example: '2026-11-24T19:05:00Z', description: Posterior a departure_at y máximo 20 h después. }
+                gate: { type: string, nullable: true, maxLength: 5, example: A12 }
                 status: { $ref: '#/components/schemas/FlightStatus' }
       responses:
         '201':
-          description: Vuelo creado
+          description: Vuelo creado, con el mismo formato que un item de GET /flights/manage
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Flight' }
+              schema: { $ref: '#/components/schemas/ManagedFlight' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -450,7 +455,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: El número de vuelo ya existe o la aeronave no está operativa
+          description: El número ya vuela ese día, la aeronave no está operativa o ya vuela a esa hora
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -481,6 +486,126 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Flight' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/options:
+    get:
+      tags: [Vuelos]
+      summary: Catálogo del formulario de vuelos (solo super_admin)
+      description: Aeropuertos (por ciudad, con is_base), aeronaves operativas (por matrícula) y estados.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catálogo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  airports:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string, example: JFK }
+                        icao: { type: string, example: KJFK }
+                        city: { type: string, example: Nueva York }
+                        name: { type: string, example: John F. Kennedy International }
+                        country: { type: string, example: US }
+                        timezone: { type: string, example: America/New_York }
+                        is_base: { type: boolean }
+                  aircraft:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        registration: { type: string, example: N991AC }
+                        name: { type: string, example: Airbus A321neo }
+                        family: { type: string, nullable: true, example: A320 }
+                        capacity: { type: integer, example: 194 }
+                        base: { type: string, example: JFK }
+                  statuses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { $ref: '#/components/schemas/FlightStatus' }
+                        label: { type: string, example: Programado }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/manage:
+    get:
+      tags: [Vuelos]
+      summary: Tabla de vuelos del super_admin, paginada
+      description: Ordenada por departure_at. La búsqueda ignora mayúsculas y tildes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 5 } }
+        - name: search
+          in: query
+          description: Número de vuelo, origen o destino (código o ciudad) o matrícula.
+          schema: { type: string, example: jfk }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/FlightStatus' } }
+        - name: from
+          in: query
+          description: Salida desde esta fecha (incluida).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Salida antes de esta fecha.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Página de vuelos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ManagedFlight' }
+                  page: { type: integer, example: 1 }
+                  page_size: { type: integer, example: 5 }
+                  total: { type: integer, example: 42 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/stats:
+    get:
+      tags: [Vuelos]
+      summary: Indicadores de vuelos (super_admin)
+      description: >-
+        today cuenta los vuelos que salen hoy en America/New_York. without_crew cuenta los vuelos ni
+        cancelados ni completados con crew_status unassigned o incomplete.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 42 }
+                  today: { type: integer, example: 6 }
+                  without_crew: { type: integer, example: 9 }
+                  by_status:
+                    type: object
+                    properties:
+                      scheduled: { type: integer }
+                      delayed: { type: integer }
+                      in_flight: { type: integer }
+                      completed: { type: integer }
+                      cancelled: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -973,8 +1098,23 @@ components:
         destination_city: { type: string, nullable: true, example: Miami }
         origin_name: { type: string, nullable: true, example: John F. Kennedy International }
         destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
+        origin_timezone: { type: string, nullable: true, example: America/New_York }
+        destination_timezone: { type: string, nullable: true, example: America/New_York }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    ManagedFlight:
+      description: Un vuelo de la pantalla del super_admin (GET /flights/manage y respuesta del POST).
+      allOf:
+        - $ref: '#/components/schemas/Flight'
+        - type: object
+          properties:
+            aircraft_name: { type: string, example: Airbus A321neo }
+            aircraft_registration: { type: string, example: N991AC }
+            aircraft_seats: { type: integer, example: 194 }
+            required_slots: { type: integer, example: 6, description: Número de puestos (en GET /flights es la lista). }
+            crew_status:
+              type: string
+              enum: [unassigned, incomplete, complete, confirmed]
     Error:
       type: object
       properties:

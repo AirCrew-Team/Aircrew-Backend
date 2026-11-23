@@ -6,6 +6,7 @@ const aircraftRepository = require('../../../outbound/persistence/repositories/a
 const createCreateFlight = require('../../../../application/use-cases/createFlight');
 const createGetFlights = require('../../../../application/use-cases/getFlights');
 const createGetFlightById = require('../../../../application/use-cases/getFlightById');
+const { createManageFlights } = require('../../../../application/use-cases/manageFlights');
 const createFlightController = require('../controllers/flight.controller');
 const assignmentRepository = require('../../../outbound/persistence/repositories/assignmentRepository');
 const createAssignCrewMember = require('../../../../application/use-cases/assignCrewMember');
@@ -20,6 +21,7 @@ const controller = createFlightController({
   getFlights: createGetFlights(flightRepository),
   getFlightById: createGetFlightById(flightRepository),
   crewSlots: createManageCrewSlots({ flightRepository, assignmentRepository }),
+  manageFlights: createManageFlights({ flightRepository, aircraftRepository, assignmentRepository }),
 });
 const assignmentController = createAssignmentController({
   assignCrewMember: createAssignCrewMember({
@@ -33,18 +35,18 @@ const assignmentController = createAssignmentController({
   revertReplacement: createRevertReplacement(assignmentRepository),
 });
 
-router.post(
-  '/',
-  verifyJwt,
-  allowRoles('supervisor', 'super_admin'),
-  controller.create
-);
+// Solo el super_admin crea vuelos; el supervisor los tripula en Programación.
+router.post('/', verifyJwt, allowRoles('super_admin'), controller.create);
 router.get(
   '/',
   verifyJwt,
   allowRoles('supervisor', 'super_admin', 'service'),
   controller.list
 );
+// Pantalla del super_admin. Van antes de /:id para que no se lean como un id.
+router.get('/options', verifyJwt, allowRoles('super_admin'), controller.options);
+router.get('/manage', verifyJwt, allowRoles('super_admin'), controller.manage);
+router.get('/stats', verifyJwt, allowRoles('super_admin'), controller.stats);
 router.get(
   '/:id',
   verifyJwt,

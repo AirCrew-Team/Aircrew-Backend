@@ -316,6 +316,18 @@ async function findActiveByFlight(flightId) {
   return rows;
 }
 
+// Puestos ocupados de varios vuelos a la vez (para el crew_status de una lista).
+async function findActiveByFlights(flightIds) {
+  if (flightIds.length === 0) return [];
+  const { rows } = await pool.query(
+    `SELECT flight_id, slot_id, status FROM public.flight_assignments
+     WHERE flight_id = ANY($1::uuid[]) AND status = 'assigned'`,
+    [flightIds]
+  );
+
+  return rows;
+}
+
 async function insertSlotAssignment({ flightId, crewUserId, role, slotId, source, rationale }) {
   try {
     const { rows } = await pool.query(
@@ -443,6 +455,7 @@ async function releaseCrewUser(crewUserId) {
 module.exports = {
   releaseCrewUser,
   findActiveByFlight,
+  findActiveByFlights,
   insertSlotAssignment,
   deleteSlotAssignment,
   acknowledgeAssignment,

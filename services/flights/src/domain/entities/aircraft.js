@@ -128,6 +128,7 @@ function validateAircraftInput(input, now = new Date()) {
     // name, capacity y minimum_crew se guardan con los datos del modelo: así
     // las asignaciones de vuelo siguen mostrando el nombre de la aeronave.
     name: model.name,
+    family: model.family,
     capacity: model.capacity,
     minimumCrew: model.minimum_crew.pilots + model.minimum_crew.cabin,
     base: fleetBase.code,

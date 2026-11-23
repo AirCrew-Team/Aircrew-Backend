@@ -8,6 +8,17 @@ const FLIGHT_STATUSES = [
   'completed',
   'cancelled',
 ];
+const FLIGHT_STATUS_LABELS = Object.freeze({
+  scheduled: 'Programado',
+  delayed: 'Retrasado',
+  in_flight: 'En vuelo',
+  completed: 'Completado',
+  cancelled: 'Cancelado',
+});
+// Código de la aerolínea (2 caracteres) y de 1 a 4 números: DL1234, AV9.
+const flightNumberPattern = /^[A-Z0-9]{2}\d{1,4}$/;
+const MAX_DURATION_HOURS = 20;
+const MAX_GATE_LENGTH = 5;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,6 +35,7 @@ function createFlight({
   departureAt,
   arrivalAt,
   status = 'scheduled',
+  gate = null,
 }) {
   const departure = parseInstant(departureAt);
   const arrival = parseInstant(arrivalAt);
@@ -43,6 +55,14 @@ function createFlight({
     );
   }
 
+  const normalizedNumber = flightNumber.trim().toUpperCase();
+
+  if (!flightNumberPattern.test(normalizedNumber)) {
+    throw new DomainError('Usa el código de la aerolínea y de 1 a 4 números (ej. DL1234).', 400, {
+      field: 'flight_number',
+    });
+  }
+
   const normalizedOrigin = origin.trim().toUpperCase();
   const normalizedDestination = destination.trim().toUpperCase();
 
@@ -50,23 +70,43 @@ function createFlight({
     throw new DomainError('El origen y el destino deben ser distintos.');
   }
 
-  if (arrival <= departure) {
-    throw new DomainError('arrival_at debe ser posterior a departure_at.');
+  if (arrival <= departure || arrival - departure > MAX_DURATION_HOURS * 3600000) {
+    throw new DomainError(
+      `La llegada debe ser después de la salida y el vuelo durar máximo ${MAX_DURATION_HOURS} h.`,
+      400,
+      { field: 'arrival_at' }
+    );
   }
 
+  const normalizedGate = normalizeGate(gate);
+
   return {
-    flightNumber: flightNumber.trim().toUpperCase(),
+    flightNumber: normalizedNumber,
     aircraftId,
     origin: normalizedOrigin,
     destination: normalizedDestination,
     departureAt: departure.toISOString(),
     arrivalAt: arrival.toISOString(),
     status,
+    gate: normalizedGate,
   };
+}
+
+// gate: texto corto (hasta 5 caracteres) o null.
+function normalizeGate(gate) {
+  if (gate === undefined || gate === null) return null;
+  const value = typeof gate === 'string' ? gate.trim().toUpperCase() : null;
+  if (value === '') return null;
+  if (value === null || value.length > MAX_GATE_LENGTH) {
+    throw new DomainError(`La puerta (gate) debe tener máximo ${MAX_GATE_LENGTH} caracteres.`, 400, {
+      field: 'gate',
+    });
+  }
+  return value;
 }
 
 function isValidFlightId(id) {
   return typeof id === 'string' && uuidPattern.test(id);
 }
 
-module.exports = { FLIGHT_STATUSES, createFlight, isValidFlightId };
+module.exports = { FLIGHT_STATUSES, FLIGHT_STATUS_LABELS, createFlight, isValidFlightId };

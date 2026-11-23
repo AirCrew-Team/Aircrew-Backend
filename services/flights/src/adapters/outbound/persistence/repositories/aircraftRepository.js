@@ -5,7 +5,7 @@ const pool = require('../pool');
 const aircraftColumns = `a.id, a.name, a.registration, a.msn, a.model_id, a.base,
        a.manufacture_year, to_char(a.in_fleet_since, 'YYYY-MM-DD') AS in_fleet_since,
        a.flight_hours, a.cycles, a.capacity, a.minimum_crew, a.status,
-       a.maintenance_type, a.maintenance_note, a.created_at, a.updated_at,
+       a.maintenance_type, a.maintenance_note, a.family, a.created_at, a.updated_at,
        p.updated_at AS photo_updated_at`;
 
 const aircraftFrom = `FROM public.aircraft a
@@ -112,8 +112,8 @@ function transactionRepository(client) {
         const { rows } = await client.query(
           `INSERT INTO public.aircraft
              (name, registration, msn, model_id, base, manufacture_year, in_fleet_since,
-              capacity, minimum_crew, status, maintenance_type, maintenance_note)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              capacity, minimum_crew, status, maintenance_type, maintenance_note, family)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING id`,
           [
             aircraft.name,
@@ -128,6 +128,8 @@ function transactionRepository(client) {
             aircraft.status,
             aircraft.maintenanceType,
             aircraft.maintenanceNote,
+            // Familia del modelo: la usa la regla de habilitación de la tripulación.
+            aircraft.family ?? null,
           ]
         );
         return rows[0].id;
@@ -143,7 +145,7 @@ function transactionRepository(client) {
            SET name = $2, registration = $3, msn = $4, model_id = $5, base = $6,
                manufacture_year = $7, in_fleet_since = $8, capacity = $9,
                minimum_crew = $10, status = $11, maintenance_type = $12,
-               maintenance_note = $13, updated_at = now()
+               maintenance_note = $13, family = $14, updated_at = now()
            WHERE id = $1`,
           [
             id,
@@ -159,6 +161,7 @@ function transactionRepository(client) {
             aircraft.status,
             aircraft.maintenanceType,
             aircraft.maintenanceNote,
+            aircraft.family ?? null,
           ]
         );
       } catch (cause) {

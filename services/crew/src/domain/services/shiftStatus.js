@@ -68,7 +68,8 @@ function crewMemberShiftState(member, assignments, openAbsence, now = Date.now()
       location: member.standby_location,
       minutes_to_ramp: member.minutes_to_ramp,
       guard_until: member.standby_until,
-      replacement_blocker: medical !== null && medical < 0 ? 'Certificado médico vencido.' : null,
+      // El certificado médico ya no bloquea (spec tripulantes-nuevos-programacion).
+      replacement_blocker: null,
     };
   }
 

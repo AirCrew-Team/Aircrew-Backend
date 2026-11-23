@@ -47,14 +47,16 @@ describe('Estado de cada tripulante en el turno', () => {
     assert.equal(result.flight.flight_number, 'AV-2');
   });
 
-  it('de guardia, con bloqueo si el médico está vencido', () => {
+  // El certificado médico se descartó (spec tripulantes-nuevos-programacion): ya no
+  // bloquea a nadie de guardia, igual que en las reglas de Recommendation.
+  it('de guardia, sin bloqueo por el certificado médico', () => {
     const ok = state({ status: 'on_duty', minutes_to_ramp: 12, standby_location: 'Sala' });
     assert.equal(ok.status, 'standby');
     assert.equal(ok.minutes_to_ramp, 12);
     assert.equal(ok.replacement_blocker, null);
 
     const vencido = state({ status: 'on_duty', medical_expires_on: '2026-11-01' });
-    assert.equal(vencido.replacement_blocker, 'Certificado médico vencido.');
+    assert.equal(vencido.replacement_blocker, null);
   });
 
   it('programado si sale en las próximas 12 h; presentación 90 min antes', () => {

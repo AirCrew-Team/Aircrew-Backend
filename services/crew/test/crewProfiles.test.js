@@ -56,6 +56,9 @@ test('el rango sale del cargo del catálogo de Admin', () => {
   assert.equal(rankOf('Sobrecargo'), 'flight_attendant');
   assert.equal(rankOf('Auxiliar de Vuelo'), 'flight_attendant');
   assert.equal(rankOf('Otro cargo'), null);
+  // Sin heredar del prototipo del objeto, y con espacios de más como el catálogo de Admin.
+  assert.equal(rankOf('constructor'), null);
+  assert.equal(rankOf('Sobrecargo  Principal'), 'purser');
 });
 
 test('al cambiar el cargo cambia el rango', () => {

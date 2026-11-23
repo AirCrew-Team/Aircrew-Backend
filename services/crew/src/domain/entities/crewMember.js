@@ -67,7 +67,8 @@ const RANK_BY_POSITION = {
 };
 
 function rankForPosition(position) {
-  return RANK_BY_POSITION[position.toLowerCase()] || null;
+  const key = position.toLowerCase().replace(/\s+/g, ' ').trim();
+  return Object.hasOwn(RANK_BY_POSITION, key) ? RANK_BY_POSITION[key] : null;
 }
 
 // Perfil de un tripulante nuevo. Lo pide Admin después de crear la cuenta;

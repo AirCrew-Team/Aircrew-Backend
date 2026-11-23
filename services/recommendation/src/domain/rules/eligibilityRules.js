@@ -1,4 +1,4 @@
-const { MAX_MONTH_FLIGHT_HOURS } = require('@vuelos/shared');
+const { MAX_MONTH_FLIGHT_HOURS, hubTimezone, localDate } = require('@vuelos/shared');
 const { qualificationRule } = require('./qualificationRule');
 const {
   durationHours,
@@ -7,7 +7,7 @@ const {
   restHoursBefore,
 } = require('../services/flightTime');
 
-// Las 7 reglas de elegibilidad, en el orden en que se revisan. Se aplican
+// Las 8 reglas de elegibilidad, en el orden en que se revisan. Se aplican
 // SIEMPRE en código, con o sin IA: a Claude solo le llegan tripulantes que
 // ya las cumplen. Cada regla devuelve null si cumple, o el motivo si no.
 // El dato que falta (habilitaciones o inglés sin registrar, p. ej. en un tripulante
@@ -57,6 +57,26 @@ const availabilityRule = {
       return `No está disponible: ${STATUS_LABELS[member.status] || member.status}.`;
     }
     return null;
+  },
+};
+
+// No tiene una ausencia reportada (no cancelada) para este vuelo ni en sus fechas.
+// Crew manda en `absences` las vigentes de cada tripulante; las fechas son días locales
+// de su base, así que el vuelo se mira en esa zona. Después de la ausencia, sí puede.
+const absenceRule = {
+  name: 'absence',
+  check({ member, flight }) {
+    const absences = member.absences || [];
+    if (absences.some((item) => item.flight_id && item.flight_id === flight.id)) {
+      return 'Tiene una ausencia reportada para este vuelo.';
+    }
+    const zone = hubTimezone(member.base_code);
+    const first = localDate(flight.departure_at, zone);
+    const last = localDate(flight.arrival_at, zone);
+    const hit = absences.find(
+      (item) => item.start_date && item.end_date && item.start_date <= last && item.end_date >= first
+    );
+    return hit ? `Está ausente del ${hit.start_date} al ${hit.end_date}.` : null;
   },
 };
 
@@ -123,6 +143,7 @@ const ELIGIBILITY_RULES = [
   rankRule,
   ratingRule,
   availabilityRule,
+  absenceRule,
   overlapRule,
   restRule,
   monthHoursRule,

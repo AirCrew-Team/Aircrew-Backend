@@ -9,10 +9,11 @@ info:
     1. El tripulante reporta la ausencia en Crew. Crew pide a este servicio, en segundo plano,
        que busque candidatos (`POST /absences/{id}/suggest`, interno).
     2. **Reglas (código):** se descarta a quien no cumple alguna de las 8 reglas: rango del puesto,
-       habilitación en la familia del avión, certificado médico vigente, disponibilidad
+       habilitación en la familia del avión, disponibilidad
        (no ausente, incapacitado ni de vacaciones), sin vuelos que se crucen, 10 h de descanso,
        máximo 100 h de vuelo en el mes local de su base (14 CFR 117.23, el mismo tope de Mis Vuelos)
-       e inglés OACI 4 para pilotos en vuelos internacionales.
+       e inglés OACI 4 para pilotos en vuelos internacionales. Sin habilitaciones o sin nivel de inglés
+       registrados (p. ej. un tripulante recién creado) no se descarta: queda con `warnings` y va al final.
     3. **Prioridad:** de guardia en la base de salida → libre en la base → otra base (si alcanza a llegar).
     4. **IA (Claude):** ordena de 3 a 5 candidatos y explica en español por qué. Proveedor
        configurable: Claude Code (`AI_PROVIDER=claude_code`, suscripción) o la API (`AI_PROVIDER=api`).
@@ -599,3 +600,7 @@ components:
                   source: { type: string, enum: [manual, ai, rule] }
                   rationale: { type: string, nullable: true }
                   is_replacement: { type: boolean }
+                  warnings:
+                    type: array
+                    items: { type: string }
+                    description: Datos sin registrar del tripulante, p. ej. «Sin habilitación registrada en A320».

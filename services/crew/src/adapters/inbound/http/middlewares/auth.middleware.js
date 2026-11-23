@@ -1,6 +1,61 @@
-function verificarJwt(req, res, next) {
-  // TODO: leer Authorization Bearer, verificar JWT y asignar req.usuario
-  next();
+const jwt = require('jsonwebtoken');
+const { jwtSecret, jwtIssuer } = require('../../../../config/env');
+
+// service: token de 1 minuto que firma otro servicio para llamadas internas
+// sin usuario (por ejemplo, la IA que corre en segundo plano).
+const allowedRoles = new Set(['crew', 'supervisor', 'super_admin', 'service']);
+
+function verifyJwt(req, res, next) {
+  if (!jwtSecret) {
+    const error = new Error('JWT_SECRET no está configurado.');
+    error.status = 500;
+    return next(error);
+  }
+
+  const authorization = req.headers.authorization;
+
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Se requiere autenticación.', code: 'auth_required' });
+  }
+
+  const token = authorization.slice('Bearer '.length);
+
+  try {
+    const payload = jwt.verify(token, jwtSecret, {
+      issuer: jwtIssuer,
+      algorithms: ['HS256'],
+    });
+
+    if (
+      typeof payload === 'string' ||
+      typeof payload.sub !== 'string' ||
+      typeof payload.role !== 'string' ||
+      !allowedRoles.has(payload.role)
+    ) {
+      return res.status(401).json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
+    }
+
+    req.user = {
+      id: payload.sub,
+      role: payload.role,
+    };
+
+    return next();
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res
+        .status(401)
+        .json({ error: 'Tu sesión venció. Inicia sesión de nuevo.', code: 'token_expired' });
+    }
+
+    if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
+      return res
+        .status(401)
+        .json({ error: 'El token de autenticación no es válido.', code: 'invalid_token' });
+    }
+
+    return next(error);
+  }
 }
 
-module.exports = { verificarJwt };
+module.exports = { verifyJwt };

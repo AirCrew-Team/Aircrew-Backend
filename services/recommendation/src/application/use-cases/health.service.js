@@ -1,5 +1,5 @@
-function consultarSalud() {
-  return { servicio: 'recommendation', estado: 'ok' };
+function getHealth() {
+  return { service: 'recommendation', status: 'ok' };
 }
 
-module.exports = { consultarSalud };
+module.exports = { getHealth };

@@ -1,8 +1,8 @@
-function consultarSalud() {
+function getHealth() {
   return {
-    servicio: 'admin',
-    estado: 'ok',
+    service: 'admin',
+    status: 'ok',
   };
 }
 
-module.exports = { consultarSalud };
+module.exports = { getHealth };

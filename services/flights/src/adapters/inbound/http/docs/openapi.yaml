@@ -1,0 +1,1158 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Flights
+  version: 1.0.0
+  description: |
+    Aeronaves, vuelos y asignaciones de tripulación. Usa los JWT emitidos por Admin (inicia sesión en Admin con `POST /auth/login`).
+    Las rutas de aeropuertos todavía no están implementadas.
+servers:
+  - url: http://localhost:3001
+tags:
+  - name: Salud
+  - name: Aeronaves
+  - name: Vuelos
+  - name: Asignaciones
+
+paths:
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { type: string, example: flights }
+                  status: { type: string, example: ok }
+
+  /aircraft:
+    get:
+      tags: [Aeronaves]
+      summary: Listar la flota, paginado (solo super_admin)
+      description: Las más recientes primero. `search` busca en matrícula, modelo, número de serie y base, sin mayúsculas ni tildes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - { name: search, in: query, schema: { type: string, example: los angeles } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AircraftStatus' } }
+      responses:
+        '200':
+          description: Página de aeronaves
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AircraftPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Aeronaves]
+      summary: Registrar una aeronave (solo super_admin)
+      description: |
+        `name`, `capacity` y la tripulación mínima salen del modelo. `flight_hours` y `cycles` empiezan en 0.
+        Si se registra en mantenimiento, se abre su orden de taller con las tareas del motivo.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AircraftInput' }
+      responses:
+        '201':
+          description: Aeronave registrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Aircraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Ya existe una aeronave con esa matrícula
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/operating:
+    get:
+      tags: [Aeronaves]
+      summary: Aeronaves operativas (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aeronaves operativas, por matrícula
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Aircraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/stats:
+    get:
+      tags: [Aeronaves]
+      summary: Indicadores de la flota (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  operational: { type: integer }
+                  maintenance: { type: integer }
+                  total_seats: { type: integer, description: Suma de la capacidad de toda la flota. }
+                  models_in_service:
+                    type: array
+                    description: Modelos de las aeronaves operativas, sin repetir. Para la tarjeta de flota del inicio.
+                    items: { type: string, example: Airbus A321neo }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/options:
+    get:
+      tags: [Aeronaves]
+      summary: Catálogos del formulario (solo super_admin)
+      description: Modelos, bases y motivos de mantenimiento con sus tareas. Son la única fuente; el frontend no tiene copia.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catálogos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items: { $ref: '#/components/schemas/AircraftModel' }
+                  bases:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string, example: ATL }
+                        name: { type: string, example: Atlanta (ATL) }
+                  maintenance_types:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { $ref: '#/components/schemas/MaintenanceType' }
+                        label: { type: string }
+                        tasks: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/manifest:
+    get:
+      tags: [Aeronaves]
+      summary: Toda la flota sin paginar, para el manifiesto (solo super_admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Aeronaves
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Aircraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /aircraft/{id}:
+    put:
+      tags: [Aeronaves]
+      summary: Editar una aeronave (solo super_admin)
+      description: |
+        Se envían todos los datos. Pasar a mantenimiento abre una orden; cambiar el motivo abre otra sin tareas
+        hechas (la anterior no pasa al historial). Una aeronave en mantenimiento no vuelve a `operating` por aquí:
+        responde 409 y se usa POST /aircraft/{id}/release.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AircraftInput' }
+      responses:
+        '200':
+          description: Aeronave actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Aircraft' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Matrícula repetida o la aeronave está en mantenimiento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Aeronaves]
+      summary: Eliminar una aeronave (solo super_admin)
+      description: Borra también su foto y sus órdenes. Una aeronave con vuelos no se puede eliminar.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Aeronave eliminada
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La aeronave tiene vuelos registrados
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/report:
+    get:
+      tags: [Aeronaves]
+      summary: Informe de una aeronave (solo super_admin)
+      description: Sus datos, el mantenimiento en curso (`null` si está operativa) y las reparaciones terminadas, la más reciente primero.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Informe
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  aircraft: { $ref: '#/components/schemas/Aircraft' }
+                  maintenance:
+                    allOf:
+                      - $ref: '#/components/schemas/MaintenanceRecord'
+                    nullable: true
+                  history:
+                    type: array
+                    items: { $ref: '#/components/schemas/MaintenanceHistoryEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/maintenance/tasks/{index}:
+    patch:
+      tags: [Aeronaves]
+      summary: Marcar o desmarcar una tarea del mantenimiento (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: index, in: path, required: true, description: Posición de la tarea, desde 0., schema: { type: integer, minimum: 0 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [done]
+              properties:
+                done: { type: boolean }
+      responses:
+        '200':
+          description: Mantenimiento actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceRecord' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave o tarea no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: La aeronave no está en mantenimiento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/release:
+    post:
+      tags: [Aeronaves]
+      summary: Liberar a servicio (solo super_admin)
+      description: Solo con todas las tareas hechas. Queda `operating` y la orden pasa al historial.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Aeronave operativa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Aircraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: No está en mantenimiento o faltan tareas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /aircraft/{id}/photo:
+    get:
+      tags: [Aeronaves]
+      summary: Foto de la aeronave (solo super_admin)
+      description: El binario con su Content-Type, `X-Content-Type-Options` nosniff y `Cache-Control` private, no-cache.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Foto
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada o sin foto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [Aeronaves]
+      summary: Subir o reemplazar la foto (solo super_admin)
+      description: |
+        Como la foto de perfil de Admin: PNG, JPEG o WEBP de hasta 2 MB ya decodificada, en base64 sin el prefijo
+        `data:`. Los primeros bytes deben coincidir con el tipo. Esta ruta acepta un body de hasta 3 MB y lo lee
+        después de comprobar la sesión.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mime_type, data_base64]
+              properties:
+                mime_type: { type: string, enum: [image/png, image/jpeg, image/webp] }
+                data_base64: { type: string }
+      responses:
+        '200':
+          description: Foto guardada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  photo_updated_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: El body supera 3 MB
+    delete:
+      tags: [Aeronaves]
+      summary: Quitar la foto (solo super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Foto quitada (o no había)
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Aeronave no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /flights:
+    post:
+      tags: [Vuelos]
+      summary: Crear un vuelo (solo super_admin)
+      description: >-
+        La salida debe ser en el futuro (400 con field departure_at).
+        La aeronave debe existir, estar en estado operating y no tener otro vuelo no cancelado que se
+        cruce. Origen y destino deben estar en el catálogo de aeropuertos. El número de vuelo es único
+        por día UTC de la salida y el vuelo dura máximo 20 h. Las fechas se guardan en UTC.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_number, aircraft_id, origin, destination, departure_at, arrival_at]
+              properties:
+                flight_number: { type: string, example: DL1234, description: 'Código de la aerolínea y de 1 a 4 números. Se guarda en mayúsculas; único por día.' }
+                aircraft_id: { type: string, format: uuid }
+                origin: { type: string, example: JFK, description: Código IATA del catálogo. }
+                destination: { type: string, example: LAX, description: Código IATA del catálogo. }
+                departure_at: { type: string, format: date-time, example: '2026-11-24T13:00:00Z', description: ISO-8601 con zona horaria (Z o ±hh:mm). }
+                arrival_at: { type: string, format: date-time, example: '2026-11-24T19:05:00Z', description: Posterior a departure_at y máximo 20 h después. }
+                gate: { type: string, nullable: true, maxLength: 5, example: A12 }
+                status: { $ref: '#/components/schemas/FlightStatus' }
+      responses:
+        '201':
+          description: Vuelo creado, con el mismo formato que un item de GET /flights/manage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedFlight' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: La aeronave no existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El número ya vuela ese día, la aeronave no está operativa o ya vuela a esa hora
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Vuelos]
+      summary: Listar vuelos ordenados por salida (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Solo vuelos que salen desde esta fecha (incluida).
+          schema: { type: string, format: date-time, example: '2026-11-20T00:00:00Z' }
+        - name: to
+          in: query
+          description: Solo vuelos que salen antes de esta fecha.
+          schema: { type: string, format: date-time, example: '2026-11-21T00:00:00Z' }
+        - name: ids
+          in: query
+          description: Solo estos vuelos (hasta 200 UUID separados por comas).
+          schema: { type: string }
+      responses:
+        '200':
+          description: Vuelos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Flight' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/options:
+    get:
+      tags: [Vuelos]
+      summary: Catálogo del formulario de vuelos (solo super_admin)
+      description: Aeropuertos (por ciudad, con is_base), aeronaves operativas (por matrícula) y estados.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catálogo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  airports:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { type: string, example: JFK }
+                        icao: { type: string, example: KJFK }
+                        city: { type: string, example: Nueva York }
+                        name: { type: string, example: John F. Kennedy International }
+                        country: { type: string, example: US }
+                        timezone: { type: string, example: America/New_York }
+                        is_base: { type: boolean }
+                        latitude:
+                          type: number
+                          nullable: true
+                          example: 40.6413
+                          description: Grados decimales (WGS84). El formulario estima con ellas la duración de la ruta.
+                        longitude: { type: number, nullable: true, example: -73.7781 }
+                  aircraft:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        registration: { type: string, example: N991AC }
+                        name: { type: string, example: Airbus A321neo }
+                        family: { type: string, nullable: true, example: A320 }
+                        capacity: { type: integer, example: 194 }
+                        base: { type: string, example: JFK }
+                  statuses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code: { $ref: '#/components/schemas/FlightStatus' }
+                        label: { type: string, example: Programado }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/manage:
+    get:
+      tags: [Vuelos]
+      summary: Tabla de vuelos del super_admin, paginada
+      description: Ordenada por departure_at. La búsqueda ignora mayúsculas y tildes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 5 } }
+        - name: search
+          in: query
+          description: Número de vuelo, origen o destino (código o ciudad) o matrícula.
+          schema: { type: string, example: jfk }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/FlightStatus' } }
+        - name: from
+          in: query
+          description: Salida desde esta fecha (incluida).
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Salida antes de esta fecha.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Página de vuelos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ManagedFlight' }
+                  page: { type: integer, example: 1 }
+                  page_size: { type: integer, example: 5 }
+                  total: { type: integer, example: 42 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/stats:
+    get:
+      tags: [Vuelos]
+      summary: Indicadores de vuelos (super_admin)
+      description: >-
+        today cuenta los vuelos que salen hoy en America/New_York. without_crew cuenta los vuelos ni
+        cancelados ni completados con crew_status unassigned o incomplete.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Indicadores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer, example: 42 }
+                  today: { type: integer, example: 6 }
+                  without_crew: { type: integer, example: 9 }
+                  by_status:
+                    type: object
+                    properties:
+                      scheduled: { type: integer }
+                      delayed: { type: integer }
+                      in_flight: { type: integer }
+                      completed: { type: integer }
+                      cancelled: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /flights/{id}:
+    get:
+      tags: [Vuelos]
+      summary: Consultar un vuelo (supervisor o super_admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Vuelo encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Flight' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /flights/{id}/assignments:
+    post:
+      tags: [Asignaciones]
+      summary: Asignar un tripulante a un vuelo (supervisor o super_admin)
+      description: |
+        El vuelo debe estar scheduled o delayed, y el tripulante no puede tener
+        otro vuelo activo que se cruce en horario.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, role]
+              properties:
+                crew_user_id: { type: string, format: uuid, description: Id del usuario del tripulante en Admin. }
+                role: { $ref: '#/components/schemas/CrewRole' }
+      responses:
+        '201':
+          description: Tripulante asignado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  flight_id: { type: string, format: uuid }
+                  crew_user_id: { type: string, format: uuid }
+                  role: { $ref: '#/components/schemas/CrewRole' }
+                  status: { $ref: '#/components/schemas/AssignmentStatus' }
+                  created_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Ya está asignado, el vuelo no admite asignaciones o se cruza con otro vuelo del tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /flights/{id}/assignments/replace:
+    post:
+      tags: [Asignaciones]
+      summary: Reemplazar a un tripulante en un vuelo (supervisor o super_admin)
+      description: |
+        En una sola transacción, la asignación del tripulante reemplazado pasa a `replaced`
+        y se crea la del reemplazo con el mismo rol a bordo. El vuelo debe estar scheduled
+        o delayed, y el reemplazo no puede tener otro vuelo activo que se cruce en horario.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id del vuelo.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [replaced_crew_user_id, crew_user_id]
+              properties:
+                replaced_crew_user_id: { type: string, format: uuid, description: Tripulante que sale del vuelo. }
+                crew_user_id: { type: string, format: uuid, description: Tripulante que entra al vuelo. }
+                replacement:
+                  type: object
+                  description: Si viene de una ausencia. Marca la asignación como reemplazo.
+                  properties:
+                    reason: { type: string, example: illness }
+                    approved_by_name: { type: string, example: Camila Restrepo }
+                    deadline_at: { type: string, format: date-time }
+                    source: { type: string, enum: [manual, ai, rule] }
+                    rationale: { type: string }
+      responses:
+        '200':
+          description: Reemplazo hecho
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  replaced: { $ref: '#/components/schemas/Assignment' }
+                  assignment: { $ref: '#/components/schemas/Assignment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Vuelo no encontrado, o el reemplazado no tiene asignación activa en él
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: El vuelo no admite cambios, el reemplazo ya está en el vuelo o se cruza con otro de sus vuelos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /flights/{id}/assignments/revert:
+    post:
+      tags: [Asignaciones]
+      summary: 'Interno: deshacer un reemplazo sin «Enterado» (token de servicio)'
+      description: Lo usa Recommendation cuando vence el plazo. Quita al reemplazo y reactiva la asignación anterior.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id]
+              properties:
+                crew_user_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Reemplazo deshecho
+        '409':
+          description: No hay un reemplazo sin confirmar (code nothing_to_revert)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /assignments/{id}/acknowledge:
+    post:
+      tags: [Asignaciones]
+      summary: Confirmar un reemplazo con «Enterado» (crew)
+      description: |
+        El tripulante confirma que cubrirá el vuelo. La ausencia queda cubierta y los supervisores
+        reciben absence:covered.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Confirmado
+        '404':
+          description: La asignación no existe o no es del tripulante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: 'code: not_a_replacement, already_acknowledged o replacement_inactive (venció el plazo)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /assignments:
+    get:
+      tags: [Asignaciones]
+      summary: Asignaciones activas en un rango de fechas (supervisor o super_admin)
+      description: |
+        Asignaciones `assigned` de todos los tripulantes cuyos vuelos se cruzan con el rango
+        [from, to). Excluye vuelos completed y cancelled. El rango máximo es de 40 días.
+        Lo usa el motor de recomendación para la regla de descanso.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, example: '2026-11-24T00:00:00Z' }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, example: '2026-11-27T00:00:00Z' }
+      responses:
+        '200':
+          description: Asignaciones con su tripulante, vuelo y aeronave
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - type: object
+                      properties:
+                        crew_user_id: { type: string, format: uuid }
+                    - $ref: '#/components/schemas/MyAssignment'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /assignments/me:
+    get:
+      tags: [Asignaciones]
+      summary: Mis vuelos asignados (crew)
+      description: |
+        Vuelos del tripulante que inició sesión, ordenados por hora de salida.
+        Con `?replacement=true&acknowledged=false` devuelve los reemplazos que todavía debe confirmar.
+        Historial: `?status=completed` (ya aterrizó) o `?status=upcoming`. Por fecha: `?month=AAAA-MM`
+        o `?from=&to=`. Cada vuelo trae scope (domestic/international), block_minutes, ciudades y
+        zona horaria del origen. scope es domestic solo si los dos aeropuertos están en el catálogo
+        con país US; uno que no está cuenta como international.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Asignaciones con su vuelo y aeronave
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MyAssignment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /assignments/me/next:
+    get:
+      tags: [Asignaciones]
+      summary: Mi próximo vuelo (crew)
+      description: El próximo vuelo programado o demorado que todavía no ha salido.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Próximo vuelo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAssignment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No tiene vuelos próximos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /internal/users/{userId}/assignments:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: liberar las asignaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta (`DELETE /users/{id}/permanent`). Borra todas las
+        asignaciones de la persona, en una transacción. En los vuelos que aún no salen (ni cancelados
+        ni terminados), un puesto que ocupaba queda vacante, se devuelve en `vacated_flights` y la
+        tripulación del vuelo deja de estar confirmada para que el supervisor pueda cubrirlo. Si era un
+        reemplazo sin «Enterado», el puesto vuelve a quien había reemplazado (`restored`), como cuando
+        vence el plazo. Repetirlo no falla: devuelve 0. El gateway responde 404 a `/api/flights/internal/*`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Asignaciones liberadas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Asignaciones borradas (futuras y pasadas). }
+                  restored: { type: integer, description: Puestos devueltos a quien había reemplazado. }
+                  vacated_flights:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        flight_id: { type: string, format: uuid }
+                        flight_number: { type: string, example: DL1102 }
+                        origin: { type: string, example: JFK }
+                        destination: { type: string, example: LAX }
+                        departure_at: { type: string, format: date-time }
+                        slot_id: { type: string, nullable: true, example: fa-1 }
+                        role: { type: string, example: flight_attendant }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: Datos inválidos
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Falta autenticación o no es válida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: El rol no tiene permiso
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    CrewRole:
+      type: string
+      enum: [captain, first_officer, purser, flight_attendant]
+    AssignmentStatus:
+      type: string
+      enum: [assigned, replaced]
+    Assignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_id: { type: string, format: uuid }
+        crew_user_id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/CrewRole' }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        created_at: { type: string, format: date-time }
+    MyAssignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/CrewRole' }
+        slot_id: { type: string, nullable: true, example: first_officer }
+        source: { type: string, enum: [manual, ai, rule] }
+        is_replacement: { type: boolean }
+        replacement:
+          type: object
+          nullable: true
+          properties:
+            reason: { type: string, example: illness }
+            approved_by: { type: string, example: Camila Restrepo }
+            approved_at: { type: string, format: date-time }
+            deadline_at: { type: string, format: date-time }
+        acknowledged: { type: boolean, nullable: true, description: Solo en reemplazos. }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        created_at: { type: string, format: date-time }
+        flight:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            flight_number: { type: string, example: AC101 }
+            origin: { type: string, example: JFK }
+            destination: { type: string, example: LAX }
+            departure_at: { type: string, format: date-time }
+            arrival_at: { type: string, format: date-time }
+            status: { $ref: '#/components/schemas/FlightStatus' }
+        aircraft:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string, example: Airbus A320 }
+            registration: { type: string, example: N321AC }
+    AircraftStatus:
+      type: string
+      description: operating (Operativa) o maintenance (En mantenimiento).
+      enum: [operating, maintenance]
+      default: operating
+    MaintenanceType:
+      type: string
+      enum: [motor, ala, tren_aterrizaje, fuselaje, electrico, hidraulico, revision_programada]
+    MinimumCrew:
+      type: object
+      properties:
+        pilots: { type: integer }
+        cabin: { type: integer }
+    AircraftModel:
+      type: object
+      properties:
+        id: { type: string, example: a321neo }
+        name: { type: string, example: Airbus A321neo }
+        category: { type: string, enum: [narrow_body, wide_body, regional] }
+        capacity: { type: integer, example: 194 }
+        minimum_crew: { $ref: '#/components/schemas/MinimumCrew' }
+        engines: { type: string, example: 2 × Pratt & Whitney PW1100G }
+    AircraftInput:
+      type: object
+      required: [registration, msn, model_id, base, manufacture_year, in_fleet_since]
+      properties:
+        registration: { type: string, description: Matrícula FAA; se guarda en mayúsculas y sin espacios., example: N391DN }
+        msn: { type: string, pattern: '^\d{3,8}$', example: '10342' }
+        model_id: { type: string, description: Un id de GET /aircraft/options., example: a321neo }
+        base: { type: string, description: Un código de GET /aircraft/options., example: ATL }
+        manufacture_year: { type: integer, minimum: 1980, example: 2021 }
+        in_fleet_since: { type: string, format: date, description: No futura ni anterior al año de fabricación. }
+        status: { $ref: '#/components/schemas/AircraftStatus' }
+        maintenance_type:
+          allOf:
+            - $ref: '#/components/schemas/MaintenanceType'
+          nullable: true
+          description: Obligatorio en mantenimiento; no se envía si está operativa.
+        maintenance_note: { type: string, nullable: true, maxLength: 300 }
+    AircraftPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Aircraft' }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+    MaintenanceRecord:
+      type: object
+      properties:
+        order_number: { type: string, example: OT-2026-0001 }
+        type: { $ref: '#/components/schemas/MaintenanceType' }
+        description: { type: string, nullable: true }
+        hangar: { type: string, example: Hangar 1 · ATL }
+        opened_on: { type: string, format: date }
+        tasks:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              done: { type: boolean }
+    MaintenanceHistoryEntry:
+      type: object
+      properties:
+        order_number: { type: string }
+        type: { $ref: '#/components/schemas/MaintenanceType' }
+        description: { type: string, nullable: true }
+        hangar: { type: string }
+        opened_on: { type: string, format: date }
+        closed_on: { type: string, format: date }
+    FlightStatus:
+      type: string
+      enum: [scheduled, delayed, in_flight, completed, cancelled]
+      default: scheduled
+    Flight:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        flight_number: { type: string }
+        aircraft_id: { type: string, format: uuid }
+        origin: { type: string }
+        destination: { type: string }
+        departure_at: { type: string, format: date-time }
+        arrival_at: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/FlightStatus' }
+        gate: { type: string, nullable: true, example: A12 }
+        aircraft_family: { type: string, nullable: true, example: A320 }
+        scope:
+          type: string
+          enum: [domestic, international]
+          description: domestic solo si origen y destino están en public.airports con país US; un aeropuerto desconocido cuenta como international.
+        origin_city: { type: string, nullable: true, example: Nueva York }
+        destination_city: { type: string, nullable: true, example: Miami }
+        origin_name: { type: string, nullable: true, example: John F. Kennedy International }
+        destination_name: { type: string, nullable: true, example: Aeropuerto Internacional de Miami }
+        origin_timezone: { type: string, nullable: true, example: America/New_York }
+        destination_timezone: { type: string, nullable: true, example: America/New_York }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ManagedFlight:
+      description: Un vuelo de la pantalla del super_admin (GET /flights/manage y respuesta del POST).
+      allOf:
+        - $ref: '#/components/schemas/Flight'
+        - type: object
+          properties:
+            aircraft_name: { type: string, example: Airbus A321neo }
+            aircraft_registration: { type: string, example: N991AC }
+            aircraft_seats: { type: integer, example: 194 }
+            required_slots: { type: integer, example: 6, description: Número de puestos (en GET /flights es la lista). }
+            crew_status:
+              type: string
+              enum: [unassigned, incomplete, complete, confirmed]
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Aircraft:
+      type: object
+      description: Aeronave con los datos de su modelo y su base. Las filas antiguas sin modelo traen `model_id`, `category`, `minimum_crew` y `engines` en `null`.
+      properties:
+        id: { type: string, format: uuid }
+        registration: { type: string, example: N391DN }
+        msn: { type: string, nullable: true }
+        model_id: { type: string, nullable: true }
+        model_name: { type: string, example: Airbus A321neo }
+        category: { type: string, nullable: true }
+        capacity: { type: integer }
+        minimum_crew:
+          allOf:
+            - $ref: '#/components/schemas/MinimumCrew'
+          nullable: true
+        engines: { type: string, nullable: true }
+        base: { type: string, nullable: true }
+        base_name: { type: string, nullable: true }
+        manufacture_year: { type: integer, nullable: true }
+        in_fleet_since: { type: string, format: date, nullable: true }
+        flight_hours: { type: integer }
+        cycles: { type: integer }
+        status: { $ref: '#/components/schemas/AircraftStatus' }
+        maintenance_type:
+          allOf:
+            - $ref: '#/components/schemas/MaintenanceType'
+          nullable: true
+        maintenance_note: { type: string, nullable: true }
+        photo_updated_at: { type: string, format: date-time, nullable: true, description: null si no tiene foto. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }

@@ -1,12 +1,18 @@
 const express = require('express');
 const healthRoutes = require('./health.routes');
-const usuarioRoutes = require('./usuario.routes');
-const parametroRoutes = require('./parametro.routes');
+const docsRoutes = require('./docs.routes');
+const authRoutes = require('./auth.routes');
+const usersRoutes = require('./users.routes');
+const { basesRouter } = require('./me.routes');
+const catalogsRoutes = require('./catalogs.routes');
 
 const router = express.Router();
 
 router.use('/', healthRoutes);
-router.use('/usuarios', usuarioRoutes);
-router.use('/parametros', parametroRoutes);
+router.use('/docs', docsRoutes);
+router.use('/auth', authRoutes);
+router.use('/users', usersRoutes);
+router.use('/bases', basesRouter);
+router.use('/catalogs', catalogsRoutes);
 
 module.exports = router;

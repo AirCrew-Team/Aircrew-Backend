@@ -1,6 +1,6 @@
-const { puerto, nombreServicio } = require('./config/env');
+const { port, nameService } = require('./config/env');
 const app = require('./app');
 
-app.listen(puerto, () => {
-  console.log(`${nombreServicio} corriendo en el puerto ${puerto}`);
+app.listen(port, () => {
+  console.log(`${nameService} corriendo en el puerto ${port}`);
 });

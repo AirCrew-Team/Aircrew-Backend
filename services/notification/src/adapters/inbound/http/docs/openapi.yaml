@@ -1,0 +1,409 @@
+openapi: 3.0.3
+info:
+  title: AirCrew - Notification
+  version: 1.0.0
+  description: |
+    Notificaciones en tiempo real con **SSE** (Server-Sent Events) y la campana del usuario.
+
+    **Conexión (frontend), con la cookie de sesión:**
+    ```js
+    const stream = new EventSource('/api/notification/stream', { withCredentials: true });
+    stream.addEventListener('certification:registered', (e) => console.log(JSON.parse(e.data).message));
+    stream.addEventListener('auth:expired', () => stream.close());
+    ```
+    El navegador reconecta solo si se cae la conexión (`retry: 5000`). Cada 25 s llega un
+    comentario `: ping` para mantenerla viva.
+
+    **Quién recibe qué:**
+    - **supervisor:** las alertas operativas (`absence:*` y `flight:slot_vacated`).
+    - **crew:** solo los avisos dirigidos a él (`assignment:replacement`, `certification:*`).
+    - **super_admin:** ninguna: `/stream` y la campana le responden `403`.
+
+    Todos los avisos se guardan también en la campana (`/notifications`), así se ven aunque la
+    persona no estuviera conectada. Las alertas del supervisor se guardan una vez para el rol y
+    cada supervisor marca como leídas las suyas.
+
+    **Preferencias:** se respetan las que la persona guarda en Configuración (`notifications` de
+    `GET /users/me` en Admin, leído con su propio token y guardado 60 s por persona):
+    `absence_reported` → `absence:reported`, `absence_covered` → `absence:covered` (supervisor) y
+    `replacement_assigned` → `assignment:replacement` (crew). Solo un `false` apaga el tipo: no llega
+    en vivo ni sale en la campana (lista y `unread_count`). Los demás tipos siempre se envían. Si Admin
+    no responde, no se filtra nada (mejor recibir de más que perder una alerta). Con la conexión
+    abierta, las preferencias se vuelven a leer cada 60 s, así que un cambio se aplica en un par de
+    minutos como mucho, sin reconectar.
+
+    **Eventos que emite el servidor** (en `data`, un JSON con `type` y `message`):
+    - `connected`: confirmación al conectarse.
+    - `absence:reported`: un tripulante reportó una ausencia.
+    - `absence:suggestions_ready`: terminó la búsqueda de candidatos (`{ absence_id, candidate_count, source }`).
+    - `absence:covered`: el reemplazo confirmó con «Enterado».
+    - `absence:deadline_missed`: el reemplazo no confirmó a tiempo (`{ absence_id, candidate_name, next_candidate_name }`).
+    - `flight:slot_vacated`: se eliminó la cuenta de un tripulante y su puesto en un vuelo futuro quedó vacante (`{ id, flight_id, flight_number, origin, destination, departure_at, slot_id, role }`).
+    - `assignment:replacement` (solo al tripulante): lo asignaron como reemplazo (`{ id, assignment_id, flight_number, deadline_at }`).
+    - `certification:registered` (solo al tripulante): el super_admin le registró la certificación (`{ id, license_number, certificates }`).
+    - `certification:verified` (solo al tripulante): su certificación quedó verificada (`{ id, license_number, certificates }`).
+    - `auth:expired`: el token está por vencer, o admin respondió 401 al refrescar las preferencias
+      (la sesión se anuló); el servidor cierra la conexión. Volver a iniciar sesión.
+
+    En los avisos guardados, `id` es el de la notificación (sirve para marcarla como leída).
+
+    Los endpoints de **Eventos** los llaman otros servicios para disparar los avisos.
+servers:
+  - url: http://localhost:3004
+tags:
+  - name: Salud
+  - name: Tiempo real
+  - name: Campana
+    description: Historial de avisos de la persona con sesión.
+  - name: Eventos
+    description: Los llaman Crew y Recommendation, no el frontend.
+
+paths:
+  /stream:
+    get:
+      tags: [Tiempo real]
+      summary: Abrir la conexión SSE (crew y supervisor)
+      description: |
+        Desde el frontend: `/api/notification/stream`. La sesión sale de la cookie `aircrew_token`
+        o del header `Authorization: Bearer`. La conexión queda abierta; el gateway no la corta.
+        Antes de abrirla se leen las preferencias de la persona en Admin (hasta 2 s de espera):
+        no recibe los tipos que apagó.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Flujo de eventos abierto
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                retry: 5000
+
+                event: connected
+                data: {"message":"Conectado a las notificaciones de AirCrew."}
+
+                event: certification:verified
+                data: {"type":"certification:verified","message":"Tu certificado 2775981 fue verificado.","id":"…","sent_at":"…"}
+        '401':
+          description: Sin sesión o token inválido (`code` = `auth_required`), o vencido (`token_expired`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorWithCode' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
+
+  /notifications:
+    get:
+      tags: [Campana]
+      summary: Mis avisos y los de mi rol, del más nuevo al más viejo (crew y supervisor)
+      description: |
+        Sin los tipos que la persona apagó en sus preferencias: no salen en `items` ni cuentan en
+        `unread_count`. Si Admin no responde, se listan todos.
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Avisos y cantidad sin leer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  unread_count: { type: integer, example: 2 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Campana]
+      summary: Marcar uno de mis avisos como leído
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Aviso marcado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
+        '404':
+          description: No existe o no es de esta persona
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorWithCode' }
+
+  /notifications/read-all:
+    post:
+      tags: [Campana]
+      summary: Marcar todos mis avisos como leídos
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cantidad de avisos marcados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: integer, example: 2 }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/NoNotifications' }
+
+  /health:
+    get:
+      tags: [Salud]
+      summary: Comprobar que el servicio está activo
+      responses:
+        '200':
+          description: Servicio activo
+
+  /events/absence-reported:
+    post:
+      tags: [Eventos]
+      summary: Avisar a los supervisores que se reportó una ausencia (crew)
+      description: Lo llama Crew después de guardar la ausencia, con el token del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbsenceEvent' }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /events/absence-covered:
+    post:
+      tags: [Eventos]
+      summary: Avisar a los supervisores que una ausencia ya tiene reemplazo (supervisor o super_admin)
+      description: Lo llama Recommendation al confirmar un reemplazo, con el token del supervisor.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AbsenceEvent' }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /events/assignment-replacement:
+    post:
+      tags: [Eventos]
+      summary: Avisar al tripulante que lo asignaron como reemplazo (supervisor, super_admin o servicio)
+      description: Lo llama Recommendation al confirmar un reemplazo. Se guarda en el historial del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, flight_number]
+              properties:
+                crew_user_id: { type: string, format: uuid }
+                assignment_id: { type: string, format: uuid }
+                flight_number: { type: string, example: AC201 }
+                deadline_at: { type: string, format: date-time }
+      responses:
+        '202': { $ref: '#/components/responses/Notified' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /events/certification:
+    post:
+      tags: [Eventos]
+      summary: Avisar al tripulante que le registraron o verificaron la certificación (solo servicio)
+      description: |
+        Lo llama Crew con token de servicio cuando el super_admin guarda la certificación:
+        `registered` la primera vez y `verified` cuando pasa a verificada. Se guarda en el historial del tripulante.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [crew_user_id, event]
+              properties:
+                crew_user_id: { type: string, format: uuid }
+                event: { type: string, enum: [registered, verified] }
+                actor_name: { type: string, example: Asley Torres, description: 'Quién la registró. Por defecto, «Un administrador».' }
+                license_number: { type: string, example: '2775981' }
+                certificates: { type: array, items: { type: string }, example: [ATP] }
+      responses:
+        '202': { $ref: '#/components/responses/Notified' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /internal/alerts/slot-vacated:
+    post:
+      tags: [Interno]
+      summary: 'Interno: alerta «puesto vacante» a los supervisores (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar a un tripulante, una vez por cada vuelo futuro donde su puesto quedó
+        vacante. Se guarda para el rol supervisor y sale en vivo por `GET /stream` con el evento
+        `flight:slot_vacated`, por ejemplo «Puesto vacante en DL1102 (JFK → LAX): se eliminó la cuenta del
+        tripulante.». No tiene preferencia en Configuración: siempre se envía. El gateway responde 404 a
+        `/api/notification/internal/*`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flight_id, flight_number]
+              properties:
+                flight_id: { type: string, format: uuid }
+                flight_number: { type: string, example: DL1102 }
+                origin: { type: string, example: JFK }
+                destination: { type: string, example: LAX }
+                departure_at: { type: string, format: date-time }
+                slot_id: { type: string, example: fa-1 }
+                role: { type: string, example: flight_attendant }
+      responses:
+        '202': { $ref: '#/components/responses/Published' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /internal/users/{userId}/notifications:
+    delete:
+      tags: [Interno]
+      summary: 'Interno: borrar las notificaciones de una cuenta eliminada (token de servicio)'
+      description: |
+        Lo usa Admin al eliminar una cuenta. Borra sus avisos personales (con sus lecturas) y sus
+        lecturas de las alertas del rol; las alertas del rol se quedan. Repetirlo no falla: devuelve 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Notificaciones borradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer, description: Avisos personales borrados. }
+                  reads_deleted: { type: integer, description: Lecturas de alertas del rol borradas. }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: aircrew_token
+
+  responses:
+    Published:
+      description: Alerta guardada para los supervisores y enviada a los que están conectados
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              type: { type: string, example: 'absence:reported' }
+              message: { type: string, example: EMP-004 no podrá volar AC201 (incapacidad). }
+              delivered_to: { type: integer, description: Conexiones de supervisores que la recibieron (sin contar las de quienes apagaron ese tipo). }
+              saved: { type: boolean, description: Quedó en la campana de los supervisores. false si no se pudo guardar; igual se envía en vivo. }
+    Notified:
+      description: Aviso guardado en el historial del tripulante y enviado a sus conexiones abiertas
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              type: { type: string, example: 'certification:registered' }
+              message: { type: string, example: Asley Torres te registró un certificado. }
+              delivered_to: { type: integer, description: Conexiones abiertas del tripulante (pestañas); 0 si apagó ese tipo. }
+              saved: { type: boolean, description: false si no se pudo guardar; igual se envía en vivo. }
+    Error:
+      description: Datos inválidos, falta autenticación o el rol no tiene permiso
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+    NoNotifications:
+      description: |
+        Token de servicio («No tienes permisos para esta acción.») o super_admin, que no recibe
+        notificaciones.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorWithCode' }
+          example: { error: El super_admin no recibe notificaciones., code: forbidden }
+
+  schemas:
+    ErrorWithCode:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, example: 'certification:verified' }
+        message: { type: string, example: Tu certificado 2775981 fue verificado. }
+        data: { type: object, description: Los demás datos del aviso (por ejemplo license_number). }
+        read: { type: boolean }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    AbsenceEvent:
+      type: object
+      required: [absence]
+      properties:
+        absence:
+          type: object
+          required: [id]
+          description: |
+            La ausencia tal como la devuelve Crew. Necesita `flight_number` (ausencias antiguas por vuelo)
+            o `start_date` y `end_date` (por fechas). Por fechas, el mensaje queda así:
+            «EMP-004 no podrá trabajar del 20 nov al 22 nov (incapacidad).»
+          properties:
+            id: { type: string, format: uuid }
+            flight_number: { type: string, nullable: true, example: AC201 }
+            start_date: { type: string, format: date, nullable: true, example: '2026-11-20' }
+            end_date: { type: string, format: date, nullable: true, example: '2026-11-22' }
+            employee_code: { type: string, nullable: true, example: EMP-004 }
+            reason: { type: string, enum: [illness, fatigue, emergency, transfer] }

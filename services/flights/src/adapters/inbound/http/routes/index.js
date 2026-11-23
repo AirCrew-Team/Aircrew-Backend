@@ -1,14 +1,21 @@
 const express = require('express');
 const healthRoutes = require('./health.routes');
-const vueloRoutes = require('./vuelo.routes');
-const aeronaveRoutes = require('./aeronave.routes');
-const aeropuertoRoutes = require('./aeropuerto.routes');
+const docsRoutes = require('./docs.routes');
+const flightRoutes = require('./flight.routes');
+const aircraftRoutes = require('./aircraft.routes');
+const airportRoutes = require('./airport.routes');
+const assignmentRoutes = require('./assignment.routes');
+const internalRoutes = require('./internal.routes');
 
 const router = express.Router();
 
 router.use('/', healthRoutes);
-router.use('/vuelos', vueloRoutes);
-router.use('/aeronaves', aeronaveRoutes);
-router.use('/aeropuertos', aeropuertoRoutes);
+router.use('/docs', docsRoutes);
+router.use('/flights', flightRoutes);
+router.use('/aircraft', aircraftRoutes);
+router.use('/airports', airportRoutes);
+router.use('/assignments', assignmentRoutes);
+// Solo para otros servicios (token de servicio).
+router.use('/internal', internalRoutes);
 
 module.exports = router;

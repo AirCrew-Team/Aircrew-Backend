@@ -160,6 +160,21 @@ UPDATE public.crew_members SET rank = 'first_officer'
 UPDATE public.crew_members SET rank = 'flight_attendant'
   WHERE rank IS NULL AND position ILIKE 'cabin%';
 
+-- Tripulantes creados por Admin antes de que Crew guardara el rango: sale del cargo
+-- del catálogo (spec tripulantes-nuevos-programacion). Sin rango, las reglas de
+-- Recommendation no los ofrecían para ningún puesto.
+UPDATE public.crew_members
+  SET rank = CASE lower(trim(position))
+    WHEN 'comandante' THEN 'captain'
+    WHEN 'copiloto' THEN 'first_officer'
+    WHEN 'sobrecargo principal' THEN 'purser'
+    WHEN 'sobrecargo' THEN 'flight_attendant'
+    WHEN 'auxiliar de vuelo' THEN 'flight_attendant'
+  END
+  WHERE rank IS NULL
+    AND lower(trim(position)) IN
+      ('comandante', 'copiloto', 'sobrecargo principal', 'sobrecargo', 'auxiliar de vuelo');
+
 -- Ausencias: estado intermedio pending_ack (el reemplazo aún no confirma),
 -- estado de la búsqueda de la IA y copia de los datos del vuelo para la cola.
 ALTER TABLE public.absences DROP CONSTRAINT IF EXISTS absences_status_check;

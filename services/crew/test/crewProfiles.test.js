@@ -41,7 +41,26 @@ test('el perfil nuevo normaliza el código y la base, y empieza en su base', () 
     base: 'ATL',
     currentLocation: 'ATL',
     status: 'available',
+    rank: 'captain',
   });
+});
+
+// Spec tripulantes-nuevos-programacion (NC-01): las reglas de Recommendation usan rank.
+test('el rango sale del cargo del catálogo de Admin', () => {
+  const rankOf = (position) =>
+    createCrewProfile({ user_id: USER_ID, employee_code: 'AC-1108', position }).rank;
+
+  assert.equal(rankOf('Comandante'), 'captain');
+  assert.equal(rankOf('Copiloto'), 'first_officer');
+  assert.equal(rankOf('Sobrecargo Principal'), 'purser');
+  assert.equal(rankOf('Sobrecargo'), 'flight_attendant');
+  assert.equal(rankOf('Auxiliar de Vuelo'), 'flight_attendant');
+  assert.equal(rankOf('Otro cargo'), null);
+});
+
+test('al cambiar el cargo cambia el rango', () => {
+  assert.equal(validateCrewProfileUpdate({ position: 'Copiloto' }).rank, 'first_officer');
+  assert.equal(validateCrewProfileUpdate({ base: 'JFK' }).rank, undefined);
 });
 
 test('el perfil nuevo exige user_id, código y cargo válidos', () => {

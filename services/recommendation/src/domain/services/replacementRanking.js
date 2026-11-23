@@ -1,4 +1,4 @@
-const { firstFailure, MIN_REST_HOURS, MAX_MONTH_HOURS } = require('../rules/eligibilityRules');
+const { firstFailure, warningsFor, MIN_REST_HOURS, MAX_MONTH_HOURS } = require('../rules/eligibilityRules');
 const { HOUR_MS, monthHours, restHoursBefore } = require('./flightTime');
 
 // Prioridad de búsqueda para un reemplazo:
@@ -100,12 +100,19 @@ function evaluateReplacements({ members, flight, role, absentUserId, assignments
       continue;
     }
 
+    // Dato sin registrar (p. ej. recién creado): elegible, con advertencia y al final.
+    const warnings = warningsFor(context);
     const scored = scoreCandidate({ ...context, tier });
-    eligible.push({ member, ...scored, rationale: null });
+    const checks =
+      warnings.length === 0
+        ? scored.checks
+        : [...warnings, ...scored.checks.filter((check) => !check.startsWith('Habilitado '))];
+    eligible.push({ member, ...scored, checks, warnings, rationale: null });
   }
 
   eligible.sort(
     (a, b) =>
+      Number(a.warnings.length > 0) - Number(b.warnings.length > 0) ||
       TIERS[a.metrics.tier].level - TIERS[b.metrics.tier].level ||
       b.score - a.score ||
       String(a.member.employee_code).localeCompare(String(b.member.employee_code))

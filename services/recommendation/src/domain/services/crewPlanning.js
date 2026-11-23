@@ -1,5 +1,5 @@
 const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
-const { firstFailure, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
+const { firstFailure, warningsFor, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
 const { monthHours, restHoursBefore, durationHours, assignmentsWindow } = require('./flightTime');
 
 const STATUS_BY_CREW = {
@@ -70,11 +70,21 @@ function evaluateForSlot({ members, flight, slot, assignments, excludeUserIds = 
       continue;
     }
 
-    eligible.push({ member, ...planningScore(context) });
+    // Dato sin registrar (p. ej. recién creado): elegible, con advertencia y al final.
+    const warnings = warningsFor(context);
+    const scored = planningScore(context);
+    const summary =
+      warnings.length === 0
+        ? scored.summary
+        : [...warnings, ...scored.summary.split(' · ').filter((part) => !part.startsWith('Habilitado en'))].join(' · ');
+    eligible.push({ member, ...scored, summary, warnings });
   }
 
   eligible.sort(
-    (a, b) => b.score - a.score || String(a.member.employee_code).localeCompare(String(b.member.employee_code))
+    (a, b) =>
+      Number(a.warnings.length > 0) - Number(b.warnings.length > 0) ||
+      b.score - a.score ||
+      String(a.member.employee_code).localeCompare(String(b.member.employee_code))
   );
 
   return { eligible, ineligible };
@@ -115,6 +125,8 @@ function buildPlannedFlight(plan, members, assignments, timeZone = hubTimezone(p
             source: taken.source,
             rationale: taken.rationale,
             is_replacement: taken.is_replacement,
+            // Datos sin registrar (p. ej. recién creado): la pantalla los avisa.
+            warnings: member.user_id ? warningsFor({ member, flight: plan }) : [],
           }
         : null,
     };

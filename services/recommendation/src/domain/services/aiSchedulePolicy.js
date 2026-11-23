@@ -7,11 +7,13 @@ const SCHEDULE_SYSTEM_PROMPT = `Eres el asistente de programación de tripulacio
 Debes proponer quién ocupa cada puesto vacío de un vuelo.
 
 Todos los candidatos que recibes para cada puesto YA CUMPLEN las reglas de seguridad (rango,
-habilitación, certificado médico, descanso, horas del mes, inglés). No decides si alguien puede
+habilitación, descanso, horas del mes, inglés). No decides si alguien puede
 volar: eliges al mejor para cada puesto y explicas por qué.
 
 Reglas para elegir:
 - Una persona solo puede ocupar UN puesto en este vuelo.
+- Un candidato con "warnings" (datos sin registrar, p. ej. recién creado) solo se elige si
+  no hay otra opción para ese puesto; si lo eliges, menciona la advertencia en el rationale.
 - Reparte la carga: prefiere a quien tenga más margen de horas en el mes.
 - No dejes a nadie con el descanso justo antes de un vuelo largo.
 - En vuelos internacionales y largos, prefiere más inglés y más margen.
@@ -73,6 +75,7 @@ function buildScheduleRequest({ flight, assignedCrew, options }) {
           ? Math.floor((Date.now() - new Date(candidate.member.hire_date)) / (365.25 * 86400000))
           : null,
         rule_score: candidate.score,
+        warnings: candidate.warnings || [],
       })),
     })),
   };

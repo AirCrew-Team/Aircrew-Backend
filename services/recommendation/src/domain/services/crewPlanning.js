@@ -1,5 +1,5 @@
 const { hubTimezone, localDate, localDayRange } = require('@vuelos/shared');
-const { firstFailure, warningsFor, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
+const { firstFailure, warningsFor, absenceFor, MAX_MONTH_HOURS, MIN_REST_HOURS } = require('../rules/eligibilityRules');
 const { monthHours, restHoursBefore, durationHours, assignmentsWindow } = require('./flightTime');
 
 const STATUS_BY_CREW = {
@@ -132,10 +132,16 @@ function buildPlannedFlight(plan, members, assignments, timeZone = hubTimezone(p
             is_replacement: taken.is_replacement,
             // Datos sin registrar (p. ej. recién creado): la pantalla los avisa.
             warnings: member.user_id ? warningsFor({ member, flight: plan }) : [],
+            // Se ausentó después de asignarlo: sigue en el puesto hasta que se confirme su
+            // reemplazo, pero la pantalla lo marca y el vuelo no cuenta como completo.
+            absence: member.user_id ? absenceFor({ member, flight: plan }) : null,
           }
         : null,
     };
   });
+  const hasAbsentAssignee = slots.some((slot) => slot.assignee && slot.assignee.absence);
+  const crewStatus =
+    hasAbsentAssignee && plan.crew_status === 'complete' ? 'incomplete' : plan.crew_status;
 
   const pilots = plan.required_slots.filter((slot) => slot.accepts.some((rank) => ['captain', 'first_officer'].includes(rank))).length;
 
@@ -157,7 +163,7 @@ function buildPlannedFlight(plan, members, assignments, timeZone = hubTimezone(p
       seats: plan.aircraft_seats,
     },
     minimum_crew: { pilots, cabin: plan.required_slots.length - pilots },
-    status: STATUS_BY_CREW[plan.crew_status] || plan.crew_status,
+    status: STATUS_BY_CREW[crewStatus] || crewStatus,
     slots,
   };
 }

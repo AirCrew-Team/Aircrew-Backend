@@ -516,6 +516,12 @@ paths:
                         country: { type: string, example: US }
                         timezone: { type: string, example: America/New_York }
                         is_base: { type: boolean }
+                        latitude:
+                          type: number
+                          nullable: true
+                          example: 40.6413
+                          description: Grados decimales (WGS84). El formulario estima con ellas la duración de la ruta.
+                        longitude: { type: number, nullable: true, example: -73.7781 }
                   aircraft:
                     type: array
                     items:

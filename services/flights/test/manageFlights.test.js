@@ -66,8 +66,11 @@ test('getOptions: is_base sale de los hubs de Delta, solo aeronaves operativas y
   const manage = createManageFlights({
     flightRepository: {
       findAllAirports: async () => [
-        { code: 'ATL', icao: 'KATL', city: 'Atlanta', name: 'Hartsfield-Jackson', country: 'US', timezone: 'America/New_York' },
-        { code: 'LHR', icao: 'EGLL', city: 'Londres', name: 'London Heathrow', country: 'GB', timezone: 'Europe/London' },
+        { code: 'ATL', icao: 'KATL', city: 'Atlanta', name: 'Hartsfield-Jackson', country: 'US', timezone: 'America/New_York', latitude: 33.6407, longitude: -84.4277 },
+        // Un NUMERIC llega como texto desde pg: se convierte a número.
+        { code: 'LHR', icao: 'EGLL', city: 'Londres', name: 'London Heathrow', country: 'GB', timezone: 'Europe/London', latitude: '51.47', longitude: '-0.4543' },
+        // Sin coordenadas (aeropuerto agregado a mano): null.
+        { code: 'MCO', icao: 'KMCO', city: 'Orlando', name: 'Orlando International', country: 'US', timezone: 'America/New_York', latitude: null, longitude: null },
       ],
     },
     aircraftRepository: {
@@ -82,12 +85,30 @@ test('getOptions: is_base sale de los hubs de Delta, solo aeronaves operativas y
   const options = await manage.getOptions();
 
   assert.deepEqual(
-    options.airports.map(({ code, is_base: isBase, timezone }) => [code, isBase, timezone]),
+    options.airports.map(({ code, is_base: isBase, timezone, latitude, longitude }) => [
+      code,
+      isBase,
+      timezone,
+      latitude,
+      longitude,
+    ]),
     [
-      ['ATL', true, 'America/New_York'],
-      ['LHR', false, 'Europe/London'],
+      ['ATL', true, 'America/New_York', 33.6407, -84.4277],
+      ['LHR', false, 'Europe/London', 51.47, -0.4543],
+      ['MCO', false, 'America/New_York', null, null],
     ]
   );
+  assert.deepEqual(Object.keys(options.airports[0]), [
+    'code',
+    'icao',
+    'city',
+    'name',
+    'country',
+    'timezone',
+    'is_base',
+    'latitude',
+    'longitude',
+  ]);
   // Solo los campos del contrato (sin msn ni otros datos de la aeronave).
   assert.deepEqual(options.aircraft[0], {
     id: 'a1',
@@ -174,4 +195,30 @@ test('POST /flights: solo el super_admin crea vuelos (supervisor y tripulante re
       await new Promise((resolve) => server.close(resolve));
     }
   }
+});
+
+test('flights_db.sql da coordenadas válidas a los 9 hubs y a los destinos que no son base', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { HUBS } = require('@vuelos/shared');
+  const sql = fs.readFileSync(path.join(__dirname, '../../../database/flights_db.sql'), 'utf8');
+
+  const block = sql.match(/UPDATE public\.airports AS a SET latitude = c\.latitude, longitude = c\.longitude\s+FROM \(VALUES([\s\S]*?)\) AS c\(code, latitude, longitude\)\s+WHERE a\.code = c\.code;/);
+  assert.ok(block, 'falta el UPDATE de coordenadas de public.airports');
+  const rows = [...block[1].matchAll(/\('([A-Z]{3})', (-?\d+\.\d+), (-?\d+\.\d+)\)/g)].map((match) => [
+    match[1],
+    Number(match[2]),
+    Number(match[3]),
+  ]);
+  const codes = rows.map(([code]) => code);
+
+  for (const code of [...HUBS.map((hub) => hub.code), 'CDG', 'LHR', 'CUN']) {
+    assert.ok(codes.includes(code), `faltan las coordenadas de ${code}`);
+  }
+  for (const [code, latitude, longitude] of rows) {
+    assert.ok(latitude >= -90 && latitude <= 90, `latitud de ${code}`);
+    assert.ok(longitude >= -180 && longitude <= 180, `longitud de ${code}`);
+  }
+  assert.match(sql, /ALTER TABLE public\.airports ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;/);
+  assert.match(sql, /ALTER TABLE public\.airports ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;/);
 });

@@ -182,6 +182,27 @@ INSERT INTO public.airports (code, icao, city, name, country, timezone) VALUES
 ON CONFLICT (code) DO UPDATE SET icao = EXCLUDED.icao, city = EXCLUDED.city, name = EXCLUDED.name,
   country = EXCLUDED.country, timezone = EXCLUDED.timezone;
 
+-- Coordenadas de cada aeropuerto (grados decimales, WGS84). El formulario «Crear vuelo»
+-- las usa para estimar la duración de la ruta y proponer la llegada. Repetible.
+ALTER TABLE public.airports ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+ALTER TABLE public.airports ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+UPDATE public.airports AS a SET latitude = c.latitude, longitude = c.longitude
+FROM (VALUES
+  ('ATL', 33.6407, -84.4277),
+  ('BOS', 42.3656, -71.0096),
+  ('DTW', 42.2162, -83.3554),
+  ('LAX', 33.9416, -118.4085),
+  ('MSP', 44.8848, -93.2223),
+  ('JFK', 40.6413, -73.7781),
+  ('LGA', 40.7769, -73.8740),
+  ('SLC', 40.7899, -111.9791),
+  ('SEA', 47.4502, -122.3088),
+  ('CDG', 49.0097, 2.5479),
+  ('LHR', 51.4700, -0.4543),
+  ('CUN', 21.0365, -86.8771)
+) AS c(code, latitude, longitude)
+WHERE a.code = c.code;
+
 -- Un número de vuelo se repite cada día: es único por (número, día UTC de la salida).
 ALTER TABLE public.flights DROP CONSTRAINT IF EXISTS flights_flight_number_key;
 CREATE UNIQUE INDEX IF NOT EXISTS flights_number_day_unique

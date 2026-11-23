@@ -103,10 +103,12 @@ function evaluateReplacements({ members, flight, role, absentUserId, assignments
     // Dato sin registrar (p. ej. recién creado): elegible, con advertencia y al final.
     const warnings = warningsFor(context);
     const scored = scoreCandidate({ ...context, tier });
+    // Sin habilitación registrada, los checks no pueden decir «Habilitado».
+    const noRating = warnings.some((warning) => warning.startsWith('Sin habilitación'));
     const checks =
       warnings.length === 0
         ? scored.checks
-        : [...warnings, ...scored.checks.filter((check) => !check.startsWith('Habilitado '))];
+        : [...warnings, ...scored.checks.filter((check) => !(noRating && check.startsWith('Habilitado ')))];
     eligible.push({ member, ...scored, checks, warnings, rationale: null });
   }
 

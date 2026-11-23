@@ -73,10 +73,15 @@ function evaluateForSlot({ members, flight, slot, assignments, excludeUserIds = 
     // Dato sin registrar (p. ej. recién creado): elegible, con advertencia y al final.
     const warnings = warningsFor(context);
     const scored = planningScore(context);
+    // Sin habilitación registrada, el resumen no puede decir «Habilitado en».
+    const noRating = warnings.some((warning) => warning.startsWith('Sin habilitación'));
     const summary =
       warnings.length === 0
         ? scored.summary
-        : [...warnings, ...scored.summary.split(' · ').filter((part) => !part.startsWith('Habilitado en'))].join(' · ');
+        : [
+            ...warnings,
+            ...scored.summary.split(' · ').filter((part) => !(noRating && part.startsWith('Habilitado en'))),
+          ].join(' · ');
     eligible.push({ member, ...scored, summary, warnings });
   }
 

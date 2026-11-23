@@ -74,9 +74,23 @@ async function createCrewMember({
   }
 }
 
+// absences: ausencias vigentes (no canceladas) de cada tripulante, sin el motivo. Las
+// reglas de Recommendation no lo ofrecen para un vuelo en esas fechas ni para el vuelo
+// de su ausencia.
 async function findCrewMembers() {
   const { rows } = await pool.query(
-    `SELECT ${crewColumns}
+    `SELECT ${crewColumns},
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'flight_id', a.flight_id,
+                  'start_date', to_char(a.start_date, 'YYYY-MM-DD'),
+                  'end_date', to_char(a.end_date, 'YYYY-MM-DD')))
+         FROM public.absences a
+         WHERE a.crew_user_id = crew_members.user_id
+           AND a.status <> 'cancelled'
+           AND (a.end_date >= current_date - 1
+                OR a.flight_departure_at >= now() - interval '2 days')
+       ), '[]'::json) AS absences
      FROM public.crew_members
      ORDER BY employee_code`
   );

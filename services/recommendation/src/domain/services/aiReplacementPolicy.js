@@ -113,16 +113,35 @@ function validateReplacementOutput(output, candidates) {
     valid.push({
       candidate,
       affinity: item.affinity,
-      checks: (Array.isArray(item.checks) ? item.checks : [])
-        .filter((check) => typeof check === 'string' && check.trim())
-        .slice(0, 5),
+      checks: withWarnings(
+        candidate,
+        (Array.isArray(item.checks) ? item.checks : []).filter((check) => typeof check === 'string' && check.trim())
+      ).slice(0, 5),
       rationale: item.rationale.trim(),
     });
 
     if (valid.length === MAX_RESULTS) break;
   }
 
+  // Con advertencias (datos sin registrar), al final, sin importar el orden de la IA.
+  valid.sort((a, b) => Number(hasWarnings(a.candidate)) - Number(hasWarnings(b.candidate)));
   return valid.length > 0 ? valid : null;
+}
+
+function hasWarnings(candidate) {
+  return (candidate.warnings || []).length > 0;
+}
+
+// Las advertencias del candidato van primero en sus checks, y sin habilitación registrada
+// la IA no puede afirmar «Habilitado …».
+function withWarnings(candidate, checks) {
+  const warnings = candidate.warnings || [];
+  if (warnings.length === 0) return checks;
+  const noRating = warnings.some((warning) => warning.startsWith('Sin habilitación'));
+  const rest = checks.filter(
+    (check) => !warnings.includes(check) && !(noRating && /^Habilitad[oa]/i.test(check))
+  );
+  return [...warnings, ...rest];
 }
 
 module.exports = {

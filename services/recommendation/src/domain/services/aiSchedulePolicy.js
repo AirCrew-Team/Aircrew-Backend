@@ -86,16 +86,23 @@ function buildScheduleRequest({ flight, assignedCrew, options }) {
 function validateScheduleOutput(output, options) {
   const result = new Map();
   const used = new Set();
+  const items = (output && output.assignments) || [];
+  const chosenIds = new Set(items.map((item) => item.crew_id));
 
-  for (const item of (output && output.assignments) || []) {
+  for (const item of items) {
     const option = options.find((entry) => entry.slot.id === item.slot_id);
     if (!option || result.has(item.slot_id) || !item.crew_id) continue;
 
-    const candidate = option.candidates
-      .slice(0, MAX_PER_SLOT)
-      .find((entry) => entry.member.user_id === item.crew_id);
+    const offered = option.candidates.slice(0, MAX_PER_SLOT);
+    const candidate = offered.find((entry) => entry.member.user_id === item.crew_id);
     if (!candidate || used.has(item.crew_id)) continue;
     if (typeof item.rationale !== 'string' || !item.rationale.trim()) continue;
+    // Con advertencias (datos sin registrar), solo si no queda nadie sin advertencias libre
+    // para ese puesto: si no, el puesto queda para elegirlo a mano.
+    const cleanAlternative = offered.some(
+      (entry) => (entry.warnings || []).length === 0 && !chosenIds.has(entry.member.user_id)
+    );
+    if ((candidate.warnings || []).length > 0 && cleanAlternative) continue;
 
     used.add(item.crew_id);
     result.set(item.slot_id, { candidate, rationale: item.rationale.trim() });

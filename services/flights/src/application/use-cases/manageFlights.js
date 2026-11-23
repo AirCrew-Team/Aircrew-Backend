@@ -36,6 +36,13 @@ function normalizeSearch(value) {
   return text === '' ? null : text.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
+// Coordenada en grados decimales, o null si falta o no es un número.
+function toCoordinate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function parsePositiveInt(value, fallback, name, max = Infinity) {
   if (value === undefined || value === '') return fallback;
   const number = Number(value);
@@ -64,7 +71,18 @@ function createManageFlights({ flightRepository, aircraftRepository, assignmentR
     ]);
 
     return {
-      airports: airports.map((airport) => ({ ...airport, is_base: BASE_CODES.has(airport.code) })),
+      airports: airports.map((airport) => ({
+        code: airport.code,
+        icao: airport.icao,
+        city: airport.city,
+        name: airport.name,
+        country: airport.country,
+        timezone: airport.timezone,
+        is_base: BASE_CODES.has(airport.code),
+        // Coordenadas para estimar la duración de la ruta; null si el aeropuerto no las tiene.
+        latitude: toCoordinate(airport.latitude),
+        longitude: toCoordinate(airport.longitude),
+      })),
       aircraft: aircraft.map((item) => ({
         id: item.id,
         registration: item.registration,

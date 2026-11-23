@@ -100,7 +100,7 @@ async function findFlightById(id) {
 
 async function findAllAirports() {
   const { rows } = await pool.query(
-    `SELECT code, icao, city, name, country, timezone FROM public.airports ORDER BY city, code`
+    `SELECT code, icao, city, name, country, timezone, latitude, longitude FROM public.airports ORDER BY city, code`
   );
   return rows;
 }

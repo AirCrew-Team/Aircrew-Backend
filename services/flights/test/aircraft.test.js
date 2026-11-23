@@ -40,6 +40,7 @@ test('una aeronave nueva toma nombre, capacidad y tripulación de su modelo', ()
     msn: '10342',
     modelId: 'a321neo',
     name: 'Airbus A321neo',
+    family: 'A320',
     capacity: 194,
     minimumCrew: 6,
     base: 'ATL',

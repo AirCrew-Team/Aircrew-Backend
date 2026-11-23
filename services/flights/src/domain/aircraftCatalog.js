@@ -3,10 +3,12 @@
 const { HUBS } = require('@vuelos/shared');
 
 // narrow_body: un pasillo · wide_body: dos pasillos · regional: menos de 100 asientos.
+// family: familia del avión para la regla de habilitación de la tripulación (ratings).
 const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'a321neo',
     name: 'Airbus A321neo',
+    family: 'A320',
     category: 'narrow_body',
     capacity: 194,
     minimum_crew: { pilots: 2, cabin: 4 },
@@ -15,6 +17,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'b739',
     name: 'Boeing 737-900ER',
+    family: '737',
     category: 'narrow_body',
     capacity: 180,
     minimum_crew: { pilots: 2, cabin: 4 },
@@ -23,6 +26,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'a220',
     name: 'Airbus A220-300',
+    family: 'A220',
     category: 'narrow_body',
     capacity: 130,
     minimum_crew: { pilots: 2, cabin: 3 },
@@ -31,6 +35,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'a330neo',
     name: 'Airbus A330-900neo',
+    family: 'A330',
     category: 'wide_body',
     capacity: 281,
     minimum_crew: { pilots: 2, cabin: 8 },
@@ -39,6 +44,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'a350',
     name: 'Airbus A350-900',
+    family: 'A350',
     category: 'wide_body',
     capacity: 306,
     minimum_crew: { pilots: 2, cabin: 9 },
@@ -47,6 +53,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'b764',
     name: 'Boeing 767-400ER',
+    family: '767',
     category: 'wide_body',
     capacity: 238,
     minimum_crew: { pilots: 2, cabin: 7 },
@@ -55,6 +62,7 @@ const AIRCRAFT_MODELS = Object.freeze([
   {
     id: 'e175',
     name: 'Embraer E175',
+    family: 'E175',
     category: 'regional',
     capacity: 76,
     minimum_crew: { pilots: 2, cabin: 2 },

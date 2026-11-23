@@ -172,10 +172,17 @@ function warningsFor({ member, flight }) {
   return warnings;
 }
 
+// Motivo de la ausencia que cubre el vuelo (o null). Programación marca así a un
+// asignado que se ausentó después de asignarlo.
+function absenceFor({ member, flight }) {
+  return absenceRule.check({ member, flight });
+}
+
 module.exports = {
   ELIGIBILITY_RULES,
   firstFailure,
   warningsFor,
+  absenceFor,
   MIN_REST_HOURS,
   MAX_MONTH_HOURS,
   restHoursBefore,

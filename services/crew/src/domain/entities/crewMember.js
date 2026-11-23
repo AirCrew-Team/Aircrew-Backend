@@ -56,6 +56,20 @@ function parseStatus(value) {
   return value;
 }
 
+// Rango a bordo (el que usan las reglas de Recommendation) según el cargo del catálogo
+// de Admin. null: cargo fuera del catálogo (al editar se conserva el rango que tuviera).
+const RANK_BY_POSITION = {
+  comandante: 'captain',
+  copiloto: 'first_officer',
+  'sobrecargo principal': 'purser',
+  sobrecargo: 'flight_attendant',
+  'auxiliar de vuelo': 'flight_attendant',
+};
+
+function rankForPosition(position) {
+  return RANK_BY_POSITION[position.toLowerCase()] || null;
+}
+
 // Perfil de un tripulante nuevo. Lo pide Admin después de crear la cuenta;
 // el nombre y el correo son de la cuenta y se quedan en Admin. Sin employee_code,
 // el repositorio le asigna el siguiente (AC-0001, AC-0002…).
@@ -83,6 +97,7 @@ function createCrewProfile({
     // Recién creado, el tripulante está en su base.
     currentLocation: profileBase,
     status: parseStatus(status),
+    rank: rankForPosition(parsePosition(position)),
   };
 }
 
@@ -98,7 +113,10 @@ function validateCrewProfileUpdate(input) {
   const changes = {};
 
   if (employeeCode !== undefined) changes.employeeCode = parseEmployeeCode(employeeCode);
-  if (position !== undefined) changes.position = parsePosition(position);
+  if (position !== undefined) {
+    changes.position = parsePosition(position);
+    changes.rank = rankForPosition(changes.position);
+  }
   if (base !== undefined) changes.base = parseBase(base);
   if (status !== undefined) changes.status = parseStatus(status);
 
@@ -109,7 +127,7 @@ function validateCrewProfileUpdate(input) {
     changes.isActive = isActive;
   }
 
-  if (Object.keys(changes).length === 0) {
+  if (Object.keys(changes).filter((key) => key !== 'rank').length === 0) {
     throw new DomainError(
       'Envía al menos uno de: employee_code, position, base, status, is_active.'
     );

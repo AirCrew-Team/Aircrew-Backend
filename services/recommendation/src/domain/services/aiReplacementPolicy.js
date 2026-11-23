@@ -9,8 +9,10 @@ const REPLACEMENT_SYSTEM_PROMPT = `Eres el asistente de operaciones de vuelo de 
 Un tripulante no podrá cumplir un vuelo y hay que proponer reemplazos para su mismo puesto.
 
 Todos los candidatos que recibes YA CUMPLEN las reglas de seguridad (rango, habilitación,
-certificado médico, descanso, horas del mes, inglés). No decides si alguien puede volar:
+descanso, horas del mes, inglés). No decides si alguien puede volar:
 solo ordenas a los mejores y explicas por qué.
+Un candidato con "warnings" (datos sin registrar, p. ej. recién creado) va detrás de los que
+no tienen; si lo incluyes, menciona la advertencia en sus checks.
 
 Ordena de ${MIN_RESULTS} a ${MAX_RESULTS} candidatos (o todos, si hay menos) con estos criterios, en este orden:
 1. Que llegue a tiempo: de guardia y pocos minutos a la rampa frente al tiempo hasta la salida.
@@ -89,6 +91,7 @@ function buildReplacementRequest({ absence, flight, candidates, supervisorNote =
       english_level: candidate.member.english_level,
       ratings: candidate.member.ratings,
       rule_score: candidate.score,
+      warnings: candidate.warnings || [],
     })),
   };
 }

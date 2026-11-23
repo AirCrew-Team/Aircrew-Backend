@@ -7,9 +7,13 @@ const {
   restHoursBefore,
 } = require('../services/flightTime');
 
-// Las 8 reglas de elegibilidad, en el orden en que se revisan. Se aplican
+// Las 7 reglas de elegibilidad, en el orden en que se revisan. Se aplican
 // SIEMPRE en código, con o sin IA: a Claude solo le llegan tripulantes que
 // ya las cumplen. Cada regla devuelve null si cumple, o el motivo si no.
+// El dato que falta (habilitaciones o inglés sin registrar, p. ej. en un tripulante
+// recién creado) no bloquea: queda como advertencia (warningsFor) y ese candidato va
+// detrás de los que tienen los datos. El dato que existe y no cumple sí bloquea.
+// El certificado médico se descartó: no es regla (spec tripulantes-nuevos-programacion).
 //
 // Contexto de cada regla: { member, flight, role, memberAssignments }
 // - flight trae aircraft_family y scope (domestic / international).
@@ -36,22 +40,11 @@ const ratingRule = {
   name: 'rating',
   check({ member, flight }) {
     const family = flight.aircraft_family;
-    if (!family) return null;
-    return (member.ratings || []).includes(family)
+    const ratings = member.ratings || [];
+    if (!family || ratings.length === 0) return null;
+    return ratings.includes(family)
       ? null
       : `No está habilitado en ${family}.`;
-  },
-};
-
-// 3. Certificado médico vigente el día del vuelo.
-const medicalRule = {
-  name: 'medical',
-  check({ member, flight }) {
-    const flightDay = new Date(flight.departure_at).toISOString().slice(0, 10);
-    if (!member.medical_expires_on) return 'No tiene certificado médico registrado.';
-    return member.medical_expires_on >= flightDay
-      ? null
-      : `Certificado médico vencido el ${member.medical_expires_on}.`;
   },
 };
 
@@ -111,21 +104,24 @@ const monthHoursRule = {
   },
 };
 
-// 8. Pilotos en vuelo internacional: inglés OACI nivel 4 o más.
+function needsEnglish({ member, flight }) {
+  return flight.scope === 'international' && PILOT_RANKS.includes(member.rank);
+}
+
+// 8. Pilotos en vuelo internacional: inglés OACI nivel 4 o más (sin registro: advertencia).
 const englishRule = {
   name: 'english',
   check({ member, flight }) {
-    if (flight.scope !== 'international' || !PILOT_RANKS.includes(member.rank)) return null;
-    return (member.english_level || 0) >= MIN_INTERNATIONAL_ENGLISH
+    if (!needsEnglish({ member, flight }) || member.english_level == null) return null;
+    return member.english_level >= MIN_INTERNATIONAL_ENGLISH
       ? null
-      : `Inglés OACI ${member.english_level || 'sin registro'}; se requiere ${MIN_INTERNATIONAL_ENGLISH} para vuelos internacionales.`;
+      : `Inglés OACI ${member.english_level}; se requiere ${MIN_INTERNATIONAL_ENGLISH} para vuelos internacionales.`;
   },
 };
 
 const ELIGIBILITY_RULES = [
   rankRule,
   ratingRule,
-  medicalRule,
   availabilityRule,
   overlapRule,
   restRule,
@@ -142,9 +138,23 @@ function firstFailure(context) {
   return null;
 }
 
+// Datos sin registrar de un candidato que cumple las reglas: no lo bloquean, pero se
+// le avisan al supervisor y a la IA, y ese candidato va detrás de los demás.
+function warningsFor({ member, flight }) {
+  const warnings = [];
+  if (flight.aircraft_family && (member.ratings || []).length === 0) {
+    warnings.push(`Sin habilitación registrada en ${flight.aircraft_family}`);
+  }
+  if (needsEnglish({ member, flight }) && member.english_level == null) {
+    warnings.push('Sin nivel de inglés OACI registrado');
+  }
+  return warnings;
+}
+
 module.exports = {
   ELIGIBILITY_RULES,
   firstFailure,
+  warningsFor,
   MIN_REST_HOURS,
   MAX_MONTH_HOURS,
   restHoursBefore,

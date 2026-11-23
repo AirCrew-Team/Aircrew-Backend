@@ -63,15 +63,11 @@ describe('Las 8 reglas de elegibilidad', () => {
     });
   });
 
-  describe('3. certificado médico', () => {
-    it('rechaza a quien no tiene certificado', () => {
-      assert.match(check({ m: { medical_expires_on: null } }), /No tiene certificado médico/);
-    });
-    it('rechaza un certificado vencido antes del vuelo', () => {
-      assert.match(check({ m: { medical_expires_on: '2026-11-19' } }), /vencido el 2026-11-19/);
-    });
-    it('acepta un certificado que vence el mismo día del vuelo', () => {
-      assert.equal(check({ m: { medical_expires_on: '2026-11-20' } }), null);
+  // El certificado médico se descartó (spec tripulantes-nuevos-programacion): no es regla.
+  describe('sin regla de certificado médico (NC-07)', () => {
+    it('no rechaza a quien no tiene certificado o lo tiene vencido', () => {
+      assert.equal(check({ m: { medical_expires_on: null } }), null);
+      assert.equal(check({ m: { medical_expires_on: '2026-11-19' } }), null);
     });
   });
 
@@ -155,8 +151,9 @@ describe('Las 8 reglas de elegibilidad', () => {
     it('rechaza a un piloto con nivel 3 en vuelo internacional', () => {
       assert.match(check({ m: { english_level: 3 } }), /se requiere 4/);
     });
-    it('rechaza a un piloto sin nivel registrado', () => {
-      assert.match(check({ m: { english_level: null } }), /sin registro/);
+    // Spec tripulantes-nuevos-programacion: sin registro no bloquea; es una advertencia.
+    it('no rechaza a un piloto sin nivel registrado', () => {
+      assert.equal(check({ m: { english_level: null } }), null);
     });
     it('no lo exige en vuelos nacionales', () => {
       assert.equal(check({ m: { english_level: 2 }, f: { scope: 'domestic' } }), null);

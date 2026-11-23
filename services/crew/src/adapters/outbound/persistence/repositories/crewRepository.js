@@ -48,15 +48,16 @@ async function createCrewMember({
   currentLocation = null,
   status = 'available',
   isActive = true,
+  rank = null,
 }) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       const { rows } = await pool.query(
         `INSERT INTO public.crew_members
-           (user_id, employee_code, position, base, current_location, status, is_active)
-         VALUES ($1, COALESCE($2, ${NEXT_EMPLOYEE_CODE}), $3, $4, $5, $6, $7)
+           (user_id, employee_code, position, base, current_location, status, is_active, rank)
+         VALUES ($1, COALESCE($2, ${NEXT_EMPLOYEE_CODE}), $3, $4, $5, $6, $7, $8)
          RETURNING ${crewColumns}`,
-        [userId, employeeCode, position, base, currentLocation, status, isActive]
+        [userId, employeeCode, position, base, currentLocation, status, isActive, rank]
       );
 
       return rows[0];
@@ -97,7 +98,7 @@ async function findCrewMemberByUserId(userId) {
 // Actualiza solo los campos recibidos. base enviada puede pasar a null.
 async function updateCrewMember(
   userId,
-  { employeeCode, position, base, status, isActive }
+  { employeeCode, position, base, status, isActive, rank }
 ) {
   try {
     const { rows } = await pool.query(
@@ -107,6 +108,7 @@ async function updateCrewMember(
            base = CASE WHEN $4::boolean THEN $5 ELSE base END,
            status = COALESCE($6, status),
            is_active = COALESCE($7, is_active),
+           rank = COALESCE($8, rank),
            updated_at = now()
        WHERE user_id = $1
        RETURNING ${crewColumns}`,
@@ -118,6 +120,7 @@ async function updateCrewMember(
         base ?? null,
         status ?? null,
         isActive ?? null,
+        rank ?? null,
       ]
     );
 
